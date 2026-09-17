@@ -2,13 +2,14 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 安装 Node.js 20, Python 3 及依赖
+# 安装 Node.js 20, Python 3, socat 及依赖
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     gnupg \
     python3 \
     python3-pip \
+    socat \
     jq \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
