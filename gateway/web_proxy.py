@@ -274,12 +274,13 @@ COLLAPSE_SCRIPT = """
         var box = document.createElement("div");
         box.className = "wb-am-box";
 
-        var usedCount = Object.keys(used).length;
+        // 标题**不带**任何「已调用 N」计数。
+        // 模型维度的「已调用 N」与账号池条的「已调用 N 次」用同一个词、口径却不同
+        // （一个是「用过几个模型」，一个是「账号被分到几次请求」），并排出现极易混淆。
+        // 模型是否被调用过，由标签高亮（wb-am-tag-used）表达即可 —— 用户 2026-09-19 反馈。
         var title = document.createElement("div");
         title.className = "wb-am-title";
-        title.textContent = usedCount
-          ? ("可用模型 · " + models.length + "（已调用 " + usedCount + "）")
-          : ("可用模型 · " + models.length + "（暂无调用记录）");
+        title.textContent = "可用模型 · " + models.length;
 
         var usage = entry.usage || {};
         var list = document.createElement("div");
@@ -290,14 +291,14 @@ COLLAPSE_SCRIPT = """
           tag.textContent = m;
           var stat = usage[m];
           if (stat) {
+            // 只留「用量」类信息（Token / 积分），**不再显示调用次数**。
+            // 调用次数是账号维度的指标，只保留在账号池条上的「已调用 N 次」一处。
             var parts = [];
-            if (stat.gatewayCalls) parts.push("网关调用 " + stat.gatewayCalls + " 次");
             if (stat.tokens) parts.push("约 " + stat.tokens + " Token");
-            if (stat.requests != null) parts.push("官方记录 " + stat.requests + " 次");
             if (stat.credit != null) parts.push("积分 " + Math.round(stat.credit * 100) / 100);
             if (parts.length) tag.title = parts.join(" · ");
           } else if (used[m]) {
-            tag.title = "该账号调用过此模型";
+            tag.title = "该账号用过此模型";
           }
           list.appendChild(tag);
         });
