@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -14,7 +15,18 @@ try:
 except ImportError:
     from token_tracker import record_token_usage, get_aggregated_token_stats
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.2.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """容器内的账号轮询随应用启停（替代已弃用的 on_event）。"""
+    task = asyncio.create_task(account_rotate_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.3.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
@@ -534,11 +546,6 @@ async def account_rotate_loop() -> None:
         except Exception as e:
             print(f"[rotate] loop error: {e}")
         await asyncio.sleep(ROTATE_INTERVAL_MINUTES * 60)
-
-
-@app.on_event("startup")
-async def _start_rotate_loop() -> None:
-    asyncio.create_task(account_rotate_loop())
 
 
 @app.get("/rotate/status")
