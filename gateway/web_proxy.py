@@ -64,6 +64,12 @@ COLLAPSE_SCRIPT = """
   .wb-mac-block-hide {
     display: none !important;
   }
+  /* 容器内无宿主桌面客户端，「CodeBuddy IDE / CLI 当前账号」状态徽章（绿色对勾）
+     永远只能显示「未运行 / 未安装」，属误导。用属性选择器直接命中，无需 JS 介入 */
+  [role="status"][aria-label="CodeBuddy IDE 当前账号"],
+  [role="status"][aria-label="CodeBuddy CLI 当前账号"] {
+    display: none !important;
+  }
   /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
     margin-top: 12px;

@@ -155,14 +155,20 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
     models_list = sorted(list(model_map.values()), key=lambda x: x["total"], reverse=True)
     
     # 按照前端 fve 与 uve 组件的严苛结构填充每个请求项
+    # 显式按时间倒序（最新在前），避免上游 / 云端流水拼接顺序影响展示方向
+    logs_sorted = sorted(
+        logs,
+        key=lambda l: l.get("timestamp") or l.get("ts") or 0,
+        reverse=True,
+    )
     requests_list = []
-    for l in reversed(logs):
+    for l in logs_sorted:
         req_id = str(l.get("id", "req-0"))
         ts = l.get("timestamp") or l.get("ts") or int(time.time() * 1000)
         inp = l.get("input", 0)
         out = l.get("output", 0)
         tot = inp + out
-        
+
         requests_list.append({
             "id": req_id,
             "sessionId": req_id,
@@ -180,6 +186,9 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             "thinking": 0,
             "duration": l.get("duration", 1.0)
         })
+
+    # 只保留最近 200 条避免内存膨胀与首页渲染压力；前端默认每页 50
+    requests_list = requests_list[:200]
 
     total_tokens = total_input + total_output
     records_count = len(logs)
