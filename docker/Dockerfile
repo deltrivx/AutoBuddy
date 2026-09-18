@@ -29,7 +29,9 @@ RUN npm i -g workbuddy-switch@latest
 # DISABLE_AUTOUPDATER：容器内自动更新在重建时必然丢失，且会拖慢启动，故关闭。
 ENV DISABLE_AUTOUPDATER=1
 RUN npm i -g @tencent-ai/codebuddy-code@latest \
-    && mkdir -p /workspace
+    && mkdir -p /workspace \
+    && git config --system user.name "CodeBuddy CLI (container)" \
+    && git config --system user.email "codebuddy@container.local"
 
 # 安装 API 网关依赖 (FastAPI + Uvicorn + HTTPX)
 RUN pip3 install --no-cache-dir --break-system-packages \

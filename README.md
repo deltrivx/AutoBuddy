@@ -300,6 +300,17 @@ docker exec WorkBuddy-Switch codebuddy -p "分析 /workspace 下的代码并总�
 docker exec WorkBuddy-Switch codebuddy -p "列出所有 TODO" -y --output-format json
 ```
 
+### git 身份（容器内已预置默认值）
+
+CLI 的版本控制能力（查看 diff、提交变更、创建分支）需要 git 身份。镜像内已设 **system 级**默认值 `CodeBuddy CLI (container)` / `codebuddy@container.local`，因此开箱即可提交，不会报「请告诉我你是谁」。想用自己的身份就覆盖 global 级：
+
+```bash
+docker exec WorkBuddy-Switch git config --global user.name "你的名字"
+docker exec WorkBuddy-Switch git config --global user.email "you@example.com"
+```
+
+> global（`/data/.gitconfig`）优先级高于 system（`/etc/gitconfig`），且随 `/data` 数据卷持久化。
+
 CLI 需要操作实际代码，建议挂载一个项目目录（容器内 `/workspace` 已预留）：
 
 ```yaml

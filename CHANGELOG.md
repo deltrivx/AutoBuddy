@@ -4,6 +4,27 @@
 
 ---
 
+## [v0.3.10] - 2026-09-18
+
+### 🧰 补全容器内 CLI 的运行条件（git 身份 + 工作目录）
+
+v0.3.9 让 CodeBuddy CLI 在容器里能跑起来之后，环境自检又发现还差两个「真容器环境」的必要条件。
+
+#### 1. git 身份默认值（否则 CLI 的 git commit 会失败）
+- **问题**：容器内 `git config --global --list` 为空。CodeBuddy CLI 的版本控制能力（查看 diff、提交变更、创建分支）依赖 `user.name` / `user.email`，缺失时提交直接失败。
+- **修复**：Dockerfile 设 **system 级**默认值 `user.name="CodeBuddy CLI (container)"` / `user.email="codebuddy@container.local"`。用 system 级（`/etc/gitconfig`）是为了让用户在容器内用 `git config --global` 就能覆盖，不必改镜像。
+
+#### 2. `/workspace` 挂载位（Unraid 模板）
+- 模板新增可选 Path：`/workspace` ← `/mnt/user/appdata/workbuddy-switch/workspace`（`Display="advanced"`、`Required="false"`），原模板已备份为 `.bak-v039`。
+- 容器内 `/workspace` 在镜像构建时已预建；不挂载也能跑 CLI，只是没有可操作的项目文件。
+
+#### 3. 自检确认（无需改动）
+- CLI **自带 ripgrep**（`vendor/ripgrep/arm64-linux/rg` 等多平台），无需另装。
+- `DISABLE_AUTOUPDATER=1` 已生效；Node v20.20.2 / npm 10.8.2 / git 2.43.0。
+- 体积：CLI 174M + workbuddy-switch 25M。
+
+---
+
 ## [v0.3.9] - 2026-09-18
 
 ### 🖥️ 让 CodeBuddy CLI 在容器里真正可用（从「空转配置」到「可执行环境」）
