@@ -253,7 +253,22 @@ def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any]) ->
     return [a for a in candidates if _account_is_usable(a, now_ms)]
 
 
-_ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {"next_index": 0, "last_selected_id": None}
+_ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {
+    "next_index": 0,
+    "last_selected_id": None,
+    "last_selected_source": None,
+}
+
+
+def _remember_selection(acc: Dict[str, Any], source: str) -> Dict[str, Any]:
+    """记录本次选中的账号与来源。
+
+    三条路径（请求指定 / 手动固定 / 自动轮询）都要落记录，否则状态接口里
+    lastSelectedAccountId 会停留在上一次自动分配的结果，无法反映真实调用账号。
+    """
+    _ACCOUNT_POOL_RUNTIME["last_selected_id"] = _account_id(acc)
+    _ACCOUNT_POOL_RUNTIME["last_selected_source"] = source
+    return acc
 
 
 def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -272,18 +287,19 @@ def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any
     by_id = {str(_account_id(a)): a for a in candidates if _account_id(a)}
 
     if requested_id:
-        return by_id.get(str(requested_id))
+        acc = by_id.get(str(requested_id))
+        return _remember_selection(acc, "request") if acc else None
 
     if config.get("mode") == "manual":
-        return by_id.get(str(config.get("manualAccountId")))
+        acc = by_id.get(str(config.get("manualAccountId")))
+        return _remember_selection(acc, "manual") if acc else None
 
     if not candidates:
         return None
     index = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0)) % len(candidates)
     acc = candidates[index]
     _ACCOUNT_POOL_RUNTIME["next_index"] = (index + 1) % len(candidates)
-    _ACCOUNT_POOL_RUNTIME["last_selected_id"] = _account_id(acc)
-    return acc
+    return _remember_selection(acc, "auto")
 
 
 @app.get("/account-pool/status")
@@ -298,6 +314,7 @@ def account_pool_status():
         "allEnabledByDefault": not bool(enabled_ids),
         "enabledAccountIds": sorted(enabled_ids),
         "lastSelectedAccountId": _ACCOUNT_POOL_RUNTIME.get("last_selected_id"),
+        "lastSelectedSource": _ACCOUNT_POOL_RUNTIME.get("last_selected_source"),
         "accounts": [
             {
                 "id": _account_id(a),

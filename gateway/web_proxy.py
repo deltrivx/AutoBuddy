@@ -99,6 +99,15 @@ COLLAPSE_SCRIPT = """
     font-size: 11px;
     color: var(--muted-foreground, #6b7280);
   }
+  /* 标记最近一次 API 请求实际使用的账号 */
+  .wb-pool-last {
+    font-size: 11px;
+    line-height: 1.8;
+    padding: 1px 9px;
+    border-radius: 999px;
+    border: 1px dashed rgba(120, 120, 120, 0.45);
+    color: var(--muted-foreground, #6b7280);
+  }
   /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
     margin-top: 12px;
@@ -389,6 +398,14 @@ COLLAPSE_SCRIPT = """
         bar.appendChild(toggle);
         bar.appendChild(pin);
         bar.appendChild(hint);
+
+        if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
+          var last = document.createElement("span");
+          last.className = "wb-pool-last";
+          last.textContent = "最近调用";
+          bar.appendChild(last);
+        }
+
         (card.querySelector("section") || card).appendChild(bar);
       });
     }
