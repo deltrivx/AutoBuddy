@@ -307,6 +307,33 @@ def _replace_padded(data, pattern, build, label):
     return data[:m.start()] + new + data[m.end():]
 
 
+def _replace_call(data, marker, new_bytes, label, levels=1):
+    """定位包住 marker 的 JSX 调用，把**整块**换成 ``new_bytes``（右侧补空格凑等长）。
+
+    与 ``_replace_padded`` 的区别：这里不写正则，靠 ``_call_start_before`` 做括号配平
+    定位，因此可以整块换掉一个带嵌套 JSX 的元素（正则做不到跨嵌套匹配）。
+    """
+    idx = _unique_marker(data, marker, label)
+    if idx < 0:
+        return data
+    start = _call_start_before(data, idx, levels)
+    if start < 0:
+        _fail(label, "no enclosing JSX call above marker")
+        return data
+    end = _scan_expr(data, start)
+    if end < 0 or end <= idx:
+        _fail(label, "unbalanced JSX call")
+        return data
+    old = data[start:end]
+    if len(new_bytes) > len(old):
+        _fail(label, "replacement longer than original (%d > %d)" % (len(new_bytes), len(old)))
+        return data
+    new = new_bytes + b" " * (len(old) - len(new_bytes))
+    assert len(new) == len(old)
+    _ok(label, "rewrote %d bytes (was %d)" % (len(new_bytes), len(old)))
+    return data[:start] + new + data[end:]
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -316,6 +343,17 @@ SETTINGS_SUBTITLE = "自动签到与账号保活，对外提供 OpenAI 兼容接
 
 # 账号卡片底部「导入本机…」按钮的 label，用于定位整个按钮（含 Tooltip 包裹）。
 IMPORT_LOCAL_LABEL = "导入本机国际版账号\":\"导入本机账号"
+
+# 账号列表空状态。原文案让用户「点击上方「导入本机国际版账号」」，但那个按钮已在
+# v0.3.11 随桌面专属功能一并移除——属于**指向不存在入口**的误导文案，必须改掉。
+# 国际版：整段 `<p>` 替换（原文含 {Ct} / {sF(t)} 两处插值，只能整块换）。
+EMPTY_HINT_AI = (
+    'p.jsx("p",{className:"mt-2 text-xs leading-5",'
+    'children:"国际版账号请用上方「OAuth 扫码添加」或「导入备份」添加。"})'
+)
+# 国内版：纯字符串，等长改写即可。
+EMPTY_HINT_CN = "暂无账号。请用上方「OAuth 扫码添加」添加。"
+EMPTY_HINT_CN_OLD = "暂无账号。点击上方按钮导入本机账号或扫码登录。"
 
 
 def patch(bin_path):
@@ -435,6 +473,31 @@ def patch(bin_path):
         rb'(text-muted-foreground",children:")(\xe8\x87\xaa\xe5\x8a\xa8\xe7\xad\xbe\xe5\x88\xb0[^"]*)(")',
         _build_subtitle,
         "settings page subtitle",
+    )
+
+    # --- 13. 账号列表空状态：国际版引导段 --------------------------------------
+    # 原文案引导用户去点「导入本机国际版账号」，而该按钮已随桌面功能移除。
+    # 整块换成一个容器里真实可用的入口提示（原 `<p>` 含两处 JSX 插值，只能整块替换）。
+    data = _replace_call(
+        data,
+        "请确认本机已安装 ".encode("utf-8"),
+        EMPTY_HINT_AI.encode("utf-8"),
+        "empty-state hint (intl accounts)",
+    )
+
+    # --- 14. 账号列表空状态：国内版一句话 --------------------------------------
+    def _build_empty_cn(m):
+        new = EMPTY_HINT_CN.encode("utf-8")
+        old = m.group(0)
+        if len(new) > len(old):
+            return None
+        return new + b" " * (len(old) - len(new))
+
+    data = _replace_padded(
+        data,
+        re.escape(EMPTY_HINT_CN_OLD.encode("utf-8")),
+        _build_empty_cn,
+        "empty-state hint (cn accounts)",
     )
 
     # --- 收尾校验 -------------------------------------------------------------
