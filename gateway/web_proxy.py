@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 import httpx
@@ -54,9 +55,27 @@ COLLAPSE_SCRIPT = """
   aside.wb-collapsed nav a span.wb-nav-label {
     display: none !important;
   }
+  /* 隐藏不适合容器环境的 Mac 专属提示或无法在容器运行的桌面授权区域 */
+  .wb-mac-cleanup {
+    display: none !important;
+  }
 </style>
 <script>
 (function() {
+  function sanitizeMacUI() {
+    // 自动清理 DOM 中残存的 Finder / 完全磁盘访问提示
+    document.querySelectorAll("button, a, div, p, li, span").forEach(el => {
+      const text = el.innerText || "";
+      if (text.includes("在 Finder 中显示") || text.includes("打开完全磁盘访问") || text.includes("workbuddy-switch.app")) {
+        if (el.tagName === "BUTTON" || el.tagName === "A") {
+          el.style.display = "none";
+        } else if (text.includes("如何授权") || text.includes("完全磁盘访问")) {
+          el.closest(".border, .rounded-md, div")?.classList.add("wb-mac-cleanup");
+        }
+      }
+    });
+  }
+
   function initCollapse() {
     const aside = document.querySelector("aside");
     if (!aside || document.getElementById("wb-collapse-btn")) return;
@@ -99,12 +118,33 @@ COLLAPSE_SCRIPT = """
     aside.appendChild(btn);
   }
 
-  const observer = new MutationObserver(() => initCollapse());
+  function run() {
+    initCollapse();
+    sanitizeMacUI();
+  }
+
+  const observer = new MutationObserver(() => run());
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener("DOMContentLoaded", initCollapse);
+  window.addEventListener("DOMContentLoaded", run);
 })();
 </script>
 """
+
+def clean_mac_content(content: bytes) -> bytes:
+    # 替换前端中针对 Mac/Finder 相关的文案为容器化友好文案
+    replacements = [
+        (b"http://[IP]:57890", b""),
+        (b"http://127.0.0.1:57890", b""),
+        (b"http://localhost:57890", b""),
+        (b":57890", b":18090"),
+        (b"/icon-transparent.png", b"/icon.png"),
+        # Mac 相关文案替换
+        (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"), # 在 Finder 中显示 -> 在文件管理器中显示
+        (b"workbuddy-switch.app", b"workbuddy-switch"),
+    ]
+    for old, new in replacements:
+        content = content.replace(old, new)
+    return content
 
 @app.get("/icon.png")
 @app.get("/icon-transparent.png")
@@ -140,20 +180,11 @@ async def proxy_all(request: Request, path: str):
         content = r.content
         media_type = r.headers.get("content-type", "")
         if "text/html" in media_type:
-            # 替换写死的接口端口与图标，并注入侧边栏收纳脚本
-            content = content.replace(b"http://[IP]:57890", b"")
-            content = content.replace(b"http://127.0.0.1:57890", b"")
-            content = content.replace(b"http://localhost:57890", b"")
-            content = content.replace(b":57890", b":18090")
-            content = content.replace(b"/icon-transparent.png", b"/icon.png")
+            content = clean_mac_content(content)
             if b"</body>" in content:
                 content = content.replace(b"</body>", f"{COLLAPSE_SCRIPT}</body>".encode("utf-8"))
         elif "javascript" in media_type:
-            content = content.replace(b"http://[IP]:57890", b"")
-            content = content.replace(b"http://127.0.0.1:57890", b"")
-            content = content.replace(b"http://localhost:57890", b"")
-            content = content.replace(b":57890", b":18090")
-            content = content.replace(b"/icon-transparent.png", b"/icon.png")
+            content = clean_mac_content(content)
             
         res_headers = {k: v for k, v in r.headers.items() if k.lower() not in ["content-encoding", "content-length", "transfer-encoding"]}
         return Response(
