@@ -7,8 +7,14 @@ from typing import Dict, Any, List
 
 TRACKER_FILE = Path("/data/.wb-switch/token_stats_logs.json")
 
-def record_token_usage(model: str, input_tokens: int, output_tokens: int, duration_sec: float = 0.0, request_id: str = ""):
-    """网关实时调用记录"""
+def record_token_usage(model: str, input_tokens: int, output_tokens: int, duration_sec: float = 0.0, request_id: str = "",
+                       account_id: str = "", account_name: str = "", variant: str = ""):
+    """网关实时调用记录。
+
+    必须带上实际服务该请求的账号（account_id / account_name）：
+    官方的按账号用量接口只对「当前账号」返回模型明细，其余账号的 models 恒为空，
+    因此只有靠网关自己归因，账号卡片才能显示「其他账号调用了哪些模型」。
+    """
     try:
         TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
         logs = []
@@ -35,6 +41,9 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
             "output": output_tokens,
             "total": input_tokens + output_tokens,
             "duration": round(duration_sec, 2),
+            "accountId": account_id or "",
+            "accountName": account_name or "",
+            "variant": variant or "",
             "source": "gateway"
         }
         
@@ -99,28 +108,27 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
                 "output": out,
                 "total": inp + out,
                 "duration": 1.1,
+                # 云端流水自带 accountId / accountName，必须带上：
+                # 否则这些记录会全部落进「未归属账号」，把用量分布挤成 100% 一条。
+                "accountId": cr.get("accountId") or "",
+                "accountName": cr.get("accountName") or "",
+                "variant": "",
                 "source": "official"
             })
             existing_ids.add(req_id)
 
     daily_map = {}
     model_map = {}
+    project_map = {}
+    daily_by_model = {}
     total_input = 0
     total_output = 0
-    
-    for l in logs:
-        d = l.get("date", "")
-        m = l.get("model", "unknown")
-        inp = l.get("input", 0)
-        out = l.get("output", 0)
-        tot = inp + out
-        
-        total_input += inp
-        total_output += out
-        
-        if d not in daily_map:
-            daily_map[d] = {
-                "key": d,
+
+    def _bucket(store, key, extra=None):
+        entry = store.get(key)
+        if entry is None:
+            entry = {
+                "key": key,
                 "total": 0,
                 "input": 0,
                 "output": 0,
@@ -130,30 +138,63 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
                 "records": 0,
                 "cacheHitRate": None
             }
+            if extra:
+                entry.update(extra)
+            store[key] = entry
+        return entry
+
+    for l in logs:
+        d = l.get("date", "")
+        m = l.get("model", "unknown")
+        inp = l.get("input", 0)
+        out = l.get("output", 0)
+        tot = inp + out
+
+        total_input += inp
+        total_output += out
+
+        _bucket(daily_map, d)
         daily_map[d]["total"] += tot
         daily_map[d]["input"] += inp
         daily_map[d]["output"] += out
         daily_map[d]["uncachedInput"] += inp
         daily_map[d]["records"] += 1
-        
-        if m not in model_map:
-            model_map[m] = {
-                "model": m,
-                "total": 0,
-                "input": 0,
-                "output": 0,
-                "cacheRead": 0,
-                "cacheWrite": 0,
-                "records": 0
-            }
+
+        _bucket(model_map, m, {"model": m})
         model_map[m]["total"] += tot
         model_map[m]["input"] += inp
         model_map[m]["output"] += out
         model_map[m]["records"] += 1
 
+        # 用量分布「按账号」：网关自己归因，官方接口不会给出非当前账号的明细
+        pname = l.get("accountName") or l.get("accountId") or "未归因（升级前记录）"
+        _bucket(project_map, pname)
+        project_map[pname]["total"] += tot
+        project_map[pname]["input"] += inp
+        project_map[pname]["output"] += out
+        project_map[pname]["uncachedInput"] += inp
+        project_map[pname]["records"] += 1
+
+        # 趋势图「按模型筛选」：dailyByModel[模型] = 该模型按天的序列
+        per_model = daily_by_model.setdefault(m, {})
+        _bucket(per_model, d)
+        per_model[d]["total"] += tot
+        per_model[d]["input"] += inp
+        per_model[d]["output"] += out
+        per_model[d]["uncachedInput"] += inp
+        per_model[d]["records"] += 1
+
     daily_list = sorted(list(daily_map.values()), key=lambda x: x["key"])
+    # 前端 ave 组件用 models[].key 构建「按模型筛选」下拉，必须带 key
     models_list = sorted(list(model_map.values()), key=lambda x: x["total"], reverse=True)
-    
+    for item in models_list:
+        item.setdefault("key", item.get("model"))
+    projects_list = sorted(list(project_map.values()), key=lambda x: x["total"], reverse=True)
+    daily_by_model_list = {
+        k: sorted(list(v.values()), key=lambda x: x["key"])
+        for k, v in daily_by_model.items()
+    }
+
     # 按照前端 fve 与 uve 组件的严苛结构填充每个请求项
     # 显式按时间倒序（最新在前），避免上游 / 云端流水拼接顺序影响展示方向
     logs_sorted = sorted(
@@ -168,12 +209,15 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         inp = l.get("input", 0)
         out = l.get("output", 0)
         tot = inp + out
+        acc_name = l.get("accountName") or l.get("accountId") or "未归因（升级前记录）"
 
         requests_list.append({
             "id": req_id,
             "sessionId": req_id,
             "title": f"调用 #{req_id[:8]}",
-            "project": "WorkBuddy Gateway",
+            "project": acc_name,
+            "account": acc_name,
+            "accountId": l.get("accountId") or "",
             "timestamp": ts,
             "time": l.get("time", ""),
             "model": l.get("model", "unknown"),
@@ -189,6 +233,25 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
 
     # 只保留最近 200 条避免内存膨胀与首页渲染压力；前端默认每页 50
     requests_list = requests_list[:200]
+
+    # 消耗最高的调用：单次 API 调用按 Token 从高到低，标题用模型名、副标题用账号 + 请求号
+    sessions_list = []
+    for l in sorted(logs, key=lambda x: (x.get("total") or 0), reverse=True)[:50]:
+        req_id = str(l.get("id", "req-0"))
+        acc_name = l.get("accountName") or l.get("accountId") or "未归因（升级前记录）"
+        sessions_list.append({
+            "key": req_id,
+            "sessionId": req_id,
+            "title": l.get("model", "unknown"),
+            "project": acc_name,
+            "account": acc_name,
+            "input": l.get("input", 0),
+            "output": l.get("output", 0),
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "uncachedInput": l.get("input", 0),
+            "records": 1,
+        })
 
     total_tokens = total_input + total_output
     records_count = len(logs)
@@ -209,14 +272,14 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             "coverageEndAt": None,
             "coverageStartAt": None,
             "daily": daily_list,
-            "dailyByModel": {},
+            "dailyByModel": daily_by_model_list,
             "filesScanned": records_count,
             "hours": [],
             "models": models_list,
             "parseErrors": 0,
-            "projects": [],
+            "projects": projects_list,
             "requests": requests_list,
-            "sessions": [],
+            "sessions": sessions_list,
             "source": src_name,
             "summary": summary
         }

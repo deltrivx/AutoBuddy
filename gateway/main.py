@@ -487,6 +487,10 @@ async def chat_completions(request: Request):
     variant = acc.get("variant", "ai")
     base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
 
+    # 归因信息：写入 token 流水，供账号卡片与「用量分布/消耗最高的调用」使用。
+    served_account_id = _account_id(acc) or ""
+    served_account_name = _account_label(acc)
+
     requested_stream = body.get("stream", False)
     
     raw_model = body.get("model", "hy3")
@@ -543,7 +547,10 @@ async def chat_completions(request: Request):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     duration_sec=duration,
-                    request_id=req_id
+                    request_id=req_id,
+                    account_id=served_account_id,
+                    account_name=served_account_name,
+                    variant=variant,
                 )
 
         return StreamingResponse(
@@ -596,7 +603,10 @@ async def chat_completions(request: Request):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             duration_sec=duration,
-            request_id=response_id
+            request_id=response_id,
+            account_id=served_account_id,
+            account_name=served_account_name,
+            variant=variant,
         )
 
         result_payload = {

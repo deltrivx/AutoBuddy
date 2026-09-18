@@ -99,6 +99,28 @@ COLLAPSE_SCRIPT = """
     font-size: 11px;
     color: var(--muted-foreground, #6b7280);
   }
+  /* 官方底层唯一的 CLI 绑定账号标记 */
+  .wb-pool-bound {
+    font-size: 11px;
+    line-height: 1.8;
+    padding: 1px 9px;
+    border-radius: 999px;
+    border: 1px dashed rgba(186, 117, 23, 0.55);
+    background: rgba(239, 159, 39, 0.12);
+    color: #854f0b;
+    cursor: help;
+  }
+  /* 设置页：区分「官方 CLI 绑定」与「网关账号池」的说明条 */
+  .wb-cli-scope-note {
+    margin: 0 0 4px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    background: rgba(59, 130, 246, 0.08);
+    color: var(--foreground, #374151);
+    font-size: 12px;
+    line-height: 1.6;
+  }
   /* 标记最近一次 API 请求实际使用的账号 */
   .wb-pool-last {
     font-size: 11px;
@@ -301,7 +323,9 @@ COLLAPSE_SCRIPT = """
           var stat = usage[m];
           if (stat) {
             var parts = [];
-            if (stat.requests != null) parts.push("调用 " + stat.requests + " 次");
+            if (stat.gatewayCalls) parts.push("网关调用 " + stat.gatewayCalls + " 次");
+            if (stat.tokens) parts.push("约 " + stat.tokens + " Token");
+            if (stat.requests != null) parts.push("官方记录 " + stat.requests + " 次");
             if (stat.credit != null) parts.push("积分 " + Math.round(stat.credit * 100) / 100);
             if (parts.length) tag.title = parts.join(" · ");
           } else if (used[m]) {
@@ -366,13 +390,10 @@ COLLAPSE_SCRIPT = """
       var byName = {};
       data.accounts.forEach(function (a) { if (a.name) byName[a.name] = a; });
 
-      // 各账号被分摊到的请求次数（网关进程启动后累计），用于直观确认「是否并行」。
+      // 各账号被分摊到的请求次数（网关进程启动后累计）。
       var counts = {};
       (data.selectionCounts || []).forEach(function (c) { counts[c.accountId] = c.count; });
-      var enabledTotal = 0;
-      data.accounts.forEach(function (a) { if (a.enabled && a.usable) enabledTotal++; });
-      var grandTotal = 0;
-      (data.selectionCounts || []).forEach(function (c) { grandTotal += c.count; });
+      var cliBoundId = data.cliActiveAccountId || null;
 
       pending.forEach(function (card) {
         if (card.querySelector(".wb-pool-bar")) return;
@@ -412,16 +433,6 @@ COLLAPSE_SCRIPT = """
           );
         };
 
-        var hint = document.createElement("span");
-        hint.className = "wb-pool-hint";
-        if (data.mode === "manual") {
-          hint.textContent = "当前固定使用：" + (data.manualAccountId === acc.id ? "本账号" : "其他账号");
-        } else if (enabledTotal > 1) {
-          hint.textContent = "自动分配中，并发请求会分摊到 " + enabledTotal + " 个已启用账号";
-        } else {
-          hint.textContent = "自动分配中，当前只有 1 个账号参与调用";
-        }
-
         var count = document.createElement("span");
         var n = counts[acc.id] || 0;
         count.className = "wb-pool-count" + (n > 0 ? " wb-pool-count-hot" : "");
@@ -430,25 +441,23 @@ COLLAPSE_SCRIPT = """
         bar.appendChild(toggle);
         bar.appendChild(pin);
         bar.appendChild(count);
-        bar.appendChild(hint);
+
+        // 「当前 CLI 账号」是官方底层的单账号绑定（只维护一个 activeAccountId），
+        // 与网关账号池无关。只给被绑定的那张卡打标记，避免看起来「只有它有状态」。
+        if (cliBoundId && cliBoundId === acc.id) {
+          var bound = document.createElement("span");
+          bound.className = "wb-pool-bound";
+          bound.textContent = "官方 CLI 绑定";
+          bound.title = "官方底层服务只维护一个 CLI 绑定账号，仅影响 CodeBuddy CLI 助手；"
+            + "网关 API 调用按账号池在全部启用账号间分摊，与此无关。";
+          bar.appendChild(bound);
+        }
 
         if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
           var last = document.createElement("span");
           last.className = "wb-pool-last";
           last.textContent = "最近调用";
           bar.appendChild(last);
-        }
-
-        if (grandTotal > 0) {
-          var reset = document.createElement("button");
-          reset.className = "wb-pool-btn";
-          reset.textContent = "清零统计";
-          reset.onclick = function () {
-            fetch("/api/account-pool/selections/reset", { method: "POST" })
-              .then(function () { wbPoolCache = null; refreshPool(); })
-              .catch(function () {});
-          };
-          bar.appendChild(reset);
         }
 
         (card.querySelector("section") || card).appendChild(bar);
@@ -469,12 +478,27 @@ COLLAPSE_SCRIPT = """
     injectAccountPool();
   }
 
+  function injectCliScopeNote() {
+    // 设置页「CodeBuddy CLI 自动轮换」里的「当前 CLI 账号」是官方底层的单账号绑定，
+    // 与网关账号池是两套机制。不加说明会让人以为「只有这一个账号在生效」。
+    var section = document.querySelector("#settings-auto-rotate");
+    if (!section || section.querySelector(".wb-cli-scope-note")) return;
+    var note = document.createElement("div");
+    note.className = "wb-cli-scope-note";
+    note.textContent = "说明：此处「当前 CLI 账号」由官方底层服务（:57890）维护，全局只有一个，"
+      + "仅决定 CodeBuddy CLI 助手绑定哪个账号；网关的 API 调用不受它影响，"
+      + "会按账号池在全部「参与调用」的账号之间分摊。";
+    var body = section.querySelector("div");
+    if (body) { section.insertBefore(note, body); } else { section.appendChild(note); }
+  }
+
   function run() {
     initCollapse();
     sanitizeMacUI();
     enforceTitle();
     injectAccountModels();
     injectAccountPool();
+    injectCliScopeNote();
   }
 
   const observer = new MutationObserver(() => run());
@@ -496,6 +520,28 @@ def clean_mac_content(content: bytes) -> bytes:
     ]
     for old, new in replacements:
         content = content.replace(old, new)
+
+    # 文案适配：官方 UI 是给桌面客户端写的，容器里已无 IDE / CLI 能力。
+    # 这里做**等长**字节替换，保证不破坏 JS 资源里的偏移与语法。
+    #   按项目 -> 按账号            ：网关没有「项目」概念，只有账号归因
+    #   消耗最高的会话 -> 消耗最高的调用：每条网关请求就是一次独立调用
+    #   主页副标题                  ：去掉已移除的 IDE / CLI 措辞，改为容器真实能力
+    text_replacements = [
+        ("按项目", "按账号"),
+        ("消耗最高的会话", "消耗最高的调用"),
+        ("按本地聚合 Token 从高到低排列。", "按单次调用 Token 从高到低排列。"),
+        (
+            "统一管理 WorkBuddy、CodeBuddy IDE 与 CodeBuddy CLI 账号、积分和签到状态。",
+            "统一管理 WorkBuddy、账号池与 OpenAI 兼容网关服务、积分和签到状态。",
+        ),
+    ]
+    for old, new in text_replacements:
+        old_b = old.encode("utf-8")
+        new_b = new.encode("utf-8")
+        if len(old_b) != len(new_b):
+            raise ValueError(f"等长替换被破坏: {old} ({len(old_b)}) != {new} ({len(new_b)})")
+        content = content.replace(old_b, new_b)
+
     return content
 
 @app.get("/icon.png")
@@ -522,12 +568,31 @@ GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/
 
 @app.get("/api/account-pool")
 async def account_pool_get():
-    """转发到网关的账号池状态（WebUI 控制台用）。"""
+    """转发到网关的账号池状态（WebUI 控制台用）。
+
+    额外并入官方底层的 CodeBuddy CLI 绑定账号：这是**单账号**概念（官方只维护一个
+    activeAccountId），与网关的账号池是两套东西，前端需要把两者区分展示。
+    """
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
-            return Response(content=r.content, status_code=r.status_code,
-                            media_type="application/json")
+            try:
+                payload = r.json() or {}
+            except Exception:
+                return Response(content=r.content, status_code=r.status_code,
+                                media_type="application/json")
+            try:
+                cli = await client.get(BACKEND_URL + "/api/codebuddy-cli/status")
+                cli_data = cli.json() or {}
+                payload["cliActiveAccountId"] = cli_data.get("activeAccountId")
+                payload["cliActiveAccountName"] = cli_data.get("activeAccountName")
+                payload["cliConfigured"] = cli_data.get("configured")
+            except Exception:
+                payload["cliActiveAccountId"] = None
+                payload["cliActiveAccountName"] = None
+                payload["cliConfigured"] = None
+            return Response(content=json.dumps(payload, ensure_ascii=False),
+                            status_code=r.status_code, media_type="application/json")
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)}), status_code=502,
                         media_type="application/json")
@@ -597,33 +662,62 @@ async def _fetch_gateway_catalog() -> list:
 async def account_models_api():
     """按账号返回「可用模型 + 已调用模型」，供账号卡片动态展示。
 
-    上游没有「按账号返回可用模型」的接口。可用清单取网关 /v1/models（自动发现，
-    不硬编码）；已调用清单由官方 usage 缓存里带 accountId + model 的记录聚合得出。
-    没有任何调用记录的新账号同样会拿到完整可用清单，只是 used 为空。
+    两个数据源合并，缺一不可：
+
+    1. **网关自身流水**（`token_stats_logs.json`，带 accountId/accountName）——
+       实时、覆盖所有账号，是「这个账号到底调用过哪些模型」的权威来源。
+    2. **官方 usage 缓存**（`official_usage_cache.json`）—— 上游只对「当前账号」
+       返回模型明细，其余账号的 `models` 恒为空，因此只能作为补充。
+
+    只靠官方缓存会出现「只有一个账号有调用记录」的假象，这正是必须叠加网关归因的原因。
     """
     import json as _json
     data_dir = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
     cache_file = data_dir / "official_usage_cache.json"
+    tracker_file = data_dir / "token_stats_logs.json"
 
     catalog = await _fetch_gateway_catalog()
     result = {"accounts": {}, "catalog": catalog, "discovered": []}
-
-    try:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            payload = (_json.load(f) or {}).get("payload") or {}
-    except Exception:
-        payload = {}
 
     agg = {}
 
     def _touch(account_id, account_name):
         entry = agg.get(account_id)
         if entry is None:
-            entry = {"name": account_name, "used": set(), "usage": {}}
+            entry = {"name": account_name, "used": set(), "usage": {}, "gatewayCalls": 0}
             agg[account_id] = entry
         elif not entry.get("name") and account_name:
             entry["name"] = account_name
         return entry
+
+    # ---- 来源 1：网关自身归因（实时、全账号） ----
+    try:
+        with open(tracker_file, "r", encoding="utf-8") as f:
+            tracker_logs = _json.load(f) or []
+    except Exception:
+        tracker_logs = []
+
+    for rec in tracker_logs:
+        if not isinstance(rec, dict):
+            continue
+        aid = rec.get("accountId")
+        model = rec.get("model")
+        if not aid or not model:
+            continue
+        entry = _touch(str(aid), rec.get("accountName"))
+        entry["used"].add(str(model))
+        entry["gatewayCalls"] += 1
+        stat = entry["usage"].setdefault(str(model), {"requests": 0, "credit": None, "gatewayCalls": 0})
+        stat["requests"] = (stat.get("requests") or 0) + 1
+        stat["gatewayCalls"] = (stat.get("gatewayCalls") or 0) + 1
+        stat["tokens"] = (stat.get("tokens") or 0) + int(rec.get("total") or 0)
+
+    # ---- 来源 2：官方 usage 缓存（可能只覆盖当前账号） ----
+    try:
+        with open(cache_file, "r", encoding="utf-8") as f:
+            payload = (_json.load(f) or {}).get("payload") or {}
+    except Exception:
+        payload = {}
 
     for acc in payload.get("accounts") or []:
         if not isinstance(acc, dict) or not acc.get("accountId"):
@@ -638,10 +732,9 @@ async def account_models_api():
     for item in payload.get("models") or []:
         if isinstance(item, dict) and item.get("model"):
             for aid in list(agg.keys()):
-                agg[aid]["usage"].setdefault(item["model"], {
-                    "requests": item.get("requestCount"),
-                    "credit": item.get("credit"),
-                })
+                stat = agg[aid]["usage"].setdefault(item["model"], {"requests": None, "credit": None})
+                if stat.get("credit") is None:
+                    stat["credit"] = item.get("credit")
 
     for req in payload.get("requests") or []:
         if not isinstance(req, dict) or not req.get("accountId") or not req.get("model"):
@@ -659,6 +752,7 @@ async def account_models_api():
             "models": catalog or sorted(entry["used"]),
             "used": used,
             "usage": entry.get("usage") or {},
+            "gatewayCalls": entry.get("gatewayCalls", 0),
         }
     result["discovered"] = sorted(all_used)
     return result
@@ -694,8 +788,12 @@ async def proxy_all(request: Request, path: str):
             content = clean_mac_content(content)
             if b"</body>" in content:
                 content = content.replace(b"</body>", f"{COLLAPSE_SCRIPT}</body>".encode("utf-8"))
+            # 注入脚本与文案替换都发生在响应阶段，而 assets 文件名带 hash 不会变。
+            # 不禁止缓存的话，浏览器会一直用旧副本，表现为「改了但没生效」。
+            res_headers["cache-control"] = "no-store, must-revalidate"
         elif "javascript" in media_type:
             content = clean_mac_content(content)
+            res_headers["cache-control"] = "no-store, must-revalidate"
             
         return Response(
             content=content,
