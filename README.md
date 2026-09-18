@@ -1,18 +1,19 @@
-# WorkBuddy Switch (Enhanced with OpenAI Gateway)
+# WorkBuddy Switch (Docker & OpenAI API Gateway)
 
-WorkBuddy / CodeBuddy 多账号管理与自动签到保活系统，内置 OpenAI 兼容网关。
+<p align="center">
+  <img src="./icon.png" width="128" height="128" alt="WorkBuddy Switch Logo" />
+</p>
 
-- **WebUI (18080)**：WorkBuddy 原生多账号管理、扫码登录、自动打卡签到、积分到期监控、自动轮换。
-- **OpenAI API Gateway (18081)**：提供标准 `/v1/chat/completions` 与 `/v1/models` 接口，自动桥接当前激活账号的 Token，供 Sub2API、OpenClaw、DeepSeek Harness 等外部 Agent 直接调用 `hy4`、`claude-3-7-sonnet` 等大模型。
+统一管理 WorkBuddy、CodeBuddy IDE 与 CodeBuddy CLI 账号、积分和签到状态，并自带 OpenAI 兼容格式 API 网关。
 
-## 运行方式 (Docker)
+## 功能特性
 
-```bash
-docker run -d \
-  --name WorkBuddy-Switch \
-  --restart unless-stopped \
-  -p 18080:18080 \
-  -p 18081:18081 \
-  -v /mnt/user/appdata/workbuddy-switch/data:/data \
-  ghcr.io/deltrivx/workbuddy-switch:latest
-```
+- **账号管理与自动保活**：支持 Google 国际版与微信国内版扫码/导入，自动打卡与 Token 刷新保活
+- **OpenAI 兼容 API 网关**：支持将上游模型（`hy4`, `deepseek-v3`, `kimi-k3`, `hy3`）转为标准 OpenAI `/v1/chat/completions` 接口
+- **自动双向流/非流转换**：无缝对接 Sub2API、OpenClaw、DSH、NextChat 等下游客户端
+- **WebUI 统一面板**：提供直观的账号与配额管理控制台
+
+## 端口说明
+
+- `18090`：WebUI 控制面板
+- `18091`：OpenAI 兼容 API 接口 (`http://<HOST>:18091/v1`)

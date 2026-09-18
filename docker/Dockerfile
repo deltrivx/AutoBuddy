@@ -29,7 +29,13 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 WORKDIR /app
 COPY gateway/ /app/gateway/
 COPY entrypoint.sh /entrypoint.sh
+COPY patch/ /app/patch/
+COPY icon.png /app/icon.png
 RUN chmod +x /entrypoint.sh
+
+# 对 wb-switch 二进制进行补丁修复：解决 WebUI 硬编码 57890 跨域请求报错问题
+RUN python3 /app/patch/patch_binary.py /usr/lib/node_modules/workbuddy-switch/bin/wb-switch-linux-x64 \
+    && python3 /app/patch/patch_binary.py /usr/lib/node_modules/workbuddy-switch/node_modules/workbuddy-switch-linux-x64/bin/wb-switch-linux-x64 2>/dev/null || true
 
 ENV HOME=/data
 ENV WB_DATA_DIR=/data/.wb-switch
