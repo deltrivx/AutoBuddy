@@ -177,11 +177,15 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 | `GET /health` | 健康检查，含 `models_count`、`models_auto_discovered` 与轮询状态快照 |
 | `GET /rotate/status` | 查看账号轮询开关、间隔、上次检查与上次切换结果 |
 | `POST /rotate/run` | 立即执行一次账号可用性检测与切换 |
-| `GET /account-pool/status` | 账号池状态：模式、启用列表、首选账号、各账号 `enabled` / `usable` / `active` |
+| `GET /account-pool/status` | 账号池状态：模式、启用列表、首选账号、各账号 `enabled` / `usable` / `active`、`selectionCounts` |
 | `PUT /account-pool/config` | 更新账号池配置（`mode` / `enabledAccountIds` / `manualAccountId`） |
+| `GET /account-pool/selections` | 并发分摊观测：`total` / `distinctAccounts` / `counts`（各账号命中次数）/ `recent` |
+| `POST /account-pool/selections/reset` | 清空选账号流水，便于重新压测观测 |
 | `GET /api/account-models` | Web 控制台用：按账号返回「可用模型 + 已调用模型 + 用量」 |
 | `GET /api/account-pool` | Web 控制台用：转发网关账号池状态 |
 | `PUT /api/account-pool` | Web 控制台用：转发账号池配置更新 |
+| `GET /api/account-pool/selections` | Web 控制台用：转发并发分摊观测数据 |
+| `POST /api/account-pool/selections/reset` | Web 控制台用：转发清零选账号流水 |
 
 ### 账号池与手动指定账号
 
@@ -210,6 +214,32 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 也支持写在请求体里：`{"account_id": "<account-id>", ...}`。网关会在转发上游前把它从 body 中摘除。
 
 > 指定账号不存在、被停用或已过期时返回 `409`；账号池为空时返回 `401`。
+
+#### 验证并发分摊
+
+想确认「多个账号是否真的在并行分摊」，而不是只用了其中一个：
+
+```bash
+# 1) 清零观测流水
+curl -X POST http://localhost:18091/account-pool/selections/reset
+
+# 2) 并发打 20 个请求（任意客户端，关键是同时发出）
+
+# 3) 看分摊结果
+curl -s http://localhost:18091/account-pool/selections
+```
+
+返回的 `counts` 会列出每个账号的命中次数；`distinctAccounts` 表示实际参与调用的账号数。
+也可以直接看容器日志：
+
+```bash
+docker logs WorkBuddy-Switch 2>&1 | grep '\[pool\]'
+```
+
+WebUI 里每个账号卡片上也会实时显示 `已调用 N 次` 计数徽章。
+
+> 语义边界：**一条对话请求仍由单个账号完成**（不拆请求，避免上下文与计费混乱），
+> **多个同时到达的独立请求才会分摊到不同账号**。
 
 ---
 

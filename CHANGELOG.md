@@ -4,6 +4,21 @@
 
 ---
 
+## [v0.3.7] - 2026-09-18
+
+### 📊 并发分摊可观测性：实证「1 国内 + 4 国际」确实并行调用
+- **补齐网关侧归因能力**。此前网关只有 `lastSelectedAccountId` 这**一个全局值**，只能回答「最近一次是谁」，无法回答「并发时是不是真的分摊」。上游用量接口 `/billing/meter/get-user-request-usage` 对全部 5 个账号均返回 `404`，也走不通按账号归因。
+- **新增选账号流水**：`_remember_selection()` 现在把每次选账号写入 `_SELECTION_LOG`（环形，保留最近 200 条），同时 `print` 一行 `[pool] <source> -> <name> (<id>)`，可直接 `docker logs` 核对。
+- **新增接口**：
+  - `GET /account-pool/selections?limit=N` —— 返回 `total` / `distinctAccounts` / `counts`（各账号命中次数）/ `recent`（最近明细）。
+  - `POST /account-pool/selections/reset` —— 清空流水，便于做干净的压测观测。
+  - `GET /account-pool/status` 增加 `selectionCounts` 字段。
+- **修掉一个并发隐患**：`next_index` 的「读-改-写」不是原子操作，若选账号逻辑被放进线程池执行，两个并发请求会读到同一 index 而双双落到同一账号（表现为「并发时其实只用了其中一个」）。现在用 `_SELECTION_LOCK` 把「取号 + 递增」串起来。
+- **WebUI**：账号卡片控制条新增 `已调用 N 次` 计数徽章（有调用时高亮）与 `清零统计` 按钮，自动分配提示改为「并发请求会分摊到 N 个已启用账号」；新增 `/api/account-pool/selections`、`/api/account-pool/selections/reset` 两条代理路由。
+- **实测结论（20 并发，model=hy3）**：`HTTP 200 × 20`，20 个并发请求**均匀分摊到全部 5 个账号，各 4 次**；并发墙钟 3.91s vs 单请求均值 3.33s，确为并发而非串行。`docker logs` 中的 `[pool] auto` 序列为严格轮询的 4 轮完整覆盖。
+
+---
+
 ## [v0.3.6] - 2026-09-18
 
 ### 🎯 补上真正的那两个按钮：卡片头部图标行的 IDE / CLI 槽位

@@ -108,6 +108,21 @@ COLLAPSE_SCRIPT = """
     border: 1px dashed rgba(120, 120, 120, 0.45);
     color: var(--muted-foreground, #6b7280);
   }
+  /* 该账号累计被分摊到的请求次数（进程启动后累计） */
+  .wb-pool-count {
+    font-size: 11px;
+    line-height: 1.8;
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: rgba(120, 120, 120, 0.14);
+    color: var(--muted-foreground, #6b7280);
+    font-variant-numeric: tabular-nums;
+  }
+  .wb-pool-count-hot {
+    background: rgba(59, 130, 246, 0.16);
+    color: #1d4ed8;
+    font-weight: 600;
+  }
   /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
     margin-top: 12px;
@@ -351,6 +366,14 @@ COLLAPSE_SCRIPT = """
       var byName = {};
       data.accounts.forEach(function (a) { if (a.name) byName[a.name] = a; });
 
+      // 各账号被分摊到的请求次数（网关进程启动后累计），用于直观确认「是否并行」。
+      var counts = {};
+      (data.selectionCounts || []).forEach(function (c) { counts[c.accountId] = c.count; });
+      var enabledTotal = 0;
+      data.accounts.forEach(function (a) { if (a.enabled && a.usable) enabledTotal++; });
+      var grandTotal = 0;
+      (data.selectionCounts || []).forEach(function (c) { grandTotal += c.count; });
+
       pending.forEach(function (card) {
         if (card.querySelector(".wb-pool-bar")) return;
         var h3 = card.querySelector("h3");
@@ -391,12 +414,22 @@ COLLAPSE_SCRIPT = """
 
         var hint = document.createElement("span");
         hint.className = "wb-pool-hint";
-        hint.textContent = data.mode === "manual"
-          ? ("当前固定使用：" + (data.manualAccountId === acc.id ? "本账号" : "其他账号"))
-          : "当前为自动分配，多个并发请求会分摊到已启用账号";
+        if (data.mode === "manual") {
+          hint.textContent = "当前固定使用：" + (data.manualAccountId === acc.id ? "本账号" : "其他账号");
+        } else if (enabledTotal > 1) {
+          hint.textContent = "自动分配中，并发请求会分摊到 " + enabledTotal + " 个已启用账号";
+        } else {
+          hint.textContent = "自动分配中，当前只有 1 个账号参与调用";
+        }
+
+        var count = document.createElement("span");
+        var n = counts[acc.id] || 0;
+        count.className = "wb-pool-count" + (n > 0 ? " wb-pool-count-hot" : "");
+        count.textContent = "已调用 " + n + " 次";
 
         bar.appendChild(toggle);
         bar.appendChild(pin);
+        bar.appendChild(count);
         bar.appendChild(hint);
 
         if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
@@ -404,6 +437,18 @@ COLLAPSE_SCRIPT = """
           last.className = "wb-pool-last";
           last.textContent = "最近调用";
           bar.appendChild(last);
+        }
+
+        if (grandTotal > 0) {
+          var reset = document.createElement("button");
+          reset.className = "wb-pool-btn";
+          reset.textContent = "清零统计";
+          reset.onclick = function () {
+            fetch("/api/account-pool/selections/reset", { method: "POST" })
+              .then(function () { wbPoolCache = null; refreshPool(); })
+              .catch(function () {});
+          };
+          bar.appendChild(reset);
         }
 
         (card.querySelector("section") || card).appendChild(bar);
@@ -497,6 +542,33 @@ async def account_pool_put(request: Request):
             r = await client.put(GATEWAY_BASE_URL + "/account-pool/config",
                                  content=body,
                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.get("/api/account-pool/selections")
+async def account_pool_selections(limit: int = 50):
+    """转发选账号分摊流水：各账号被分摊到的请求次数 + 最近明细。"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/selections",
+                                 params={"limit": limit})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.post("/api/account-pool/selections/reset")
+async def account_pool_selections_reset():
+    """清空选账号流水，便于重新观测并发分摊。"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/account-pool/selections/reset")
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:

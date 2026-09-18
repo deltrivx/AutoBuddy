@@ -1,7 +1,9 @@
 import os
 import json
 import asyncio
+import threading
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -259,6 +261,16 @@ _ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {
     "last_selected_source": None,
 }
 
+# 选账号流水：仅用于观测「并发请求到底分摊到了哪些账号」。
+# 只保留最近 200 条，避免无界增长。
+_SELECTION_LOG: List[Dict[str, Any]] = []
+_SELECTION_LOG_MAX = 200
+
+# 同步路由跑在 FastAPI 的线程池里，next_index 的「读-改-写」不是原子操作。
+# 不加锁时两个并发请求会读到同一个 index，双双落到同一账号 —— 表现为
+# 「并发时其实只用了其中一个账号」。这里用锁把「取号 + 递增」串起来。
+_SELECTION_LOCK = threading.Lock()
+
 
 def _remember_selection(acc: Dict[str, Any], source: str) -> Dict[str, Any]:
     """记录本次选中的账号与来源。
@@ -266,9 +278,41 @@ def _remember_selection(acc: Dict[str, Any], source: str) -> Dict[str, Any]:
     三条路径（请求指定 / 手动固定 / 自动轮询）都要落记录，否则状态接口里
     lastSelectedAccountId 会停留在上一次自动分配的结果，无法反映真实调用账号。
     """
-    _ACCOUNT_POOL_RUNTIME["last_selected_id"] = _account_id(acc)
+    account_id = _account_id(acc)
+    _ACCOUNT_POOL_RUNTIME["last_selected_id"] = account_id
     _ACCOUNT_POOL_RUNTIME["last_selected_source"] = source
+
+    entry = {
+        "ts": int(time.time() * 1000),
+        "accountId": account_id,
+        "accountName": _account_label(acc),
+        "source": source,
+    }
+    with _SELECTION_LOCK:
+        _SELECTION_LOG.append(entry)
+        del _SELECTION_LOG[:-_SELECTION_LOG_MAX]
+    # 打日志便于 docker logs 直接核对并发分摊情况
+    print(f"[pool] {source:7s} -> {entry['accountName']} ({account_id})", flush=True)
     return acc
+
+
+def selection_stats(limit: int = 20) -> Dict[str, Any]:
+    """汇总选账号流水：各账号命中次数 + 最近若干条明细。"""
+    with _SELECTION_LOCK:
+        entries = list(_SELECTION_LOG)
+    counts = Counter(str(e.get("accountId")) for e in entries)
+    names: Dict[str, str] = {}
+    for e in entries:
+        names.setdefault(str(e.get("accountId")), str(e.get("accountName")))
+    return {
+        "total": len(entries),
+        "distinctAccounts": len(counts),
+        "counts": [
+            {"accountId": aid, "accountName": names.get(aid), "count": c}
+            for aid, c in counts.most_common()
+        ],
+        "recent": entries[-limit:],
+    }
 
 
 def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -296,9 +340,11 @@ def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any
 
     if not candidates:
         return None
-    index = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0)) % len(candidates)
+    # 取号与递增必须在同一把锁内完成，否则并发下会重复命中同一账号。
+    with _SELECTION_LOCK:
+        index = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0)) % len(candidates)
+        _ACCOUNT_POOL_RUNTIME["next_index"] = (index + 1) % len(candidates)
     acc = candidates[index]
-    _ACCOUNT_POOL_RUNTIME["next_index"] = (index + 1) % len(candidates)
     return _remember_selection(acc, "auto")
 
 
@@ -308,6 +354,7 @@ def account_pool_status():
     config = _load_pool_config()
     enabled_ids = {str(x) for x in config.get("enabledAccountIds") or []}
     now_ms = int(time.time() * 1000)
+    stats = selection_stats(limit=10)
     return {
         "mode": config.get("mode"),
         "manualAccountId": config.get("manualAccountId"),
@@ -315,6 +362,7 @@ def account_pool_status():
         "enabledAccountIds": sorted(enabled_ids),
         "lastSelectedAccountId": _ACCOUNT_POOL_RUNTIME.get("last_selected_id"),
         "lastSelectedSource": _ACCOUNT_POOL_RUNTIME.get("last_selected_source"),
+        "selectionCounts": stats["counts"],
         "accounts": [
             {
                 "id": _account_id(a),
@@ -327,6 +375,23 @@ def account_pool_status():
             for a in accounts
         ],
     }
+
+
+@app.get("/account-pool/selections")
+def account_pool_selections(limit: int = 50):
+    """选账号分摊观测：各账号命中次数 + 最近明细。
+
+    用于回答「并发请求是否真的分摊到了多个账号，而不是只用了其中一个」。
+    """
+    return selection_stats(limit=max(1, min(int(limit), _SELECTION_LOG_MAX)))
+
+
+@app.post("/account-pool/selections/reset")
+def reset_account_pool_selections():
+    """清空选账号流水，便于做干净的压测观测。"""
+    with _SELECTION_LOCK:
+        _SELECTION_LOG.clear()
+    return {"ok": True, "total": 0}
 
 
 @app.put("/account-pool/config")
