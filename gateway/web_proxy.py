@@ -449,7 +449,31 @@ COLLAPSE_SCRIPT = """
 </script>
 """
 
-def clean_mac_content(content: bytes) -> bytes:
+# 前端 UI 文案的**等长**改写表（只在 JS 资源上应用，见 clean_mac_content 的 is_js）。
+# 都是「官方 UI 的措辞与本容器的语义不符」这类适配，不是删功能：
+#   按项目 -> 按账号              ：网关没有「项目」概念，只有账号归因
+#   消耗最高的会话 -> 消耗最高的调用：每条网关请求就是一次独立调用
+#
+# 账号页副标题（原「统一管理 WorkBuddy、CodeBuddy IDE 与 CodeBuddy CLI 账号…」）
+# **不在这里**。它在 v0.3.14 已改由二进制补丁在源头修掉——留在响应层会是一条永远
+# 命不中的死规则。选型原则：源头能改的结构性文案优先放二进制补丁，因为
+# `_replace_padded` 要求锚点**恰好命中 1 次**，失配会让 CI 直接失败；而这里的
+# `content.replace` 命不中时**静默无操作**（v0.3.10 那类事故的同一形状）。
+TEXT_REPLACEMENTS = [
+    ("按项目", "按账号"),
+    ("消耗最高的会话", "消耗最高的调用"),
+    ("按本地聚合 Token 从高到低排列。", "按单次调用 Token 从高到低排列。"),
+]
+
+# 已告警过的「未命中」串，避免每次请求都刷屏。
+_MISS_WARNED: set = set()
+
+
+def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
+    # 兜底网：二进制补丁已把 `const X="http://127.0.0.1:57890";` 换成本页 origin，
+    # 所以当前上游产物里已**不含**任何 `:57890`（实测 HTML / JS 均 0 处），这 4 条命中数
+    # 正常就是 0。保留是因为补丁只认那一个 `const` 形态——上游若在别处新写一个硬编码
+    # 后端地址，这里仍能把端口掰到 18090。**命中 0 属预期，不是失效。**
     replacements = [
         (b"http://[IP]:57890", b""),
         (b"http://127.0.0.1:57890", b""),
@@ -464,24 +488,21 @@ def clean_mac_content(content: bytes) -> bytes:
 
     # 文案适配：官方 UI 是给桌面客户端写的，容器里已无 IDE / CLI 能力。
     # 这里做**等长**字节替换，保证不破坏 JS 资源里的偏移与语法。
-    #   按项目 -> 按账号            ：网关没有「项目」概念，只有账号归因
-    #   消耗最高的会话 -> 消耗最高的调用：每条网关请求就是一次独立调用
-    #   主页副标题                  ：去掉已移除的 IDE / CLI 措辞，改为容器真实能力
-    text_replacements = [
-        ("按项目", "按账号"),
-        ("消耗最高的会话", "消耗最高的调用"),
-        ("按本地聚合 Token 从高到低排列。", "按单次调用 Token 从高到低排列。"),
-        (
-            "统一管理 WorkBuddy、CodeBuddy IDE 与 CodeBuddy CLI 账号、积分和签到状态。",
-            "统一管理 WorkBuddy、账号池与 OpenAI 兼容网关服务、积分和签到状态。",
-        ),
-    ]
-    for old, new in text_replacements:
-        old_b = old.encode("utf-8")
-        new_b = new.encode("utf-8")
-        if len(old_b) != len(new_b):
-            raise ValueError(f"等长替换被破坏: {old} ({len(old_b)}) != {new} ({len(new_b)})")
-        content = content.replace(old_b, new_b)
+    # 这些是**前端 UI 文案**，只存在于 JS 资源里；HTML 外壳（几百字节）里没有它们。
+    # 所以只在 is_js 时做，否则每个 HTML 请求都会误报「未命中」（v0.3.15 初版就踩了）。
+    if is_js:
+        for old, new in TEXT_REPLACEMENTS:
+            old_b = old.encode("utf-8")
+            new_b = new.encode("utf-8")
+            if len(old_b) != len(new_b):
+                raise ValueError(f"等长替换被破坏: {old} ({len(old_b)}) != {new} ({len(new_b)})")
+            if content.count(old_b) == 0:
+                # 上游改了文案就会走到这里。**不要静默通过**（v0.3.10 的教训就是静默失效），
+                # 但也别让请求 500——每个串只告警一次，避免刷屏。
+                if old not in _MISS_WARNED:
+                    _MISS_WARNED.add(old)
+                    print(f"[webui] 文案替换未命中（上游文案可能已变，请复核）: {old}")
+            content = content.replace(old_b, new_b)
 
     return content
 
@@ -715,7 +736,8 @@ async def proxy_all(request: Request, path: str):
             # 不禁止缓存的话，浏览器会一直用旧副本，表现为「改了但没生效」。
             res_headers["cache-control"] = "no-store, must-revalidate"
         elif "javascript" in media_type:
-            content = clean_mac_content(content)
+            # is_js=True：TEXT_REPLACEMENTS 是前端 UI 文案，只存在于 JS 资源里。
+            content = clean_mac_content(content, is_js=True)
             res_headers["cache-control"] = "no-store, must-revalidate"
             
         return Response(
