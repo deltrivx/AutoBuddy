@@ -102,6 +102,16 @@ def patch(bin_path: str) -> None:
         "backend endpoint -> window.location.origin",
     )
 
+    # 账号卡片头部（账号名右侧）的图标版产品槽位。
+    # 与底部 footer 是同一组功能：WorkBuddy / CodeBuddy IDE / CodeBuddy CLI，
+    # 无论显示成「当前账号」徽章还是「设为当前账号 / 切换到…」按钮，
+    # 都会去调用宿主桌面程序，容器里必然失败。整行移除。
+    data = _nullify_expr(
+        data,
+        b'm.jsxs("div",{className:"ml-auto flex shrink-0 items-center gap-1"',
+        "account-card header product icon row",
+    )
+
     # 账号卡片底部三个产品槽位：
     # WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 都只会调用宿主桌面程序。
     # 物理移除整个 footer，避免按钮和 Kb 当前账号徽章再次出现。
