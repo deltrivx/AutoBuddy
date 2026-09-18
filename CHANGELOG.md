@@ -4,6 +4,47 @@
 
 ---
 
+## [v0.3.12] - 2026-09-18
+
+### 🧹 验收补漏：把最后两个 CLI 残留从二进制里物理删掉
+
+v0.3.11 上线后做了一次全量验收（容器 / 二进制 / DOM / 接口 / 日志 / 数据六个维度）。
+主体全部达标，但**二进制全量扫描**又揪出两个漏网项——它们都藏在「被删掉的 JS 逻辑原本会遮住」的位置。
+
+#### 1. 账号页「CodeBuddy CLI 接入」引导横幅（真实残留）
+
+- 该横幅结构为 `cond && p.jsxs(Bt,{className:"mb-4",children:[图标, 标题, 正文, 按钮]})`，
+  其中 `cond = ie&&(!ie.configured||!mi&&!ie.helperSupportsAccountIds||ie.migrationRequired||ie.syncPending)`。
+- 关键点：**它的显示与否取决于官方后端返回的状态**。v0.3.11 只删掉了「切换 CLI 账号」等按钮，
+  横幅本身没进移除清单；而当前后端恰好返回 `configured=true` 使 `cond` 为假，所以**它没显示**——
+  但只要后端改口（未接入 / 需升级 / 待同步），横幅就会带着「接入 CLI / 更新 CLI 认证 / 升级 CLI helper」
+  按钮重新冒出来。这正是用户要求的「彻底移除，不是隐藏」没有做到的最后一处。
+- 处理：新增第 10 条补丁，用带引号的完整标题 `"CodeBuddy CLI 接入"` 作锚点（另外两处同名串出现在
+  toast 文案 `"CodeBuddy CLI 接入已更新"` / `"…失败"` 里，后接「已」/「失」而非引号，不会误匹配），
+  回溯两层把整个 `p.jsxs(Bt,{className:"mb-4",…})` 抹成 `null`（1570 字节）。
+- 顺带说明：账号页右上角那组桌面状态图标（WorkBuddy / IDE / CLI）**及其悬停提示**
+  （`CodeBuddy CLI：已接入 · 当前账号：xxx`）已被 v0.3.11 的第 5 条补丁整块覆盖，属于死代码，无需再动。
+
+#### 2. `/api/token-stats` 里两个死重的数据来源桶
+
+- `gateway/token_tracker.py` 原本返回 4 个 source 桶：`workbuddy` / `workbuddy-ai` / `codebuddy-cli` /
+  `codebuddy-ide`。后两者对应已移除的桌面 CLI / IDE，容器里不存在本地会话日志，是纯死重。
+- 处理：只保留 `workbuddy` 与 `workbuddy-ai` 两条真实产品线。
+- **安全性已核对**：官方前端取用逻辑是
+  `w = x.includes(n) ? n : x.includes("workbuddy") ? "workbuddy" : x[0]`，再 `sources.find(s=>s.source===n)`。
+  即使 localStorage 里残留 `codebuddy-cli`，也会自动回落到 `workbuddy`，不会白屏。
+
+#### 3. 验收结论（未改动项，仅供留档）
+
+- 补丁**这次真的生效了**：容器内二进制 md5 `6622cd46…` ≠ 官方 pristine `8e1dd723…`，字节数 12861680 不变。
+- 设置页只剩 `settings-appearance` + `settings-auto-checkin`；账号池 `.wb-pool-bar` 注入正常（3 / 4 个），
+  说明此前做的账号池、归因、Token 契约等优化**一项没丢**。
+- 首页副标题由响应层等长替换（`web_proxy.py` 里带 `len(old)==len(new)` 断言，不等长直接抛错，不会静默失败）。
+- 遗留（未处理，待用户决定）：`/data/.codebuddy/`（18 MB，v0.3.9 CLI 运行时数据）与
+  `/data/.codebuddy-rotate/`（helper.cjs + state.json）是 CLI 时代留下的持久化残留，删掉即可回收。
+
+---
+
 ## [v0.3.11] - 2026-09-18
 
 ### 🔍 回归修复 + 范围收窄：彻底移除 CLI，功能只留「自动签到」与「提供 API」

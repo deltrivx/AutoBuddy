@@ -287,10 +287,13 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
     return {
         "generatedAt": int(time.time() * 1000),
         "rangeDays": None,
+        # 只保留两条真实存在的产品线。官方前端原本还有 codebuddy-cli /
+        # codebuddy-ide 两个来源，它们对应已移除的桌面端 CLI/IDE 功能，
+        # 容器里不存在本地会话日志，属于死重，已一并去掉。
+        # 前端取用逻辑（已核对）：优先当前选中项，否则回落 workbuddy，
+        # 最后才用 sources[0] —— 因此删桶不会让页面空白。
         "sources": [
             make_source_obj("workbuddy"),
-            make_source_obj("workbuddy-ai"),
-            make_source_obj("codebuddy-cli"),
-            make_source_obj("codebuddy-ide")
+            make_source_obj("workbuddy-ai")
         ]
     }

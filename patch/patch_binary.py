@@ -394,7 +394,24 @@ def patch(bin_path):
         "codebuddy-cli request-detail button",
     )
 
-    # --- 10. 设置页：移除所有只对宿主桌面有意义的 section ----------------------
+    # --- 10. 账号页「CodeBuddy CLI 接入」引导横幅 -------------------------------
+    # 结构：``cond && p.jsxs(Bt,{className:"mb-4",children:[图标, 标题, 正文, 按钮]})``
+    # 其中 cond = ``ie&&(!ie.configured||…||ie.syncPending)`` —— 依赖**官方后端状态**，
+    # 只要后端返回 migrationRequired / syncPending / 未接入，横幅就会冒出来。
+    # 容器里没有 CodeBuddy CLI，这个横幅永远不该出现，所以物理抹掉。
+    #
+    # marker 用带引号的完整标题（``"CodeBuddy CLI 接入"``）以保证唯一：
+    # 另外两处同名字符串出现在 toast 文案 ``"CodeBuddy CLI 接入已更新"`` /
+    # ``"CodeBuddy CLI 接入失败"`` 里，后面紧跟的是「已」/「失」而不是引号，不会误匹配。
+    # 回溯两层：p.jsx(wa,{children:标题}) -> p.jsxs(Bt,{className:"mb-4",…})。
+    data = _nullify_marker(
+        data,
+        b'"CodeBuddy CLI \xe6\x8e\xa5\xe5\x85\xa5"',
+        "codebuddy-cli onboarding banner",
+        levels=2,
+    )
+
+    # --- 11. 设置页：移除所有只对宿主桌面有意义的 section ----------------------
     # appearance(外观) 与 auto-checkin(自动签到) 是容器里真正可用的两项，保留。
     for section_id, label in (
         ("settings-auto-rotate", "settings: CodeBuddy CLI auto-rotate"),
@@ -405,7 +422,7 @@ def patch(bin_path):
     ):
         data = _nullify_section(data, section_id, label)
 
-    # --- 11. 设置页总描述文案 --------------------------------------------------
+    # --- 12. 设置页总描述文案 --------------------------------------------------
     def _build_subtitle(m):
         text = SETTINGS_SUBTITLE.encode("utf-8")
         inner = m.group(2)
