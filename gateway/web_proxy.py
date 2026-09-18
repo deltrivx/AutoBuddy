@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
@@ -64,11 +65,39 @@ COLLAPSE_SCRIPT = """
   .wb-mac-block-hide {
     display: none !important;
   }
-  /* 容器内无宿主桌面客户端，「CodeBuddy IDE / CLI 当前账号」状态徽章（绿色对勾）
-     永远只能显示「未运行 / 未安装」，属误导。用属性选择器直接命中，无需 JS 介入 */
-  [role="status"][aria-label="CodeBuddy IDE 当前账号"],
-  [role="status"][aria-label="CodeBuddy CLI 当前账号"] {
-    display: none !important;
+  /* 账号池控制条：启用开关 + 设为首选 */
+  .wb-pool-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .wb-pool-btn {
+    font-size: 11px;
+    line-height: 1.8;
+    padding: 1px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(120, 120, 120, 0.35);
+    background: transparent;
+    color: var(--foreground, #374151);
+    cursor: pointer;
+  }
+  .wb-pool-btn:hover { background: rgba(120, 120, 120, 0.12); }
+  .wb-pool-btn-on {
+    border-color: rgba(34, 197, 94, 0.55);
+    background: rgba(34, 197, 94, 0.14);
+    color: #15803d;
+  }
+  .wb-pool-btn-primary {
+    border-color: rgba(59, 130, 246, 0.55);
+    background: rgba(59, 130, 246, 0.14);
+    color: #1d4ed8;
+    font-weight: 600;
+  }
+  .wb-pool-hint {
+    font-size: 11px;
+    color: var(--muted-foreground, #6b7280);
   }
   /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
@@ -105,25 +134,10 @@ COLLAPSE_SCRIPT = """
 </style>
 <script>
 (function() {
-  // 账号卡片上的切换按钮：会启动宿主机 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI，
-  // 或把凭证写进宿主机目录，容器内没有对应可执行文件与桌面环境，点击必然失败。
-  var WB_UNSUPPORTED_LABELS = [
-    "设为 WorkBuddy 当前账号",
-    "切换到 CodeBuddy IDE",
-    "正在切换 CodeBuddy IDE",
-    "设为 CodeBuddy CLI 当前账号",
-    "正在切换 CodeBuddy CLI 当前账号"
-  ];
-
-  // 右上角/卡片里的「当前账号」状态图标（role=status）。
-  // 容器内只有 WorkBuddy 账号是真实可用的；IDE 与 CLI 没有宿主程序，
-  // 官方仍会因状态文件存在而误报为已接入，这里只保留真实可用的那个。
-  var WB_UNSUPPORTED_STATUS = [
-    "CodeBuddy IDE 当前账号",
-    "CodeBuddy CLI 当前账号"
-  ];
-
-  // 需要按文案匹配的按钮（设置页里的 CLI 接入入口）
+  // 账号卡片上的 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 切换按钮与「当前账号」徽章
+  // 已在 patch/patch_binary.py 里从二进制物理移除（它们只会调用宿主桌面程序），
+  // 这里不再需要任何按 aria-label 遮掩的逻辑。
+  // 下面保留的是设置页里少量纯文案入口，二进制里没有稳定的结构锚点，只能按文案隐藏。
   var WB_UNSUPPORTED_TEXTS = [
     "接入 CLI",
     "更新 CLI 认证",
@@ -141,40 +155,7 @@ COLLAPSE_SCRIPT = """
 
       if (text && WB_UNSUPPORTED_TEXTS.indexOf(text) !== -1) {
         el.classList.add("wb-mac-btn-hide");
-        return;
       }
-
-      const label = (el.getAttribute("aria-label") || "").trim();
-
-      // 账号卡片上的切换按钮：容器内无法执行，隐藏
-      if (label && WB_UNSUPPORTED_LABELS.some(k => label === k || label.indexOf(k) === 0)) {
-        el.classList.add("wb-mac-btn-hide");
-        return;
-      }
-
-      // 右上角「当前账号」状态图标：IDE / CLI 在容器内没有宿主程序，
-      // 官方仅凭状态文件误报为已接入，这里只保留真实可用的 WorkBuddy 图标
-      if (label && WB_UNSUPPORTED_STATUS.indexOf(label) !== -1) {
-        el.classList.add("wb-mac-btn-hide");
-      }
-    });
-
-    // 右上角那组桌面程序状态图标（WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 是否在运行）：
-    // 检测对象是宿主机上的桌面客户端，容器里根本不存在，状态恒为「未运行 / 未安装」，
-    // 悬停提示反而误导，整组移除。
-    var statusIcons = Array.prototype.slice.call(document.querySelectorAll("span"))
-      .filter(function (el) {
-        return el.classList.contains("group") && el.classList.contains("relative") &&
-          el.classList.contains("inline-flex") && el.classList.contains("cursor-default");
-      });
-    statusIcons.forEach(function (el) { el.classList.add("wb-mac-btn-hide"); });
-    statusIcons.forEach(function (el) {
-      var parent = el.parentElement;
-      if (!parent || parent.classList.contains("wb-mac-btn-hide")) return;
-      var left = Array.prototype.slice.call(parent.children).some(function (child) {
-        return !child.classList.contains("wb-mac-btn-hide");
-      });
-      if (!left) parent.classList.add("wb-mac-btn-hide");
     });
 
     // 「无 Buddy」表示该账号没有旅行伙伴、无法参与自动旅行，属负面且无参考价值的状态
@@ -321,11 +302,117 @@ COLLAPSE_SCRIPT = """
       .catch(function () {});
   }
 
+  var wbPoolCache = null;
+
+  function effectiveEnabledIds(data) {
+    if (data.allEnabledByDefault) {
+      return (data.accounts || []).map(function (a) { return a.id; });
+    }
+    return (data.enabledAccountIds || []).slice();
+  }
+
+  function savePool(payload, done) {
+    fetch("/api/account-pool", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res && res.status) { wbPoolCache = res.status; }
+        if (done) done(res);
+      })
+      .catch(function () {});
+  }
+
+  function injectAccountPool() {
+    // 官方那三个「设为当前账号 / 切换到 IDE / CLI」按钮依赖宿主桌面程序，
+    // 已在二进制里物理移除。这里注入容器自己的账号池控制：
+    //   [启用/停用] 决定该账号是否参与 API 调用；[设为首选] 固定只用这一个账号。
+    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
+    if (!cards.length) return;
+
+    var pending = cards.filter(function (c) {
+      return !c.querySelector(".wb-pool-bar") && c.querySelector("h3");
+    });
+    if (!pending.length) return;
+
+    function render(data) {
+      if (!data || !data.accounts) return;
+      var byName = {};
+      data.accounts.forEach(function (a) { if (a.name) byName[a.name] = a; });
+
+      pending.forEach(function (card) {
+        if (card.querySelector(".wb-pool-bar")) return;
+        var h3 = card.querySelector("h3");
+        if (!h3) return;
+        var acc = byName[(h3.textContent || "").trim()];
+        if (!acc) return;
+
+        var bar = document.createElement("div");
+        bar.className = "wb-pool-bar";
+
+        var toggle = document.createElement("button");
+        toggle.className = "wb-pool-btn" + (acc.enabled ? " wb-pool-btn-on" : "");
+        toggle.textContent = acc.enabled ? "参与调用 · 点击停用" : "已停用 · 点击启用";
+        toggle.onclick = function () {
+          var ids = effectiveEnabledIds(data);
+          var idx = ids.indexOf(acc.id);
+          if (idx >= 0) { ids.splice(idx, 1); } else { ids.push(acc.id); }
+          var next = { enabledAccountIds: ids };
+          if (idx >= 0 && data.mode === "manual" && data.manualAccountId === acc.id) {
+            next.mode = "auto";
+            next.manualAccountId = null;
+          }
+          savePool(next, function () { wbPoolCache = null; refreshPool(); });
+        };
+
+        var pinned = data.mode === "manual" && data.manualAccountId === acc.id;
+        var pin = document.createElement("button");
+        pin.className = "wb-pool-btn" + (pinned ? " wb-pool-btn-primary" : "");
+        pin.textContent = pinned ? "首选账号 · 点击改回自动分配" : "设为首选";
+        pin.onclick = function () {
+          savePool(
+            pinned
+              ? { mode: "auto", manualAccountId: null }
+              : { mode: "manual", manualAccountId: acc.id },
+            function () { wbPoolCache = null; refreshPool(); }
+          );
+        };
+
+        var hint = document.createElement("span");
+        hint.className = "wb-pool-hint";
+        hint.textContent = data.mode === "manual"
+          ? ("当前固定使用：" + (data.manualAccountId === acc.id ? "本账号" : "其他账号"))
+          : "当前为自动分配，多个并发请求会分摊到已启用账号";
+
+        bar.appendChild(toggle);
+        bar.appendChild(pin);
+        bar.appendChild(hint);
+        (card.querySelector("section") || card).appendChild(bar);
+      });
+    }
+
+    if (wbPoolCache) { render(wbPoolCache); return; }
+    fetch("/api/account-pool", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) { wbPoolCache = data; render(data); })
+      .catch(function () {});
+  }
+
+  function refreshPool() {
+    Array.prototype.slice.call(document.querySelectorAll(".wb-pool-bar")).forEach(function (el) {
+      el.remove();
+    });
+    injectAccountPool();
+  }
+
   function run() {
     initCollapse();
     sanitizeMacUI();
     enforceTitle();
     injectAccountModels();
+    injectAccountPool();
   }
 
   const observer = new MutationObserver(() => run());
@@ -367,7 +454,37 @@ async def token_stats_api(request: Request):
     stats = get_aggregated_token_stats()
     return stats
 
-GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", "http://127.0.0.1:18091/v1/models")
+GATEWAY_BASE_URL = os.getenv("WB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
+GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")
+
+
+@app.get("/api/account-pool")
+async def account_pool_get():
+    """转发到网关的账号池状态（WebUI 控制台用）。"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.put("/api/account-pool")
+async def account_pool_put(request: Request):
+    """转发账号池配置更新（模式 / 启用列表 / 首选账号）。"""
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.put(GATEWAY_BASE_URL + "/account-pool/config",
+                                 content=body,
+                                 headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
 
 
 async def _fetch_gateway_catalog() -> list:

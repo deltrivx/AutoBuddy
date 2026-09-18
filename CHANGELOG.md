@@ -4,6 +4,29 @@
 
 ---
 
+## [v0.3.4] - 2026-09-18
+
+### 🧩 账号调用按钮物理切除 + 账号池并行 / 手动调度
+- **账号卡片三个产品槽位彻底物理移除**：
+  - WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 三个「设为当前账号 / 当前账号」槽位位于同一个 `m.jsxs("footer", ...)` 容器内，现已整块从二进制中物理删除。
+  - 其他页面复用的 `Kb`「当前账号」徽章组件同步清空返回值（`_nullify_function_return`，保留函数声明结构）。
+  - 不再依赖 CSS 属性选择器或 `MutationObserver` 遮掩——此前两次遮掩方案在 React 异步渲染时机下均被证实不可靠。
+- **补丁引擎升级为「锚点 + 括号配平扫描」**：
+  - `patch_binary.py` 弃用硬编码超长字节串，改为 `_scan_expr()` 括号配平扫描。
+  - 扫描器正确跳过字符串与模板字面量（含 `` `${}` `` 递归），因此 `className` 中的 `[ ] ( )` 不再干扰表达式边界判定。
+  - 所有替换仍严格等长，二进制偏移表不受影响（实测 1059826 → 1059826 字节）。
+- **清理配套遮掩代码**：`web_proxy.py` 删除 `WB_UNSUPPORTED_LABELS` / `WB_UNSUPPORTED_STATUS` 常量、`aria-label` 匹配逻辑、右上角 `statusIcons` 遮掩块及对应 CSS，避免「二进制已移除 + 前端还在遮掩」的双份维护。
+- **账号池：请求级并行调用**：
+  - 新增 `account_pool_config.json` 与 `select_account()`。一条对话请求仍由单个账号完成（避免上下文与计费错乱），但**多个并发请求会分摊到不同账号**，不再全部挤在 `activeAccountId`。
+  - 账号池候选先按 `enabledAccountIds` 过滤，再剔除 token 缺失或已过期的账号。
+- **启用开关 + 手动首选**：
+  - 每个账号卡片新增 `[参与调用 · 点击停用]` 与 `[设为首选]` 两个按钮（由 `web_proxy.py` 注入，走控制台 `/api/account-pool`）。
+  - `enabledAccountIds` 为空数组时语义为「全部启用」；保存为明确列表后即成为白名单。
+  - `mode=manual` 时固定使用 `manualAccountId`；单次请求也可用 `X-WorkBuddy-Account-Id` 请求头或 `body.account_id` 临时指定账号。
+- **新增账号池接口**：网关 `GET /account-pool/status`、`PUT /account-pool/config`；控制台 `GET/PUT /api/account-pool` 转发。
+
+---
+
 ## [v0.3.3] - 2026-09-18
 
 ### 🔧 容器界面残留再清理 + 请求明细排序与精简

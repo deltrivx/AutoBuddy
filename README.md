@@ -35,7 +35,7 @@
 ## 🌟 核心特性与优化亮点
 
 - 🖥️ **专为容器深度提纯的 WebUI**：
-  - **源码级剔除无效桌面功能**：彻底从字节码切除「导入本机账号」及「权限检测」模块，避免任何无法在 Linux 执行的报错。
+  - **源码级剔除无效桌面功能**：从二进制物理切除「导入本机账号」「权限检测」模块与账号卡片上的 IDE / CLI 切换槽位，避免任何无法在 Linux 执行的报错与死按钮。
   - **侧边栏可折叠收纳**：支持 `220px` 与 `68px` 极简图标模式智能切换，具备 `localStorage` 状态持久化记忆。
   - **纯粹清晰的 Token 统计**：剔除冗余分组 Tab 按钮与「Token 总览」重复标题，自研网关实时统计与云端历史融合引擎，告别空白报表。
   - **全链路图标高清对齐**：侧边栏、Header 与 Favicon 全面同步 Unraid 512×512 官方圆角高清图标。
@@ -51,12 +51,20 @@
   - 每个账号下方自动展示**该账号可调用的模型**，数据源为网关 `/v1/models`，与全局清单保持一致，不做任何硬编码。
   - 已真实调用过的模型高亮标注，悬停可见「调用次数 / 消耗积分」。
   - 刚添加、尚无调用记录的新账号同样完整展示可用清单，并标注「暂无调用记录」。
-- 🔄 **容器原生的账号轮询**：
-  - 官方轮询依赖重启宿主机桌面客户端，容器内无法执行。网关内置轮询每 30 分钟检测当前账号可用性并自动切换，维护 `rotate/state.json`。
+- 🔄 **容器原生的账号轮询与账号池**：
+  - 官方轮询依赖重启宿主机桌面客户端，容器内无法执行。网关内置轮询每 30 分钟检测当前账号可用性并自动切换，维护 `rotate/state.json`（仅用于健康状态与「当前账号」展示）。
+  - **API 请求不再走 `activeAccountId`**，而是每次请求调用 `select_account()` 按账号池配置独立选账号，实现并发分摊。
   - 可通过 `GATEWAY_ROTATE_ENABLED` / `GATEWAY_ROTATE_INTERVAL_MINUTES` 调整，状态见 `/rotate/status`。
 - 🧹 **彻底移除容器内无效的桌面状态**：
-  - 移除右上角 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 三个桌面程序状态图标（容器内无宿主客户端，状态恒为「未运行 / 未安装」，只造成误导）。
-  - 隐藏「设为 IDE / CLI 当前账号」等必然失败的按钮与「无 Buddy」等无参考价值的状态。
+  - 账号卡片上的 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 三个「设为当前账号」槽位，**已从二进制里物理删除**（整块 `footer` 表达式抹除，DOM 中不再生成），不再依赖任何 CSS 遮掩。
+  - 右上角三个桌面程序状态图标同样物理移除（容器内无宿主客户端，状态恒为「未运行 / 未安装」，只造成误导）。
+  - `Kb`「当前账号」徽章组件返回值同步清空；配套的前端遮掩代码已全部删除，避免双份维护。
+- 🎛️ **账号池：并行调用 + 手动首选**：
+  - **请求级选账号**：一条对话请求仍由单个账号完成（上下文与计费不串），但**多个并发请求会分摊到不同账号**，不再全部挤在 `activeAccountId`。
+  - **启用开关**：每个账号卡片带 `[参与调用 · 点击停用]` 按钮，`enabledAccountIds` 为空数组时语义为「全部启用」，保存明确列表后即成为白名单。
+  - **手动首选**：`[设为首选]` 固定只用某一个账号（`mode=manual`），再点一次回到自动分配。
+  - **单次覆盖**：请求可带 `X-WorkBuddy-Account-Id` 头或 `body.account_id` 临时指定账号，不影响全局配置。
+  - 候选账号会自动剔除 token 缺失或 `expiresAt` 已过期的账号。
 - 🔗 **开箱即用对接 Sub2API**：
   - 完美适配 Sub2API 的 `apikey` 鉴权与渠道路由，实现多账号轮询与配额统计。
   - Sub2API 的 `model_mapping` 为手工白名单，不会自动发现上游模型；可将网关 `/v1/models` 的返回同步进去。
@@ -169,7 +177,39 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 | `GET /health` | 健康检查，含 `models_count`、`models_auto_discovered` 与轮询状态快照 |
 | `GET /rotate/status` | 查看账号轮询开关、间隔、上次检查与上次切换结果 |
 | `POST /rotate/run` | 立即执行一次账号可用性检测与切换 |
+| `GET /account-pool/status` | 账号池状态：模式、启用列表、首选账号、各账号 `enabled` / `usable` / `active` |
+| `PUT /account-pool/config` | 更新账号池配置（`mode` / `enabledAccountIds` / `manualAccountId`） |
 | `GET /api/account-models` | Web 控制台用：按账号返回「可用模型 + 已调用模型 + 用量」 |
+| `GET /api/account-pool` | Web 控制台用：转发网关账号池状态 |
+| `PUT /api/account-pool` | Web 控制台用：转发账号池配置更新 |
+
+### 账号池与手动指定账号
+
+账号池配置持久化在 `/data/.wb-switch/account_pool_config.json`：
+
+```json
+{
+  "mode": "auto",
+  "enabledAccountIds": [],
+  "manualAccountId": null
+}
+```
+
+- `enabledAccountIds` **空数组 = 全部启用**（默认）；写入明确列表后即为白名单。
+- `mode: "manual"` 时固定使用 `manualAccountId`；`"auto"` 时在已启用账号间 round-robin。
+
+单次请求临时指定账号（不影响全局配置）：
+
+```bash
+curl -X POST http://localhost:18091/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-WorkBuddy-Account-Id: <account-id>" \
+  -d '{"model": "deepseek-v3", "messages": [{"role": "user", "content": "你好！"}]}'
+```
+
+也支持写在请求体里：`{"account_id": "<account-id>", ...}`。网关会在转发上游前把它从 body 中摘除。
+
+> 指定账号不存在、被停用或已过期时返回 `409`；账号池为空时返回 `401`。
 
 ---
 

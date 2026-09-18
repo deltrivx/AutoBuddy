@@ -29,6 +29,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.3.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
 
@@ -184,34 +185,155 @@ def get_model_catalog() -> List[Dict[str, Any]]:
 
 
 def get_active_account() -> Optional[Dict[str, Any]]:
-    accounts_file = DATA_DIR / "accounts.json"
+    """返回轮询状态里的「当前账号」，仅用于健康状态与兼容旧接口。
+
+    API 请求不再调用这里：请求会走 select_account()，按照账号池配置独立选账号，
+    这样多个并发请求可以分配到不同账号，而不是全部卡在 activeAccountId。
+    """
+    accounts = _load_accounts()
     state_file = DATA_DIR / "rotate" / "state.json"
-    
-    if not accounts_file.exists():
-        return None
+    active_id = None
+    if state_file.exists():
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                active_id = (json.load(f) or {}).get("activeAccountId")
+        except Exception:
+            pass
+    if active_id:
+        for acc in accounts:
+            if acc.get("id") == active_id or acc.get("uid") == active_id:
+                return acc
+    return accounts[0] if accounts else None
+
+
+def _load_pool_config() -> Dict[str, Any]:
+    """读取账号池配置；不存在时默认所有有 token 的账号启用、自动分配。"""
+    default = {
+        "mode": "auto",  # auto | manual
+        "enabledAccountIds": [],  # 空数组表示所有账号启用
+        "manualAccountId": None,
+        "updatedAt": None,
+    }
     try:
-        with open(accounts_file, "r", encoding="utf-8") as f:
-            accounts = json.load(f)
-        if not accounts:
-            return None
-            
-        active_id = None
-        if state_file.exists():
-            try:
-                with open(state_file, "r", encoding="utf-8") as f:
-                    state = json.load(f)
-                    active_id = state.get("activeAccountId")
-            except Exception:
-                pass
-                
-        if active_id:
-            for acc in accounts:
-                if acc.get("id") == active_id or acc.get("uid") == active_id:
-                    return acc
-        return accounts[0]
+        if ACCOUNT_POOL_FILE.exists():
+            with open(ACCOUNT_POOL_FILE, "r", encoding="utf-8") as f:
+                value = json.load(f) or {}
+            if isinstance(value, dict):
+                default.update(value)
     except Exception as e:
-        print(f"Error loading accounts: {e}")
+        print(f"[account-pool] failed to load config: {e}")
+    if default.get("mode") not in ("auto", "manual"):
+        default["mode"] = "auto"
+    if not isinstance(default.get("enabledAccountIds"), list):
+        default["enabledAccountIds"] = []
+    return default
+
+
+def _save_pool_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    config["updatedAt"] = int(time.time() * 1000)
+    with open(ACCOUNT_POOL_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    return config
+
+
+def _account_id(acc: Dict[str, Any]) -> Optional[str]:
+    return acc.get("id") or acc.get("uid")
+
+
+def _account_label(acc: Dict[str, Any]) -> str:
+    return acc.get("nickname") or acc.get("email") or acc.get("uid") or acc.get("id") or "未命名账号"
+
+
+def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    enabled = {str(x) for x in config.get("enabledAccountIds") or []}
+    # 空数组是默认值，语义是全部启用；保存明确列表后才是白名单。
+    candidates = accounts if not enabled else [a for a in accounts if str(_account_id(a)) in enabled]
+    now_ms = int(time.time() * 1000)
+    return [a for a in candidates if _account_is_usable(a, now_ms)]
+
+
+_ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {"next_index": 0, "last_selected_id": None}
+
+
+def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """为每一个 API 请求选择账号。
+
+    - X-WorkBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
+    - manual 模式：固定使用配置的 manualAccountId；
+    - auto 模式：在 enabledAccountIds 中轮询，每个并发请求可拿到不同账号。
+
+    这里是「请求级并行」：一条对话请求仍由一个账号完成，但多个同时到达的
+    独立请求会分摊到多个账号，不会把同一个请求拆成两份导致上下文/计费混乱。
+    """
+    accounts = _load_accounts()
+    config = _load_pool_config()
+    candidates = _enabled_accounts(accounts, config)
+    by_id = {str(_account_id(a)): a for a in candidates if _account_id(a)}
+
+    if requested_id:
+        return by_id.get(str(requested_id))
+
+    if config.get("mode") == "manual":
+        return by_id.get(str(config.get("manualAccountId")))
+
+    if not candidates:
         return None
+    index = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0)) % len(candidates)
+    acc = candidates[index]
+    _ACCOUNT_POOL_RUNTIME["next_index"] = (index + 1) % len(candidates)
+    _ACCOUNT_POOL_RUNTIME["last_selected_id"] = _account_id(acc)
+    return acc
+
+
+@app.get("/account-pool/status")
+def account_pool_status():
+    accounts = _load_accounts()
+    config = _load_pool_config()
+    enabled_ids = {str(x) for x in config.get("enabledAccountIds") or []}
+    now_ms = int(time.time() * 1000)
+    return {
+        "mode": config.get("mode"),
+        "manualAccountId": config.get("manualAccountId"),
+        "allEnabledByDefault": not bool(enabled_ids),
+        "enabledAccountIds": sorted(enabled_ids),
+        "lastSelectedAccountId": _ACCOUNT_POOL_RUNTIME.get("last_selected_id"),
+        "accounts": [
+            {
+                "id": _account_id(a),
+                "name": _account_label(a),
+                "variant": a.get("variant"),
+                "enabled": not enabled_ids or str(_account_id(a)) in enabled_ids,
+                "usable": _account_is_usable(a, now_ms),
+                "active": _account_id(a) == (_rotate_state_snapshot().get("active_account_id") or ""),
+            }
+            for a in accounts
+        ],
+    }
+
+
+@app.put("/account-pool/config")
+def update_account_pool(config: Dict[str, Any]):
+    mode = config.get("mode", "auto")
+    if mode not in ("auto", "manual"):
+        raise HTTPException(status_code=400, detail="mode must be auto or manual")
+    enabled = config.get("enabledAccountIds", [])
+    if not isinstance(enabled, list):
+        raise HTTPException(status_code=400, detail="enabledAccountIds must be an array")
+    accounts = _load_accounts()
+    known = {str(_account_id(a)) for a in accounts if _account_id(a)}
+    unknown = [str(x) for x in enabled if str(x) not in known]
+    if unknown:
+        raise HTTPException(status_code=400, detail={"unknownAccountIds": unknown})
+    manual_id = config.get("manualAccountId")
+    if mode == "manual" and str(manual_id) not in {str(x) for x in enabled or known}:
+        raise HTTPException(status_code=400, detail="manualAccountId must be enabled")
+    saved = _save_pool_config({
+        "mode": mode,
+        "enabledAccountIds": [str(x) for x in enabled],
+        "manualAccountId": manual_id,
+    })
+    return {"ok": True, "config": saved, "status": account_pool_status()}
 
 @app.get("/health")
 def health():
@@ -262,15 +384,27 @@ def estimate_tokens(text: str) -> int:
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
     start_time = time.time()
-    acc = get_active_account()
+    body = await request.json()
+
+    # 请求级账号选择：显式 header/body 优先，其次按 account-pool 配置自动分配。
+    # 这让多个并发请求可以并行落到多个账号，而不再全部使用 activeAccountId。
+    requested_account_id = (
+        request.headers.get("x-workbuddy-account-id")
+        or body.get("account_id")
+        or body.get("_account_id")
+    )
+    body.pop("account_id", None)
+    body.pop("_account_id", None)
+    acc = select_account(requested_account_id)
     if not acc or not acc.get("access_token"):
-        raise HTTPException(status_code=401, detail="No active WorkBuddy/CodeBuddy account available in gateway.")
+        if requested_account_id:
+            raise HTTPException(status_code=409, detail="Requested WorkBuddy account is disabled, expired, or unavailable.")
+        raise HTTPException(status_code=401, detail="No enabled WorkBuddy/CodeBuddy account available in gateway.")
 
     token = acc["access_token"]
     variant = acc.get("variant", "ai")
     base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
 
-    body = await request.json()
     requested_stream = body.get("stream", False)
     
     raw_model = body.get("model", "hy3")
