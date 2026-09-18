@@ -20,8 +20,9 @@ DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
 
-# 实测通过的全部官方模型清单
-SUPPORTED_MODELS = [
+# 基础模型清单：官方别名与路由模式。这些不一定会出现在 usage 记录里，因此常驻。
+# 注意：真实可用模型由 discover_models() 从官方 usage 数据自动补全，不要在这里逐个手工添加新模型。
+BASE_MODELS = [
     # 混元
     {"id": "hy3", "name": "Hy3 (混元思考模型)", "owned_by": "tencent-codebuddy"},
     {"id": "hy4", "name": "Hy4 (别名 -> hy3)", "owned_by": "tencent-codebuddy"},
@@ -68,6 +69,108 @@ MODEL_ALIAS_MAP = {
     "gpt-4o-mini": "gpt-5.6-luna",
 }
 
+# ---------------------------------------------------------------------------
+# 模型自动发现
+# 官方上游没有 /models 端点（实测 404），模型清单是从账号的实际调用记录里聚合出来的。
+# 因此这里直接读取官方 usage 缓存与网关自身的 token 统计，自动补全新出现的模型，
+# 避免「官方上新一个模型就要手工往清单里加一个」。
+# ---------------------------------------------------------------------------
+
+_OWNER_PREFIXES = [
+    ("deepseek", "deepseek"),
+    ("gpt", "openai"),
+    ("claude", "anthropic"),
+    ("gemini", "google"),
+    ("glm", "zhipu"),
+    ("kimi", "moonshot"),
+    ("minimax", "minimax"),
+    ("codewise", "tencent-codebuddy"),
+    ("hy", "tencent-codebuddy"),
+]
+
+
+def infer_owner(model_id: str) -> str:
+    lowered = (model_id or "").lower()
+    for prefix, owner in _OWNER_PREFIXES:
+        if lowered.startswith(prefix):
+            return owner
+    return "workbuddy"
+
+
+def _discover_from_official_usage() -> List[str]:
+    """官方 usage 缓存 payload 中记录了账号实际调用过的模型（汇总/明细/按天三个维度）。"""
+    cache_file = DATA_DIR / "official_usage_cache.json"
+    if not cache_file.exists():
+        return []
+    try:
+        with open(cache_file, "r", encoding="utf-8") as f:
+            payload = (json.load(f) or {}).get("payload") or {}
+    except Exception:
+        return []
+
+    names = set()
+    for item in payload.get("models") or []:
+        if isinstance(item, dict) and item.get("model"):
+            names.add(str(item["model"]))
+    for item in payload.get("requests") or []:
+        if isinstance(item, dict) and item.get("model"):
+            names.add(str(item["model"]))
+    for day in payload.get("daily") or []:
+        for item in (day or {}).get("models") or []:
+            if isinstance(item, dict) and item.get("model"):
+                names.add(str(item["model"]))
+    return sorted(names)
+
+
+def _discover_from_token_stats() -> List[str]:
+    """网关自身记录的 token 统计里出现过的模型名。"""
+    log_file = DATA_DIR / "token_stats_logs.json"
+    if not log_file.exists():
+        return []
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(records, list):
+        return []
+    return sorted({str(r["model"]) for r in records if isinstance(r, dict) and r.get("model")})
+
+
+_MODEL_CACHE: Dict[str, Any] = {"signature": None, "catalog": []}
+
+
+def _catalog_signature() -> tuple:
+    """以相关文件的 mtime + size 作为缓存签名，文件一变即重新发现。"""
+    sig = []
+    for name in ("official_usage_cache.json", "token_stats_logs.json"):
+        try:
+            st = (DATA_DIR / name).stat()
+            sig.append((name, int(st.st_mtime), st.st_size))
+        except Exception:
+            sig.append((name, 0, 0))
+    return tuple(sig)
+
+
+def get_model_catalog() -> List[Dict[str, Any]]:
+    """基础清单 ∪ 自动发现的模型，按 id 去重（基础清单优先，保留中文说明）。"""
+    signature = _catalog_signature()
+    if _MODEL_CACHE["signature"] == signature and _MODEL_CACHE["catalog"]:
+        return _MODEL_CACHE["catalog"]
+
+    catalog: Dict[str, Dict[str, Any]] = {m["id"]: dict(m) for m in BASE_MODELS}
+    discovered = set(_discover_from_official_usage()) | set(_discover_from_token_stats())
+    for name in discovered:
+        if name in catalog:
+            continue
+        catalog[name] = {"id": name, "name": name, "owned_by": infer_owner(name)}
+
+    result = list(catalog.values())
+    _MODEL_CACHE["signature"] = signature
+    _MODEL_CACHE["catalog"] = result
+    return result
+
+
 def get_active_account() -> Optional[Dict[str, Any]]:
     accounts_file = DATA_DIR / "accounts.json"
     state_file = DATA_DIR / "rotate" / "state.json"
@@ -101,16 +204,20 @@ def get_active_account() -> Optional[Dict[str, Any]]:
 @app.get("/health")
 def health():
     acc = get_active_account()
+    catalog = get_model_catalog()
     return {
         "status": "healthy",
         "has_active_account": acc is not None,
         "active_account_variant": acc.get("variant") if acc else None,
-        "models_count": len(SUPPORTED_MODELS)
+        "models_count": len(catalog),
+        "models_auto_discovered": len(catalog) - len(BASE_MODELS),
+        "rotate": _rotate_state_snapshot()
     }
 
 @app.get("/v1/models")
 @app.get("/models")
 async def list_models():
+    catalog = get_model_catalog()
     return {
         "object": "list",
         "data": [
@@ -121,7 +228,7 @@ async def list_models():
                 "owned_by": m["owned_by"],
                 "permission": []
             }
-            for m in SUPPORTED_MODELS
+            for m in catalog
         ]
     }
 
@@ -290,6 +397,158 @@ async def chat_completions(request: Request):
             status_code=200,
             headers={"Content-Type": "application/json"}
         )
+
+# ---------------------------------------------------------------------------
+# 容器适配的账号轮询
+# 官方自带的轮询在需要切换时，会重启桌面应用（/usr/bin/workbuddy）并把认证文件
+# 写进 .local/share/CodeBuddyExtension —— 这些宿主资源容器里都没有，切换动作必然失败。
+# 但网关对外提供服务只关心「当前用哪个账号」，所以这里实现一套纯容器内的轮询：
+# 只维护 rotate/state.json 里的 activeAccountId，不触碰任何桌面应用。
+# ---------------------------------------------------------------------------
+
+ROTATE_ENABLED = os.getenv("GATEWAY_ROTATE_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+ROTATE_INTERVAL_MINUTES = max(1, int(os.getenv("GATEWAY_ROTATE_INTERVAL_MINUTES", "30") or 30))
+ROTATE_LOG_FILE = DATA_DIR / "gateway_rotate_logs.json"
+
+_ROTATE_RUNTIME: Dict[str, Any] = {
+    "enabled": ROTATE_ENABLED,
+    "interval_minutes": ROTATE_INTERVAL_MINUTES,
+    "last_check_at": None,
+    "last_switch_at": None,
+    "last_reason": None,
+    "active_account_id": None,
+    "active_account_name": None,
+}
+
+
+def _rotate_state_snapshot() -> Dict[str, Any]:
+    return dict(_ROTATE_RUNTIME)
+
+
+def _load_accounts() -> List[Dict[str, Any]]:
+    accounts_file = DATA_DIR / "accounts.json"
+    if not accounts_file.exists():
+        return []
+    try:
+        with open(accounts_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_active_account(account_id: str) -> None:
+    state_file = DATA_DIR / "rotate" / "state.json"
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state: Dict[str, Any] = {}
+        if state_file.exists():
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    state = json.load(f) or {}
+            except Exception:
+                state = {}
+        state["activeAccountId"] = account_id
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[rotate] failed to persist active account: {e}")
+
+
+def _append_rotate_log(entry: Dict[str, Any]) -> None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        logs = []
+        if ROTATE_LOG_FILE.exists():
+            try:
+                with open(ROTATE_LOG_FILE, "r", encoding="utf-8") as f:
+                    logs = json.load(f) or []
+            except Exception:
+                logs = []
+        logs.append(entry)
+        with open(ROTATE_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(logs[-200:], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[rotate] failed to write rotate log: {e}")
+
+
+def _account_is_usable(acc: Dict[str, Any], now_ms: int) -> bool:
+    if not acc.get("access_token"):
+        return False
+    expires_at = acc.get("expiresAt")
+    if isinstance(expires_at, (int, float)) and expires_at > 0 and expires_at <= now_ms:
+        return False
+    return True
+
+
+def rotate_once() -> Dict[str, Any]:
+    """执行一次轮询：当前账号仍可用就保持不动，失效才切到备用账号。"""
+    now_ms = int(time.time() * 1000)
+    accounts = _load_accounts()
+    usable = [a for a in accounts if _account_is_usable(a, now_ms)]
+    _ROTATE_RUNTIME["last_check_at"] = now_ms
+
+    if not usable:
+        reason = "没有可用账号（token 缺失或已过期）"
+        _ROTATE_RUNTIME["last_reason"] = reason
+        _append_rotate_log({"ts": now_ms, "action": "skipped", "reason": reason})
+        return {"status": "skipped", "reason": reason}
+
+    current = get_active_account()
+    current_id = (current or {}).get("id")
+    current_usable = current is not None and any(a.get("id") == current_id for a in usable)
+
+    if current_usable:
+        reason = "当前账号仍可用，保持不切换"
+        _ROTATE_RUNTIME["last_reason"] = reason
+        _ROTATE_RUNTIME["active_account_id"] = current_id
+        _ROTATE_RUNTIME["active_account_name"] = current.get("nickname")
+        _append_rotate_log({"ts": now_ms, "action": "kept", "reason": reason,
+                            "accountId": current_id, "accountName": current.get("nickname")})
+        return {"status": "kept", "reason": reason, "activeAccountId": current_id}
+
+    target = usable[0]
+    reason = "原账号已失效，切换到可用账号"
+    _write_active_account(target.get("id"))
+    _ROTATE_RUNTIME["last_switch_at"] = now_ms
+    _ROTATE_RUNTIME["last_reason"] = reason
+    _ROTATE_RUNTIME["active_account_id"] = target.get("id")
+    _ROTATE_RUNTIME["active_account_name"] = target.get("nickname")
+    _append_rotate_log({"ts": now_ms, "action": "switched", "reason": reason,
+                        "from": current_id, "to": target.get("id"),
+                        "accountName": target.get("nickname")})
+    return {"status": "switched", "reason": reason,
+            "activeAccountId": target.get("id"),
+            "activeAccountName": target.get("nickname")}
+
+
+async def account_rotate_loop() -> None:
+    if not ROTATE_ENABLED:
+        print("[rotate] gateway-side rotation disabled (GATEWAY_ROTATE_ENABLED)")
+        return
+    print(f"[rotate] gateway-side rotation enabled, interval={ROTATE_INTERVAL_MINUTES} min")
+    while True:
+        try:
+            result = rotate_once()
+            print(f"[rotate] {result.get('status')}: {result.get('reason')}")
+        except Exception as e:
+            print(f"[rotate] loop error: {e}")
+        await asyncio.sleep(ROTATE_INTERVAL_MINUTES * 60)
+
+
+@app.on_event("startup")
+async def _start_rotate_loop() -> None:
+    asyncio.create_task(account_rotate_loop())
+
+
+@app.get("/rotate/status")
+def rotate_status():
+    return _rotate_state_snapshot()
+
+
+@app.post("/rotate/run")
+def rotate_run():
+    return rotate_once()
 
 if __name__ == "__main__":
     import uvicorn

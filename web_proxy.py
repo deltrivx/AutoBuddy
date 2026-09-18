@@ -67,11 +67,42 @@ COLLAPSE_SCRIPT = """
 </style>
 <script>
 (function() {
+  // 账号卡片与设置页里「需要写宿主机资源」的操作按钮。
+  // 这些按钮会尝试启动本机 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI，
+  // 或把凭证写进宿主机目录，容器内没有对应可执行文件与桌面环境，点击必然失败。
+  var WB_UNSUPPORTED_LABELS = [
+    "设为 WorkBuddy 当前账号",
+    "正在切换 WorkBuddy 当前账号",
+    "切换到 CodeBuddy IDE",
+    "正在切换 CodeBuddy IDE",
+    "设为 CodeBuddy CLI 当前账号",
+    "正在切换 CodeBuddy CLI 当前账号"
+  ];
+
+  // 需要按文案匹配的按钮（设置页里的 CLI 接入入口）
+  var WB_UNSUPPORTED_TEXTS = [
+    "接入 CLI",
+    "更新 CLI 认证",
+    "升级 CLI helper"
+  ];
+
   function sanitizeMacUI() {
     document.querySelectorAll("button, a").forEach(el => {
       const text = (el.innerText || "").trim();
-      // 清除无法在容器内执行的动作：Finder、完全磁盘访问、导入本机账号（容器无本地桌面应用）
+      // 清除无法在容器内执行的动作：Finder、完全磁盘访问、导入本机账号
       if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理" || text === "导入本机账号") {
+        el.classList.add("wb-mac-btn-hide");
+        return;
+      }
+
+      if (text && WB_UNSUPPORTED_TEXTS.indexOf(text) !== -1) {
+        el.classList.add("wb-mac-btn-hide");
+        return;
+      }
+
+      // 账号卡片上的三个「切换目标」图标按钮：靠 aria-label 精确识别
+      const label = (el.getAttribute("aria-label") || "").trim();
+      if (label && WB_UNSUPPORTED_LABELS.some(k => label === k || label.indexOf(k) === 0)) {
         el.classList.add("wb-mac-btn-hide");
       }
     });

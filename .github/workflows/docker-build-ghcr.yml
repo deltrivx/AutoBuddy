@@ -48,7 +48,6 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=v0.1.0,enable=true
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
