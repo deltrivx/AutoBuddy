@@ -344,6 +344,12 @@ SETTINGS_SUBTITLE = "自动签到与账号保活，对外提供 OpenAI 兼容接
 # 账号卡片底部「导入本机…」按钮的 label，用于定位整个按钮（含 Tooltip 包裹）。
 IMPORT_LOCAL_LABEL = "导入本机国际版账号\":\"导入本机账号"
 
+# 账号管理页副标题。原文案把「CodeBuddy IDE 与 CodeBuddy CLI 账号」也列为本页管理对象，
+# 但这两个桌面端产品在 v0.3.11 已被彻底移除，容器里不存在——属于**描述了不存在功能**的
+# 文案，必须改掉。新文案只描述容器里真实存在的两件事：账号/积分/签到管理 + 供 API 网关取号。
+ACCOUNT_SUBTITLE_OLD = "统一管理 WorkBuddy、CodeBuddy IDE 与 CodeBuddy CLI 账号、积分和签到状态。"
+ACCOUNT_SUBTITLE_NEW = "统一管理 WorkBuddy 账号、积分与签到状态，并为 API 网关提供账号。"
+
 # 账号列表空状态。原文案让用户「点击上方「导入本机国际版账号」」，但那个按钮已在
 # v0.3.11 随桌面专属功能一并移除——属于**指向不存在入口**的误导文案，必须改掉。
 # 国际版：整段 `<p>` 替换（原文含 {Ct} / {sF(t)} 两处插值，只能整块换）。
@@ -498,6 +504,23 @@ def patch(bin_path):
         re.escape(EMPTY_HINT_CN_OLD.encode("utf-8")),
         _build_empty_cn,
         "empty-state hint (cn accounts)",
+    )
+
+    # --- 15. 账号管理页副标题 --------------------------------------------------
+    # 原文案宣称本页统一管理「CodeBuddy IDE 与 CodeBuddy CLI 账号」，而这两个桌面端
+    # 产品已被移除。锚点是完整旧文案（稳定、唯一），90 -> 88 字节，补 2 个空格。
+    def _build_account_subtitle(m):
+        new = ACCOUNT_SUBTITLE_NEW.encode("utf-8")
+        old = m.group(0)
+        if len(new) > len(old):
+            return None
+        return new + b" " * (len(old) - len(new))
+
+    data = _replace_padded(
+        data,
+        re.escape(ACCOUNT_SUBTITLE_OLD.encode("utf-8")),
+        _build_account_subtitle,
+        "accounts page subtitle",
     )
 
     # --- 收尾校验 -------------------------------------------------------------
