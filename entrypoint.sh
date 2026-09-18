@@ -3,7 +3,9 @@ set -e
 
 echo "=== 启动 WorkBuddy Switch & OpenAI API Gateway ==="
 
-mkdir -p /data/.wb-switch/rotate
+# 只确保数据目录存在。**不要**再创建 /data/.wb-switch/rotate —— 那是 CodeBuddy CLI
+# 时代的 token 轮换目录，CLI 已于 v0.3.11 彻底移除，空目录留着纯属残留。
+mkdir -p /data/.wb-switch
 
 # 1. 启动官方 workbuddy-switch 在 57890 端口
 echo "[WorkBuddy-Switch] 正在启动底层服务..."
