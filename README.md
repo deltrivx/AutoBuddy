@@ -38,11 +38,13 @@
   - **源码级剔除无效桌面功能**：从二进制物理切除「导入本机账号」「权限检测」模块与账号卡片上的 IDE / CLI 切换槽位，避免任何无法在 Linux 执行的报错与死按钮。
   - **侧边栏可折叠收纳**：支持 `220px` 与 `68px` 极简图标模式智能切换，具备 `localStorage` 状态持久化记忆。
   - **纯粹清晰的 Token 统计**：剔除冗余分组 Tab 按钮与「Token 总览」重复标题，自研网关实时统计与云端历史融合引擎；`用量分布` / `消耗最高的调用` / `趋势图按模型筛选` 全部有真实数据，告别空白报表。
-  - **文案按容器能力适配**：官方前端是给桌面客户端写的，容器里已无 IDE / CLI 能力。代理层对首页副标题、统计页维度标签等做**等长字节替换**（`按项目→按账号`、`消耗最高的会话→消耗最高的调用`），既改对语义又不破坏 JS 资源的偏移与语法。
+  - **文案按容器能力适配**：官方前端是给桌面客户端写的。代理层对首页副标题、统计页维度标签等做**等长字节替换**（`按项目→按账号`、`消耗最高的会话→消耗最高的调用`），既改对语义又不破坏 JS 资源的偏移与语法。
   - **响应禁缓存**：`assets/*.js` 文件名带 hash 不会随改动变化，代理对 HTML / JS 响应强制 `cache-control: no-store`，避免浏览器拿旧副本导致「改了却没生效」。
   - **全链路图标高清对齐**：侧边栏、Header 与 Favicon 全面同步 Unraid 512×512 官方圆角高清图标。
-- 🔄 **全自动保活与 CLI 接入**：
-  - 容器启动全自动初始化 CodeBuddy CLI 凭证与 Helper，彻底告别「未接入 CLI」报警。
+- 🔄 **全自动保活与 CLI 接入（容器原生可用）**：
+  - 镜像内**已安装 CodeBuddy CLI**（`@tencent-ai/codebuddy-code`）。官方定位即为无头环境工具，明确支持在 Docker 容器 / CI runner / 远程服务器中运行，容器内可直接执行 `codebuddy`。
+  - 容器启动全自动初始化 CLI 凭证与 Helper（`settings.json` + `helper.cjs`），并**绑定一个账号写入 `state.json`**，使「CLI 用哪个账号」这件事确定、且与面板显示一致。
+  - CLI 的 token 由 `apiKeyHelper` 从账号池自动注入，**无需在容器里交互式登录**；非交互用法见下文「容器内使用 CodeBuddy CLI」。
   - 支持 Google 国际版账号、微信扫码登录与备份文件快速导入导出。
 - 🚀 **全量模型 OpenAI 兼容网关**：
   - 支持 **32 款主流顶级大模型与工作模式别名** 端到端极速调用。
@@ -64,7 +66,7 @@
   | ③ **官方 CLI 自动轮换**（设置页） | 切换 CodeBuddy CLI 助手的绑定账号 | **只影响 CLI 助手**，与 API 无关 | 5 分钟 |
 
   - **①是权威**：API 请求不再走 `activeAccountId`，而是每次请求按账号池配置独立选账号，实现并发分摊。
-  - **②③不参与 API 调度**：它们维护的是官方底层的单账号「当前 CLI 账号」标记（全局只有一个），容器里没有真实 CLI 会话，该标记只影响 CLI 助手绑定。
+  - **②③不参与 API 调度**：它们维护的是官方底层的单账号「当前 CLI 账号」标记（全局只有一个）。该标记决定容器内 `codebuddy` 用哪个账号的 token；网关 API 调用完全不受其影响。
   - 设置页会在「CodeBuddy CLI 自动轮换」区块顶部显示这条范围说明；账号卡片上会给被绑定的那张卡打 `官方 CLI 绑定` 标记，避免误以为「只有这个账号在生效」。
   - 可通过 `GATEWAY_ROTATE_ENABLED` / `GATEWAY_ROTATE_INTERVAL_MINUTES` 调整 ②，状态见 `/rotate/status`。
 - 🧹 **彻底移除容器内无效的桌面状态**：
@@ -132,7 +134,8 @@
 | `18091` | TCP | `18091` | **OpenAI API 网关**（提供标准 `/v1/chat/completions`） |
 
 - **数据卷持久化**：
-  - `/data`：挂载至宿主机的 AppData 目录（如 `/mnt/user/appdata/workbuddy-switch`），持久化保存账号凭证、积分快照、Token 统计明细及 CLI 轮换状态。
+  - `/data`：挂载至宿主机的 AppData 目录（如 `/mnt/user/appdata/workbuddy-switch`），持久化保存账号凭证、积分快照、Token 统计明细及 CLI 轮换状态（含 CLI 的 `settings.json` / `helper.cjs` / `state.json`）。
+  - `/workspace`（**可选**）：挂载一个项目目录，供容器内 `codebuddy` 操作代码（见「容器内使用 CodeBuddy CLI」）。不挂载时 CLI 仍可用，只是没有可操作的项目文件。
 
 ---
 
@@ -204,6 +207,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 | `PUT /api/account-pool` | Web 控制台用：转发账号池配置更新 |
 | `GET /api/account-pool/selections` | Web 控制台用：转发并发分摊观测数据 |
 | `POST /api/account-pool/selections/reset` | Web 控制台用：转发清零选账号流水 |
+| `GET /api/cli-info` | Web 控制台用：**真实探测**容器内 CodeBuddy CLI 是否可执行（`installed` / `version` / `path`），官方「已接入」判据不检测二进制，故补此接口 |
 
 > **接口分工**：决定 API 用哪个账号的是 `select_account()`（账号池）。`/rotate/*` 与设置页的
 > 「CodeBuddy CLI 自动轮换」都只维护官方底层的单账号「当前 CLI 账号」标记，不影响 API 调用。
@@ -261,6 +265,64 @@ WebUI 里每个账号卡片上也会实时显示 `已调用 N 次` 计数徽章�
 
 > 语义边界：**一条对话请求仍由单个账号完成**（不拆请求，避免上下文与计费混乱），
 > **多个同时到达的独立请求才会分摊到不同账号**。
+
+---
+
+## 🖥️ 容器内使用 CodeBuddy CLI
+
+CodeBuddy CLI 官方定位是**无头环境**工具（官方原话：不依赖图形界面，可在远程服务器、Docker 容器和 CI/CD runner 等无头环境中正常运行），因此本镜像**内置了 CLI**，容器内可直接使用，无需在宿主机另装。
+
+### 认证是怎么接上的
+
+镜像启动时会自动完成三件事，**不需要在容器里交互式登录**：
+
+1. 生成 `~/.codebuddy/settings.json`（容器内 `HOME=/data`，即 `/data/.codebuddy/settings.json`）：
+   - `apiKeyHelper` → `~/.codebuddy-rotate/helper.cjs`
+   - `env.CODEBUDDY_BASE_URL` → `https://www.codebuddy.ai/v2`
+2. 生成 `helper.cjs`：读账号池的 `accounts.json`，按 `state.json` 中的 `activeAccountId` 输出 `Bearer <token>`。
+3. 绑定一个账号并写入 `~/.codebuddy-rotate/state.json`（优先选国际版 `variant=ai` 的账号，与默认端点匹配）。
+
+`apiKeyHelper` 是 CodeBuddy CLI 的**官方配置项**：脚本在 `/bin/sh` 中执行，其输出会作为 `X-Api-Key` 与 `Authorization: Bearer` 头随模型请求发送。
+
+### 交互式使用
+
+```bash
+docker exec -it WorkBuddy-Switch codebuddy
+```
+
+### 无头 / 脚本化使用
+
+```bash
+# 非交互执行（-p/--print），-y 跳过权限确认
+docker exec WorkBuddy-Switch codebuddy -p "分析 /workspace 下的代码并总结" -y
+
+# 结构化输出，便于程序消费
+docker exec WorkBuddy-Switch codebuddy -p "列出所有 TODO" -y --output-format json
+```
+
+CLI 需要操作实际代码，建议挂载一个项目目录（容器内 `/workspace` 已预留）：
+
+```yaml
+    volumes:
+      - /mnt/user/appdata/workbuddy-switch:/data
+      - /mnt/user/your-project:/workspace
+```
+
+### 与网关账号池的关系
+
+| 机制 | 决定什么 | 是否影响网关 API |
+| :--- | :--- | :--- |
+| **CLI 绑定账号**（`state.json`） | 容器内 `codebuddy` 用哪个账号的 token | 否 |
+| **网关账号池**（`select_account()`） | `:18091` 的 API 请求用哪个账号 | 是 |
+
+两者**相互独立**：CLI 拿到 token 后直接访问官方端点，不经过本网关。CLI 是长会话，所以绑定账号是**单账号**语义（不会每个请求换账号）；如需切换，可在设置页「CodeBuddy CLI 自动轮换」中操作，或直接调用官方接口：
+
+```bash
+docker exec WorkBuddy-Switch curl -s -X POST http://127.0.0.1:57890/api/codebuddy-cli/switch \
+  -H 'Content-Type: application/json' -d '{"accountId":"<account-id>"}'
+```
+
+> **关于「已接入」提示**：官方判据只看 `settings.json` 与 helper 是否存在，**从不检测 CLI 二进制**，因此容器里没装 CLI 也会显示「已接入」。本项目额外提供 `GET /api/cli-info` 做真实探测，设置页会直接显示容器内 CLI 的实际版本。
 
 ---
 

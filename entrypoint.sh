@@ -23,6 +23,12 @@ done
 echo "[CodeBuddy-CLI] 自动同步 CLI 接入状态..."
 curl -s -X POST http://127.0.0.1:57890/api/codebuddy-cli/install-helper >/dev/null 2>&1 || true
 
+# 2b. 初始化 CLI 绑定账号（仅当 state.json 缺失）
+#     helper.cjs 依赖 state.json 的 activeAccountId 决定给 CLI 用哪个账号的 token；
+#     缺失时会 fallback 到 accounts[0]，行为不确定。这里显式绑定一次，使 CLI 行为
+#     确定并与 WebUI 显示一致。不覆盖已存在的 state.json（用户选择/自动轮换优先）。
+python3 /app/gateway/cli_bootstrap.py || true
+
 # 3. 启动 Python WebUI 代理 (端口: ${PORT:-18090})，注入统一图标与反代前端
 echo "[WebUI-Proxy] 正在启动 WebUI 代理 (端口: ${PORT:-18090})..."
 python3 /app/gateway/web_proxy.py &

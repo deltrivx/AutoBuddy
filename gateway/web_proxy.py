@@ -1,5 +1,8 @@
 import json
 import os
+import shutil
+import subprocess
+import time
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 import httpx
@@ -121,6 +124,14 @@ COLLAPSE_SCRIPT = """
     font-size: 12px;
     line-height: 1.6;
   }
+  /* 容器内 CodeBuddy CLI 的真实可用性（探测二进制，而非只看配置文件） */
+  .wb-cli-status {
+    margin-top: 4px;
+    font-weight: 600;
+    color: var(--muted-foreground, #6b7280);
+  }
+  .wb-cli-status-ok { color: #15803d; }
+  .wb-cli-status-warn { color: #b45309; }
   /* 标记最近一次 API 请求实际使用的账号 */
   .wb-pool-last {
     font-size: 11px;
@@ -448,8 +459,8 @@ COLLAPSE_SCRIPT = """
           var bound = document.createElement("span");
           bound.className = "wb-pool-bound";
           bound.textContent = "官方 CLI 绑定";
-          bound.title = "官方底层服务只维护一个 CLI 绑定账号，仅影响 CodeBuddy CLI 助手；"
-            + "网关 API 调用按账号池在全部启用账号间分摊，与此无关。";
+          bound.title = "CodeBuddy CLI 的绑定账号（官方底层全局只维护一个）。容器内已安装 codebuddy，"
+            + "可直接运行，认证 token 由该账号自动注入；网关 API 调用按账号池分摊，与此无关。";
           bar.appendChild(bound);
         }
 
@@ -485,9 +496,31 @@ COLLAPSE_SCRIPT = """
     if (!section || section.querySelector(".wb-cli-scope-note")) return;
     var note = document.createElement("div");
     note.className = "wb-cli-scope-note";
-    note.textContent = "说明：此处「当前 CLI 账号」由官方底层服务（:57890）维护，全局只有一个，"
-      + "仅决定 CodeBuddy CLI 助手绑定哪个账号；网关的 API 调用不受它影响，"
-      + "会按账号池在全部「参与调用」的账号之间分摊。";
+    var desc = document.createElement("div");
+    desc.textContent = "说明：容器内已安装 CodeBuddy CLI，可直接运行"
+      + "（非交互模式：codebuddy -p '提示词' -y）。此处「当前 CLI 账号」由官方底层服务"
+      + "（:57890）维护，全局只有一个，仅决定 CLI 用哪个账号的 token；"
+      + "网关的 API 调用不受它影响，会按账号池在全部「参与调用」的账号之间分摊。";
+    note.appendChild(desc);
+    // 真实探测容器内 CLI 是否可执行（官方「已接入」判据只看配置文件，会误报）
+    var status = document.createElement("div");
+    status.className = "wb-cli-status";
+    status.textContent = "容器内 CodeBuddy CLI：探测中…";
+    note.appendChild(status);
+    fetch("/api/cli-info", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (info) {
+        if (info && info.installed) {
+          status.className = "wb-cli-status wb-cli-status-ok";
+          status.textContent = "容器内 CodeBuddy CLI：" + (info.version || "已安装")
+            + "　可直接运行 codebuddy";
+        } else {
+          status.className = "wb-cli-status wb-cli-status-warn";
+          status.textContent = "容器内 CodeBuddy CLI：未检测到可执行文件"
+            + "（配置已就绪，安装后即可使用）";
+        }
+      })
+      .catch(function () { status.textContent = "容器内 CodeBuddy CLI：探测失败"; });
     var body = section.querySelector("div");
     if (body) { section.insertBefore(note, body); } else { section.appendChild(note); }
   }
@@ -561,6 +594,46 @@ async def token_stats_api(request: Request):
     # 容器环境核心增强：接管 /api/token-stats，返回网关实测 Token 统计数据
     stats = get_aggregated_token_stats()
     return stats
+
+
+_CLI_INFO_CACHE: dict = {"ts": 0.0, "data": None}
+_CLI_INFO_TTL = 60.0
+
+
+@app.get("/api/cli-info")
+async def cli_info_api():
+    """探测容器内 CodeBuddy CLI 是否真的可执行。
+
+    WebUI 自带的「CodeBuddy CLI 已接入」判据只看 ~/.codebuddy/settings.json 与 helper
+    是否存在，**从不检测 CLI 二进制**，因此容器里没装 CLI 也会显示「已接入」。这里补一个
+    真实探测；结果缓存 60 秒，避免每次页面刷新都拉起子进程。
+    """
+    now = time.time()
+    cached = _CLI_INFO_CACHE.get("data")
+    if cached is not None and now - float(_CLI_INFO_CACHE.get("ts") or 0.0) < _CLI_INFO_TTL:
+        return cached
+
+    command = "codebuddy" if shutil.which("codebuddy") else (
+        "codebuddy-cn" if shutil.which("codebuddy-cn") else "")
+    info = {
+        "installed": False,
+        "version": "",
+        "command": command,
+        "path": shutil.which(command) if command else "",
+    }
+    if command:
+        try:
+            proc = subprocess.run([command, "--version"], capture_output=True,
+                                  text=True, timeout=15)
+            raw = (proc.stdout or proc.stderr or "").strip()
+            info["version"] = raw.splitlines()[0].strip() if raw else ""
+            info["installed"] = proc.returncode == 0
+        except Exception as exc:
+            info["error"] = str(exc)
+
+    _CLI_INFO_CACHE["ts"] = now
+    _CLI_INFO_CACHE["data"] = info
+    return info
 
 GATEWAY_BASE_URL = os.getenv("WB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
 GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")

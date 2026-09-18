@@ -4,6 +4,38 @@
 
 ---
 
+## [v0.3.9] - 2026-09-18
+
+### 🖥️ 让 CodeBuddy CLI 在容器里真正可用（从「空转配置」到「可执行环境」）
+
+本版回答并落地了一个此前含糊的问题：**CodeBuddy CLI 助手在容器里有意义吗？**
+
+#### 1. 结论：CLI 不是「仅适用于系统环境」，官方定位就是容器 / 无头
+
+深度检测结论：CodeBuddy CLI 官方明确支持在 **Docker 容器 / CI/CD runner / 远程服务器**中运行（官方原话：不依赖图形界面，可在无头环境中正常运行），且 `apiKeyHelper` 是**官方支持的 settings 配置项**（脚本在 `/bin/sh` 执行，输出作为 `X-Api-Key` 与 `Authorization: Bearer`）。因此不能按「仅桌面」移除，而应补全为真正可用的容器环境。
+
+#### 2. 镜像内置 CodeBuddy CLI
+- `docker/Dockerfile` 新增 `npm i -g @tencent-ai/codebuddy-code`（Node 20 满足其 18.20+ 要求），并设置 `ENV DISABLE_AUTOUPDATER=1`（容器内自动更新会在重建时丢失且拖慢启动）。
+- 安装 `git`（CLI 的版本控制能力依赖它），并预留 `/workspace` 作为默认工作目录。
+- 镜像体积相应增加约 175 MB（CLI 解压后大小），这是「容器内真的能跑 CLI」的代价。
+
+#### 3. 修复 `state.json` 缺失导致的绑定账号不确定
+- **问题**：`helper.cjs` 依赖 `~/.codebuddy-rotate/state.json` 的 `activeAccountId` 决定给 CLI 用哪个账号；该文件此前**不存在**，helper 只能 fallback 到 `accounts[0]`，行为不确定，且与面板显示不一致。
+- **修复**：新增 `gateway/cli_bootstrap.py`，容器启动时（`entrypoint.sh` 步骤 2b）在 `state.json` 缺失的情况下，调用官方 `POST /api/codebuddy-cli/switch` 绑定一个账号，由 wb-switch 自己写出格式正确的 `state.json`。优先选国际版 `variant=ai` 的账号，与默认端点 `codebuddy.ai` 匹配。
+- **不覆盖已存在的 `state.json`**，因此不会影响用户手动选择或后续的自动轮换。
+
+#### 4. UI：消除「假接入」，显示真实可用性
+- **新增 `GET /api/cli-info`**：真实探测容器内 `codebuddy` 是否可执行并返回版本（结果缓存 60 秒）。原因是官方「已接入」判据 `codebuddyCliConfigured` **只看配置文件是否存在，从不检测 CLI 二进制**，容器里没装 CLI 也会显示「已接入」。
+- 设置页「CodeBuddy CLI 自动轮换」区块的说明条重写：说明容器内已安装 CLI、非交互用法 `codebuddy -p '…' -y`，并**实时显示探测到的 CLI 版本**（可用为绿色、未检测到为橙色）。
+- 账号卡片 `官方 CLI 绑定` 标记的悬停说明同步改写，明确它决定的是 CLI 用哪个账号。
+
+#### 5. 文档
+- README 新增「🖥️ 容器内使用 CodeBuddy CLI」章节：认证链路（`settings.json` → `apiKeyHelper` → `helper.cjs` → `state.json`）、交互式与无头用法、`/workspace` 挂载建议，以及「CLI 绑定账号 vs 网关账号池」职责对照表。
+- 修正 README 中两处已过时表述（原写「容器里已无 IDE / CLI 能力」「容器里没有真实 CLI 会话」）。
+- 数据卷说明补充 `/workspace`（可选）。
+
+---
+
 ## [v0.3.8] - 2026-09-18
 
 ### 🧭 全局巡检收尾：把「半成品面板」和「说不清的状态」一次清掉
