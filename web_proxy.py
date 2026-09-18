@@ -4,6 +4,11 @@ from fastapi import FastAPI, Request, Response
 import httpx
 import uvicorn
 
+try:
+    from gateway.token_tracker import get_aggregated_token_stats
+except ImportError:
+    from token_tracker import get_aggregated_token_stats
+
 app = FastAPI()
 
 BACKEND_URL = "http://127.0.0.1:57890"
@@ -65,7 +70,8 @@ COLLAPSE_SCRIPT = """
   function sanitizeMacUI() {
     document.querySelectorAll("button, a").forEach(el => {
       const text = (el.innerText || "").trim();
-      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理") {
+      // 清除无法在容器内执行的动作：Finder、完全磁盘访问、导入本机账号（容器无本地桌面应用）
+      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理" || text === "导入本机账号") {
         el.classList.add("wb-mac-btn-hide");
       }
     });
@@ -157,6 +163,12 @@ async def get_icon():
     async with httpx.AsyncClient() as client:
         r = await client.get(f"{BACKEND_URL}/icon.png")
         return Response(content=r.content, media_type="image/png")
+
+@app.get("/api/token-stats")
+async def token_stats_api(request: Request):
+    # 容器环境核心增强：接管 /api/token-stats，返回网关实测 Token 统计数据
+    stats = get_aggregated_token_stats()
+    return stats
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_all(request: Request, path: str):

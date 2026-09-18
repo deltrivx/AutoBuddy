@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -8,7 +9,12 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import httpx
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.1.0")
+try:
+    from gateway.token_tracker import record_token_usage, get_aggregated_token_stats
+except ImportError:
+    from token_tracker import record_token_usage, get_aggregated_token_stats
+
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.2.0")
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
@@ -27,7 +33,7 @@ SUPPORTED_MODELS = [
     {"id": "kimi-k2.6", "name": "Kimi-K2.6", "owned_by": "moonshot"},
     {"id": "kimi-k2.5", "name": "Kimi-K2.5", "owned_by": "moonshot"},
     {"id": "kimi", "name": "Kimi (别名 -> kimi-k3)", "owned_by": "moonshot"},
-    # GPT 系列 (官方旗舰与全规格)
+    # GPT 系列
     {"id": "gpt-5.5", "name": "GPT-5.5 (OpenAI旗舰编码模型)", "owned_by": "openai"},
     {"id": "gpt-5.4", "name": "GPT-5.4", "owned_by": "openai"},
     {"id": "gpt-5.3-codex", "name": "GPT-5.3-Codex", "owned_by": "openai"},
@@ -127,9 +133,16 @@ def normalize_messages_for_upstream(messages: List[Dict[str, Any]]) -> List[Dict
         return [{"role": "system", "content": "You are a helpful assistant."}] + messages
     return messages
 
+def estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    # 简易而高效的 Token 估算：按 3.5 字符约 1 Token
+    return max(1, int(len(text) / 3.5))
+
 @app.post("/v1/chat/completions")
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
+    start_time = time.time()
     acc = get_active_account()
     if not acc or not acc.get("access_token"):
         raise HTTPException(status_code=401, detail="No active WorkBuddy/CodeBuddy account available in gateway.")
@@ -141,13 +154,16 @@ async def chat_completions(request: Request):
     body = await request.json()
     requested_stream = body.get("stream", False)
     
-    # 别名映射
     raw_model = body.get("model", "hy3")
     target_model = MODEL_ALIAS_MAP.get(raw_model, raw_model)
     body["model"] = target_model
 
+    prompt_text = ""
     if "messages" in body and isinstance(body["messages"], list):
         body["messages"] = normalize_messages_for_upstream(body["messages"])
+        prompt_text = " ".join([str(m.get("content", "")) for m in body["messages"]])
+
+    input_tokens = estimate_tokens(prompt_text)
 
     body["stream"] = True
 
@@ -163,12 +179,37 @@ async def chat_completions(request: Request):
         res = await client.send(req, stream=True)
 
         async def stream_generator():
+            output_chunks = []
+            req_id = "chatcmpl-wb"
             try:
                 async for chunk in res.aiter_bytes():
                     yield chunk
+                    # 抓取文本估算输出 token
+                    chunk_str = chunk.decode("utf-8", errors="ignore")
+                    for line in chunk_str.split("\n"):
+                        line = line.strip()
+                        if line.startswith("data:") and line[5:].strip() != "[DONE]":
+                            try:
+                                j = json.loads(line[5:].strip())
+                                if "id" in j:
+                                    req_id = j["id"]
+                                c = j.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if c:
+                                    output_chunks.append(c)
+                            except Exception:
+                                pass
             finally:
                 await res.aclose()
                 await client.aclose()
+                duration = time.time() - start_time
+                output_tokens = estimate_tokens("".join(output_chunks))
+                record_token_usage(
+                    model=raw_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    duration_sec=duration,
+                    request_id=req_id
+                )
 
         return StreamingResponse(
             stream_generator(),
@@ -213,10 +254,20 @@ async def chat_completions(request: Request):
             await res.aclose()
             await client.aclose()
 
+        duration = time.time() - start_time
+        output_tokens = estimate_tokens(collected_content)
+        record_token_usage(
+            model=raw_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            duration_sec=duration,
+            request_id=response_id
+        )
+
         result_payload = {
             "id": response_id,
             "object": "chat.completion",
-            "created": 1789682000,
+            "created": int(time.time()),
             "model": raw_model,
             "choices": [
                 {
@@ -229,9 +280,9 @@ async def chat_completions(request: Request):
                 }
             ],
             "usage": {
-                "prompt_tokens": 10,
-                "completion_tokens": len(collected_content),
-                "total_tokens": 10 + len(collected_content)
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens
             }
         }
         return Response(
