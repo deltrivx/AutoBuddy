@@ -1,8 +1,5 @@
 import json
 import os
-import shutil
-import subprocess
-import time
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 import httpx
@@ -102,36 +99,6 @@ COLLAPSE_SCRIPT = """
     font-size: 11px;
     color: var(--muted-foreground, #6b7280);
   }
-  /* 官方底层唯一的 CLI 绑定账号标记 */
-  .wb-pool-bound {
-    font-size: 11px;
-    line-height: 1.8;
-    padding: 1px 9px;
-    border-radius: 999px;
-    border: 1px dashed rgba(186, 117, 23, 0.55);
-    background: rgba(239, 159, 39, 0.12);
-    color: #854f0b;
-    cursor: help;
-  }
-  /* 设置页：区分「官方 CLI 绑定」与「网关账号池」的说明条 */
-  .wb-cli-scope-note {
-    margin: 0 0 4px;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(59, 130, 246, 0.28);
-    background: rgba(59, 130, 246, 0.08);
-    color: var(--foreground, #374151);
-    font-size: 12px;
-    line-height: 1.6;
-  }
-  /* 容器内 CodeBuddy CLI 的真实可用性（探测二进制，而非只看配置文件） */
-  .wb-cli-status {
-    margin-top: 4px;
-    font-weight: 600;
-    color: var(--muted-foreground, #6b7280);
-  }
-  .wb-cli-status-ok { color: #15803d; }
-  .wb-cli-status-warn { color: #b45309; }
   /* 标记最近一次 API 请求实际使用的账号 */
   .wb-pool-last {
     font-size: 11px;
@@ -191,27 +158,17 @@ COLLAPSE_SCRIPT = """
 </style>
 <script>
 (function() {
-  // 账号卡片上的 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 切换按钮与「当前账号」徽章
-  // 已在 patch/patch_binary.py 里从二进制物理移除（它们只会调用宿主桌面程序），
-  // 这里不再需要任何按 aria-label 遮掩的逻辑。
-  // 下面保留的是设置页里少量纯文案入口，二进制里没有稳定的结构锚点，只能按文案隐藏。
-  var WB_UNSUPPORTED_TEXTS = [
-    "接入 CLI",
-    "更新 CLI 认证",
-    "升级 CLI helper"
-  ];
-
+  // 账号卡片上的 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 切换按钮与「当前账号」徽章，
+  // 以及「导入本机账号」「权限检测」「启动设置」「自动更新」等桌面专有入口，
+  // 都已在 patch/patch_binary.py 里从二进制物理移除（它们只会调用宿主桌面程序）。
+  // 这里只做兜底：清掉少数没有稳定结构锚点、只能按文案识别的残留入口。
   function sanitizeMacUI() {
     document.querySelectorAll("button, a, [role='status']").forEach(el => {
       const text = (el.innerText || "").trim();
-      // 清除无法在容器内执行的动作：Finder、完全磁盘访问、导入本机账号
-      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理" || text === "导入本机账号") {
+      // 清除无法在容器内执行的动作：Finder、完全磁盘访问
+      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理") {
         el.classList.add("wb-mac-btn-hide");
         return;
-      }
-
-      if (text && WB_UNSUPPORTED_TEXTS.indexOf(text) !== -1) {
-        el.classList.add("wb-mac-btn-hide");
       }
     });
 
@@ -404,7 +361,6 @@ COLLAPSE_SCRIPT = """
       // 各账号被分摊到的请求次数（网关进程启动后累计）。
       var counts = {};
       (data.selectionCounts || []).forEach(function (c) { counts[c.accountId] = c.count; });
-      var cliBoundId = data.cliActiveAccountId || null;
 
       pending.forEach(function (card) {
         if (card.querySelector(".wb-pool-bar")) return;
@@ -453,17 +409,6 @@ COLLAPSE_SCRIPT = """
         bar.appendChild(pin);
         bar.appendChild(count);
 
-        // 「当前 CLI 账号」是官方底层的单账号绑定（只维护一个 activeAccountId），
-        // 与网关账号池无关。只给被绑定的那张卡打标记，避免看起来「只有它有状态」。
-        if (cliBoundId && cliBoundId === acc.id) {
-          var bound = document.createElement("span");
-          bound.className = "wb-pool-bound";
-          bound.textContent = "官方 CLI 绑定";
-          bound.title = "CodeBuddy CLI 的绑定账号（官方底层全局只维护一个）。容器内已安装 codebuddy，"
-            + "可直接运行，认证 token 由该账号自动注入；网关 API 调用按账号池分摊，与此无关。";
-          bar.appendChild(bound);
-        }
-
         if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
           var last = document.createElement("span");
           last.className = "wb-pool-last";
@@ -489,49 +434,12 @@ COLLAPSE_SCRIPT = """
     injectAccountPool();
   }
 
-  function injectCliScopeNote() {
-    // 设置页「CodeBuddy CLI 自动轮换」里的「当前 CLI 账号」是官方底层的单账号绑定，
-    // 与网关账号池是两套机制。不加说明会让人以为「只有这一个账号在生效」。
-    var section = document.querySelector("#settings-auto-rotate");
-    if (!section || section.querySelector(".wb-cli-scope-note")) return;
-    var note = document.createElement("div");
-    note.className = "wb-cli-scope-note";
-    var desc = document.createElement("div");
-    desc.textContent = "说明：容器内已安装 CodeBuddy CLI，可直接运行"
-      + "（非交互模式：codebuddy -p '提示词' -y）。此处「当前 CLI 账号」由官方底层服务"
-      + "（:57890）维护，全局只有一个，仅决定 CLI 用哪个账号的 token；"
-      + "网关的 API 调用不受它影响，会按账号池在全部「参与调用」的账号之间分摊。";
-    note.appendChild(desc);
-    // 真实探测容器内 CLI 是否可执行（官方「已接入」判据只看配置文件，会误报）
-    var status = document.createElement("div");
-    status.className = "wb-cli-status";
-    status.textContent = "容器内 CodeBuddy CLI：探测中…";
-    note.appendChild(status);
-    fetch("/api/cli-info", { cache: "no-store" })
-      .then(function (r) { return r.json(); })
-      .then(function (info) {
-        if (info && info.installed) {
-          status.className = "wb-cli-status wb-cli-status-ok";
-          status.textContent = "容器内 CodeBuddy CLI：" + (info.version || "已安装")
-            + "　可直接运行 codebuddy";
-        } else {
-          status.className = "wb-cli-status wb-cli-status-warn";
-          status.textContent = "容器内 CodeBuddy CLI：未检测到可执行文件"
-            + "（配置已就绪，安装后即可使用）";
-        }
-      })
-      .catch(function () { status.textContent = "容器内 CodeBuddy CLI：探测失败"; });
-    var body = section.querySelector("div");
-    if (body) { section.insertBefore(note, body); } else { section.appendChild(note); }
-  }
-
   function run() {
     initCollapse();
     sanitizeMacUI();
     enforceTitle();
     injectAccountModels();
     injectAccountPool();
-    injectCliScopeNote();
   }
 
   const observer = new MutationObserver(() => run());
@@ -596,76 +504,18 @@ async def token_stats_api(request: Request):
     return stats
 
 
-_CLI_INFO_CACHE: dict = {"ts": 0.0, "data": None}
-_CLI_INFO_TTL = 60.0
-
-
-@app.get("/api/cli-info")
-async def cli_info_api():
-    """探测容器内 CodeBuddy CLI 是否真的可执行。
-
-    WebUI 自带的「CodeBuddy CLI 已接入」判据只看 ~/.codebuddy/settings.json 与 helper
-    是否存在，**从不检测 CLI 二进制**，因此容器里没装 CLI 也会显示「已接入」。这里补一个
-    真实探测；结果缓存 60 秒，避免每次页面刷新都拉起子进程。
-    """
-    now = time.time()
-    cached = _CLI_INFO_CACHE.get("data")
-    if cached is not None and now - float(_CLI_INFO_CACHE.get("ts") or 0.0) < _CLI_INFO_TTL:
-        return cached
-
-    command = "codebuddy" if shutil.which("codebuddy") else (
-        "codebuddy-cn" if shutil.which("codebuddy-cn") else "")
-    info = {
-        "installed": False,
-        "version": "",
-        "command": command,
-        "path": shutil.which(command) if command else "",
-    }
-    if command:
-        try:
-            proc = subprocess.run([command, "--version"], capture_output=True,
-                                  text=True, timeout=15)
-            raw = (proc.stdout or proc.stderr or "").strip()
-            info["version"] = raw.splitlines()[0].strip() if raw else ""
-            info["installed"] = proc.returncode == 0
-        except Exception as exc:
-            info["error"] = str(exc)
-
-    _CLI_INFO_CACHE["ts"] = now
-    _CLI_INFO_CACHE["data"] = info
-    return info
-
 GATEWAY_BASE_URL = os.getenv("WB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
 GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")
 
 
 @app.get("/api/account-pool")
 async def account_pool_get():
-    """转发到网关的账号池状态（WebUI 控制台用）。
-
-    额外并入官方底层的 CodeBuddy CLI 绑定账号：这是**单账号**概念（官方只维护一个
-    activeAccountId），与网关的账号池是两套东西，前端需要把两者区分展示。
-    """
+    """转发到网关的账号池状态（WebUI 控制台用）。"""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
-            try:
-                payload = r.json() or {}
-            except Exception:
-                return Response(content=r.content, status_code=r.status_code,
-                                media_type="application/json")
-            try:
-                cli = await client.get(BACKEND_URL + "/api/codebuddy-cli/status")
-                cli_data = cli.json() or {}
-                payload["cliActiveAccountId"] = cli_data.get("activeAccountId")
-                payload["cliActiveAccountName"] = cli_data.get("activeAccountName")
-                payload["cliConfigured"] = cli_data.get("configured")
-            except Exception:
-                payload["cliActiveAccountId"] = None
-                payload["cliActiveAccountName"] = None
-                payload["cliConfigured"] = None
-            return Response(content=json.dumps(payload, ensure_ascii=False),
-                            status_code=r.status_code, media_type="application/json")
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)}), status_code=502,
                         media_type="application/json")

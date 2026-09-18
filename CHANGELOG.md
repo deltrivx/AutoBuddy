@@ -4,6 +4,75 @@
 
 ---
 
+## [v0.3.11] - 2026-09-18
+
+### 🔍 回归修复 + 范围收窄：彻底移除 CLI，功能只留「自动签到」与「提供 API」
+
+本版起于一个线上现象：**每个账号前面又出现了三个桌面图标**。排查后发现问题比表象严重得多。
+
+#### 1. 根因：补丁整体失效，且失败被静默吞掉
+
+- 官方 `wb-switch` 已从 `0.1.36` 升到 **`0.1.40`**，压缩产物里的 JSX 变量名从 **`m.jsx` / `m.jsxs` 变成了 `p.jsx` / `p.jsxs`**（后端端点常量也从 `Db` 变成 `zb`）。
+- 而 `patch/patch_binary.py` 的 13 条锚点**全部把 `m.jsx` 写死**，于是**每一条都失配**。
+- 更糟的是：锚点失配时脚本只 `print("- skip ...")` 就继续，Dockerfile 又用
+  `python3 patch_binary.py ... 2>/dev/null || true` 吞掉失败——**补丁全失效，镜像构建照样 success**。
+- 实证：线上容器内 `/usr/lib/node_modules/workbuddy-switch/bin/wb-switch-linux-x64` 的 md5
+  与官方 `0.1.40` 原始二进制**完全相同**（`8e1dd723ca74e2a8405bc8be191abec5`），即 v0.3.10 的补丁**一个字节都没改**。
+- 所以三个桌面图标、footer、导入本机账号、权限检测、桌面状态图标**全部复活**。
+
+#### 2. 重写 `patch/patch_binary.py`：锚点自适应 + 失配即失败
+
+- **锚点不再依赖压缩变量名**：一律用稳定的**文案 / `className` / `id`** 定位，再回溯到 JSX 调用起点；变量名从匹配结果里现取。新增
+  `_call_start_before()` 做**真正的包含性判断**（marker 常落在 `children:[a?X.jsx(..):Y.jsx(..),…]` 三元里，
+  简单取「最近的 `.jsx(` 匹配」会命中兄弟调用而不是包裹调用）。
+- **锚点失配 = 构建失败**：脚本收集所有失败项，末尾以**非零码退出**；Dockerfile 用 `set -eux` 且**去掉了 `|| true` 与 `2>/dev/null`**。
+- **锁定上游版本**：`npm i -g workbuddy-switch@latest` → `ARG WB_SWITCH_VERSION=0.1.40`，避免上游发版静默改变结构。
+
+#### 3. 移除清单扩充（0.1.40 结构下重新逐条校准）
+
+| 目标 | 0.1.40 中的锚点 | 结果 |
+| :--- | :--- | :--- |
+| 后端端点 | `const zb="http://127.0.0.1:57890";` | → `window.location.origin` |
+| 账号卡片头部三个图标 | `className:"ml-auto flex shrink-0 items-center gap-1"` | 整块 → `null` |
+| 账号卡片底部三个产品槽位 | `className:"flex flex-wrap items-center gap-2.5 border-t px-5 py-2.5"` | 整块 → `null` |
+| 「当前账号」徽章组件 | `function Qb({product:` | 返回值 → `null` |
+| 桌面程序运行状态图标组 | `className:"flex shrink-0 items-center gap-4 pt-1"` | 整块 → `null` |
+| 导入本机账号按钮 | `"导入本机国际版账号":"导入本机账号"`（回溯 2 层到 Tooltip 包裹） | 整块 → `null` |
+| Token 统计页数据来源 Tab | `className:"mb-8 min-w-0 gap-0"` | 整块 → `null` |
+| 「Token 总览」冗余标题 | `id:"token-overview-title"` | 整块 → `null` |
+| CLI 专属「查看请求明细」按钮 | `n==="codebuddy-cli"&&` | 短路表达式 → `null` |
+| **设置页 5 个桌面向 section** | `id:"settings-auto-rotate"` / `-permission` / `-rate-limit` / `-startup` / `-updates` | 组件返回值 → `null` |
+
+- 新增的 5 个 section 移除，对应「其他边缘功能不需要」：
+  - **权限检测**：检测 macOS 完全磁盘访问，容器里不存在该能力。
+  - **启动设置**：`开机时静默启动到托盘`，纯桌面登录项 / 托盘概念。
+  - **自动更新**：容器里升级靠镜像重建，自更新只会写进易失层。
+  - **限额监听**：两个开关分别依赖「扫描 CodeBuddy IDE 日志」与「向桌面客户端装 hook」，容器里两者都不存在。
+  - **CodeBuddy CLI 自动轮换**：随 CLI 一并移除。
+- **保留** `外观`（浅色/深色主题，WebUI 里真实可用）与 `自动签到`（核心功能）。
+- 设置页总描述文案 `自动签到、限额监听、权限检测与自动更新配置。` → `自动签到与账号保活，对外提供 OpenAI 兼容接口。`（等长替换，右侧补空格）。
+
+#### 4. 彻底移除 CodeBuddy CLI（不是隐藏）
+
+- **Dockerfile**：删除 `npm i -g @tencent-ai/codebuddy-code`、`ENV DISABLE_AUTOUPDATER=1`、
+  `mkdir -p /workspace`、system 级 git 身份，以及随之而来的 `git` 依赖。
+- **删除 `gateway/cli_bootstrap.py`**（v0.3.9 新增的 CLI 绑定引导）与 `entrypoint.sh` 里的步骤 2 / 2b。
+- **`gateway/web_proxy.py`**：删除 `GET /api/cli-info` 接口、`.wb-cli-scope-note` / `.wb-cli-status*` /
+  `.wb-pool-bound` 三组样式、`injectCliScopeNote()`、`官方 CLI 绑定` 标记，以及 `/api/account-pool` 里
+  并入的 `cliActiveAccountId` / `cliActiveAccountName` / `cliConfigured`；随之不再需要的
+  `shutil` / `subprocess` / `time` 三个 import 一并删除。
+- **Unraid 模板**：删除 `/workspace` Path 项（备份 `.bak-v0310`），只保留 `18090` / `18091` / `/data`。
+- 镜像体积随之回落（CLI 解压约 175 MB + git 及其依赖）。
+
+#### 5. 文档
+
+- README：删除「容器内使用 CodeBuddy CLI」整章与 `git 身份` / `/workspace` 相关小节；三层账号调度链路收敛为
+  **两层**；移除 `/api/cli-info` 接口行与 `官方 CLI 绑定` 标记说明；新增「🔧 容器化补丁机制（维护须知）」
+  章节，写明两条纪律与升级上游版本的验证流程。
+- 明确项目定位：**只做账号自动签到保活 + 提供 OpenAI 兼容 API**，除 `/data` 外不需要其他挂载。
+
+---
+
 ## [v0.3.10] - 2026-09-18
 
 ### 🧰 补全容器内 CLI 的运行条件（git 身份 + 工作目录）
