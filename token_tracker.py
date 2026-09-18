@@ -28,6 +28,7 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
             "id": request_id or f"wb-req-{ts}",
             "time": time_str,
             "ts": ts,
+            "timestamp": ts,
             "date": date_str,
             "model": model,
             "input": input_tokens,
@@ -56,8 +57,14 @@ def get_official_cloud_requests() -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+def parse_time_to_ts(time_str: str) -> int:
+    try:
+        dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return int(time.time() * 1000)
+
 def get_aggregated_token_stats() -> Dict[str, Any]:
-    # 1. 读取本地网关流水
     logs = []
     if TRACKER_FILE.exists():
         try:
@@ -66,19 +73,17 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         except Exception:
             logs = []
             
-    # 2. 如果网关流水还较少，将云端官方记录转换填充进去，让页面绝不空白
     existing_ids = {l.get("id") for l in logs}
     cloud_reqs = get_official_cloud_requests()
     for cr in cloud_reqs:
         req_id = cr.get("requestId")
         if req_id and req_id not in existing_ids:
-            # 估算 token：按积分或者默认基准
             credit = cr.get("credit", 0.0)
             m = cr.get("model", "unknown")
             t_str = cr.get("requestTime", "")
             d_str = t_str.split(" ")[0] if " " in t_str else datetime.now().strftime("%Y-%m-%d")
+            ts = parse_time_to_ts(t_str)
             
-            # 根据 credit 与模型估算 token
             base_tokens = max(120, int(credit * 15000)) if credit > 0 else 180
             inp = int(base_tokens * 0.4)
             out = int(base_tokens * 0.6)
@@ -86,7 +91,8 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             logs.append({
                 "id": req_id,
                 "time": t_str,
-                "ts": int(time.time() * 1000),
+                "ts": ts,
+                "timestamp": ts,
                 "date": d_str,
                 "model": m,
                 "input": inp,
@@ -97,7 +103,6 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             })
             existing_ids.add(req_id)
 
-    # 3. 统计聚合
     daily_map = {}
     model_map = {}
     total_input = 0
@@ -149,17 +154,31 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
     daily_list = sorted(list(daily_map.values()), key=lambda x: x["key"])
     models_list = sorted(list(model_map.values()), key=lambda x: x["total"], reverse=True)
     
+    # 按照前端 fve 与 uve 组件的严苛结构填充每个请求项
     requests_list = []
-    # 倒序展示最近的明细
     for l in reversed(logs):
+        req_id = str(l.get("id", "req-0"))
+        ts = l.get("timestamp") or l.get("ts") or int(time.time() * 1000)
+        inp = l.get("input", 0)
+        out = l.get("output", 0)
+        tot = inp + out
+        
         requests_list.append({
-            "id": l.get("id"),
-            "time": l.get("time"),
-            "model": l.get("model"),
-            "input": l.get("input"),
-            "output": l.get("output"),
-            "total": l.get("total"),
-            "duration": l.get("duration", 0)
+            "id": req_id,
+            "sessionId": req_id,
+            "title": f"调用 #{req_id[:8]}",
+            "project": "WorkBuddy Gateway",
+            "timestamp": ts,
+            "time": l.get("time", ""),
+            "model": l.get("model", "unknown"),
+            "input": inp,
+            "output": out,
+            "total": tot,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "uncachedInput": inp,
+            "thinking": 0,
+            "duration": l.get("duration", 1.0)
         })
 
     total_tokens = total_input + total_output
