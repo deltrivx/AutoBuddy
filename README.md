@@ -11,11 +11,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/deltrivx/workbuddy-switch/releases"><img src="https://img.shields.io/github/v/release/deltrivx/workbuddy-switch?color=blue&label=Release" alt="GitHub release" /></a>
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" />
   <img src="https://img.shields.io/badge/Unraid-Compatible-F15A24?logo=unraid&logoColor=white" alt="Unraid Compatible" />
   <img src="https://img.shields.io/badge/FastAPI-Gateway-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/OpenAI_API-Compatible-412991?logo=openai&logoColor=white" alt="OpenAI Compatible" />
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License" />
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License" />
 </p>
 
 ---
@@ -24,22 +25,23 @@
 
 `WorkBuddy Switch` 是专为 NAS（Unraid / TrueNAS / 群晖）与服务器容器化环境打造的 WorkBuddy 与 CodeBuddy 统一运维与模型调度套件。
 
-本项目将官方底层核心管理服务、**容器化 Web 控制台**与**自研高效 OpenAI API 网关**完美融为一体：
-- 解决了官方原生程序强依赖 macOS 桌面环境（Finder、完全磁盘访问弹窗）、硬编码局域网端口等容器化痛点。
-- 提供了可收纳折叠的纯净管理面板，支持国内版与国际版账号的热切换、Token 自动保活、积分查看。
+本项目将官方底层核心管理服务、**容器化定制 Web 控制台**与**自研高效 OpenAI API 网关**深度融为一体：
+- 彻底解决官方原生程序强依赖 macOS/Windows 桌面环境（Finder、完全磁盘访问、导入本机客户端）等容器化痛点。
+- 提供了可收纳折叠的纯净管理面板，支持国内版与国际版账号的热切换、Token 自动保活、实时用量图表与积分查看。
 - 内置高可用 API 网关，将上游全系列顶级大模型（GPT-5.6/5.5、Gemini-3.5、DeepSeek-V3、GLM-5.3、Kimi-K3、混元 Hy3 等）无缝转为标准 OpenAI 格式，供 **Sub2API**、**OpenClaw**、**NextChat**、**DSH** 等下游无感知接入。
 
 ---
 
-## 🌟 核心特性
+## 🌟 核心特性与优化亮点
 
-- 🖥️ **专为容器优化的 WebUI**：
-  - 彻底剥离 macOS 桌面专属操作（移除 Finder 拖拽授权、完全磁盘访问提示等不适宜容器的内容）。
-  - 新增**侧边栏可折叠收纳**设计，智能记忆展开/折叠状态。
-  - 统一并规范官方圆角高清图标与系统 Favicon。
+- 🖥️ **专为容器深度提纯的 WebUI**：
+  - **源码级剔除无效桌面功能**：彻底从字节码切除「导入本机账号」及「权限检测」模块，避免任何无法在 Linux 执行的报错。
+  - **侧边栏可折叠收纳**：支持 `220px` 与 `68px` 极简图标模式智能切换，具备 `localStorage` 状态持久化记忆。
+  - **纯粹清晰的 Token 统计**：剔除冗余分组 Tab 按钮与「Token 总览」重复标题，自研网关实时统计与云端历史融合引擎，告别空白报表。
+  - **全链路图标高清对齐**：侧边栏、Header 与 Favicon 全面同步 Unraid 512×512 官方圆角高清图标。
 - 🔄 **全自动保活与 CLI 接入**：
   - 容器启动全自动初始化 CodeBuddy CLI 凭证与 Helper，彻底告别「未接入 CLI」报警。
-  - 支持 Google 账号、微信扫码登录与本地凭据快速迁移。
+  - 支持 Google 国际版账号、微信扫码登录与备份文件快速导入导出。
 - 🚀 **全量模型 OpenAI 兼容网关**：
   - 支持 **25+ 款主流顶级大模型与工作模式别名** 端到端极速调用。
   - 完美支持 `stream: true` 与 `stream: false` 自动双向流/非流转换。
@@ -81,11 +83,11 @@
 
 | 容器端口 | 协议 | 默认宿主机端口 | 用途说明 |
 | :--- | :--- | :--- | :--- |
-| `18090` | TCP | `18090` | **Web 控制面板**（带侧边栏折叠与容器适配） |
+| `18090` | TCP | `18090` | **Web 控制面板**（带侧边栏折叠与容器提纯优化） |
 | `18091` | TCP | `18091` | **OpenAI API 网关**（提供标准 `/v1/chat/completions`） |
 
 - **数据卷持久化**：
-  - `/data`：挂载至宿主机的 AppData 目录（如 `/mnt/user/appdata/workbuddy-switch`），持久化保存已接入的账号、积分快照及 CLI 状态。
+  - `/data`：挂载至宿主机的 AppData 目录（如 `/mnt/user/appdata/workbuddy-switch`），持久化保存账号凭证、积分快照、Token 统计明细及 CLI 轮换状态。
 
 ---
 
@@ -126,7 +128,7 @@ services:
 
 ### Sub2API 接入规范
 1. **渠道（Channel）**：选择 `OpenAI` 格式，Base URL 填入 `http://<IP>:18091/v1`。
-2. **账号类型**：选择 `apikey`，API Key 可任意填写（如 `sk-workbuddy`）。
+2. **账号类型**：选择 `apikey`，API Key 可任意填写（如 `***`）。
 3. **模型映射**：将上方模型（如 `gpt-5.5`, `deepseek-v3`, `kimi-k3` 等）全量映射至对应分组即可。
 
 ### cURL 调用测试
@@ -142,6 +144,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 
 ---
 
-## 📄 开源协议
+## 📄 更新历史与开源协议
 
-本项目基于 [MIT 协议](LICENSE) 开源。
+- 查看详细历史演进请参阅 [CHANGELOG.md](./CHANGELOG.md)。
+- 本项目基于 [MIT 协议](LICENSE) 开源。
