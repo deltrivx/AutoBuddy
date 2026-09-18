@@ -32,6 +32,7 @@ app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.3.0", lifespan=lifesp
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
+SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
 
@@ -261,8 +262,13 @@ _ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {
     "last_selected_source": None,
 }
 
-# 选账号流水：仅用于观测「并发请求到底分摊到了哪些账号」。
+# 选账号流水：用于观测「并发请求到底分摊到了哪些账号」。
 # 只保留最近 200 条，避免无界增长。
+#
+# v0.3.18 起**落盘**到 SELECTION_LOG_FILE。此前它只在进程内存里，容器一重建/重启，
+# 账号卡片上的「已调用 N 次」就全部归零（用户 2026-09-19 反馈）。
+# 注意它与 token_stats_logs.json 的区别只是**窗口大小**（200 vs 3000），
+# 两者都是滑动窗口，都不是历史累计值 —— 落盘只是让它跨重启连续，不是变成总数。
 _SELECTION_LOG: List[Dict[str, Any]] = []
 _SELECTION_LOG_MAX = 200
 
@@ -270,6 +276,42 @@ _SELECTION_LOG_MAX = 200
 # 不加锁时两个并发请求会读到同一个 index，双双落到同一账号 —— 表现为
 # 「并发时其实只用了其中一个账号」。这里用锁把「取号 + 递增」串起来。
 _SELECTION_LOCK = threading.Lock()
+
+
+def _load_selection_log() -> List[Dict[str, Any]]:
+    """从磁盘恢复选账号流水。文件不存在或损坏时返回空列表，绝不抛。"""
+    try:
+        if not SELECTION_LOG_FILE.exists():
+            return []
+        with open(SELECTION_LOG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+        entries = [e for e in data if isinstance(e, dict) and e.get("accountId")]
+        return entries[-_SELECTION_LOG_MAX:]
+    except Exception as e:
+        print(f"[account-pool] failed to load selection log: {e}", flush=True)
+        return []
+
+
+def _save_selection_log_locked() -> None:
+    """把当前流水整份写回磁盘。**必须在持有 _SELECTION_LOCK 时调用。**
+
+    整份重写而不是追加：上限只有 200 条（约 20 KB），比追加更不容易写出半截 JSON。
+    用 tmp + os.replace 做原子替换，进程被 kill 也不会留下坏文件。
+    异常一律吞掉 —— 统计落盘失败绝不能影响正常的 API 请求。
+    """
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = SELECTION_LOG_FILE.with_name(SELECTION_LOG_FILE.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_SELECTION_LOG, f, ensure_ascii=False)
+        os.replace(tmp, SELECTION_LOG_FILE)
+    except Exception as e:
+        print(f"[account-pool] failed to persist selection log: {e}", flush=True)
+
+
+_SELECTION_LOG = _load_selection_log()
 
 
 def _remember_selection(acc: Dict[str, Any], source: str) -> Dict[str, Any]:
@@ -291,6 +333,9 @@ def _remember_selection(acc: Dict[str, Any], source: str) -> Dict[str, Any]:
     with _SELECTION_LOCK:
         _SELECTION_LOG.append(entry)
         del _SELECTION_LOG[:-_SELECTION_LOG_MAX]
+        # 落盘放在锁内：保证「后发生的 append」一定写出更新的整份快照，
+        # 不会出现两个线程的快照乱序覆盖。20 KB 的整份写，开销可忽略。
+        _save_selection_log_locked()
     # 打日志便于 docker logs 直接核对并发分摊情况
     print(f"[pool] {source:7s} -> {entry['accountName']} ({account_id})", flush=True)
     return acc
@@ -388,9 +433,11 @@ def account_pool_selections(limit: int = 50):
 
 @app.post("/account-pool/selections/reset")
 def reset_account_pool_selections():
-    """清空选账号流水，便于做干净的压测观测。"""
+    """清空选账号流水，便于做干净的压测观测。**同时清掉磁盘上的副本**，
+    否则下次重启会把旧流水又读回来，看起来像「清零没生效」。"""
     with _SELECTION_LOCK:
         _SELECTION_LOG.clear()
+        _save_selection_log_locked()
     return {"ok": True, "total": 0}
 
 
