@@ -64,7 +64,7 @@ COLLAPSE_SCRIPT = """
   .wb-mac-block-hide {
     display: none !important;
   }
-  /* 账号卡片下方动态展示的「已使用模型」区域 */
+  /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
     margin-top: 12px;
     border-top: 1px dashed rgba(120, 120, 120, 0.25);
@@ -89,6 +89,12 @@ COLLAPSE_SCRIPT = """
     background: rgba(120, 120, 120, 0.12);
     color: var(--foreground, #374151);
     white-space: nowrap;
+  }
+  /* 该账号已经真实调用过的模型，高亮以区分「可用」与「已用」 */
+  .wb-am-tag-used {
+    background: rgba(59, 130, 246, 0.16);
+    color: var(--primary, #1d4ed8);
+    font-weight: 600;
   }
 </style>
 <script>
@@ -145,6 +151,24 @@ COLLAPSE_SCRIPT = """
       if (label && WB_UNSUPPORTED_STATUS.indexOf(label) !== -1) {
         el.classList.add("wb-mac-btn-hide");
       }
+    });
+
+    // 右上角那组桌面程序状态图标（WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 是否在运行）：
+    // 检测对象是宿主机上的桌面客户端，容器里根本不存在，状态恒为「未运行 / 未安装」，
+    // 悬停提示反而误导，整组移除。
+    var statusIcons = Array.prototype.slice.call(document.querySelectorAll("span"))
+      .filter(function (el) {
+        return el.classList.contains("group") && el.classList.contains("relative") &&
+          el.classList.contains("inline-flex") && el.classList.contains("cursor-default");
+      });
+    statusIcons.forEach(function (el) { el.classList.add("wb-mac-btn-hide"); });
+    statusIcons.forEach(function (el) {
+      var parent = el.parentElement;
+      if (!parent || parent.classList.contains("wb-mac-btn-hide")) return;
+      var left = Array.prototype.slice.call(parent.children).some(function (child) {
+        return !child.classList.contains("wb-mac-btn-hide");
+      });
+      if (!left) parent.classList.add("wb-mac-btn-hide");
     });
 
     // 「无 Buddy」表示该账号没有旅行伙伴、无法参与自动旅行，属负面且无参考价值的状态
@@ -229,29 +253,49 @@ COLLAPSE_SCRIPT = """
       var accs = (data && data.accounts) || {};
       Object.keys(accs).forEach(function (id) {
         var a = accs[id];
-        if (a && a.name) byName[a.name] = a.models || [];
+        if (a && a.name) byName[a.name] = a;
       });
+      // 账号没有任何调用记录时（例如刚添加）也要展示网关可路由的完整清单
+      var fallback = { models: (data && data.catalog) || [], used: [] };
+      if (!fallback.models.length) return;
 
       pending.forEach(function (card) {
         if (card.querySelector(".wb-am-box")) return;
         var h3 = card.querySelector("h3");
         if (!h3) return;
-        var models = byName[(h3.textContent || "").trim()];
-        if (!models || !models.length) return;
+
+        var entry = byName[(h3.textContent || "").trim()] || fallback;
+        var models = (entry.models && entry.models.length) ? entry.models : fallback.models;
+        var used = {};
+        (entry.used || []).forEach(function (m) { used[m] = true; });
+        if (!models.length) return;
 
         var box = document.createElement("div");
         box.className = "wb-am-box";
 
+        var usedCount = Object.keys(used).length;
         var title = document.createElement("div");
         title.className = "wb-am-title";
-        title.textContent = "该账号已使用模型 · " + models.length;
+        title.textContent = usedCount
+          ? ("可用模型 · " + models.length + "（已调用 " + usedCount + "）")
+          : ("可用模型 · " + models.length + "（暂无调用记录）");
 
+        var usage = entry.usage || {};
         var list = document.createElement("div");
         list.className = "wb-am-list";
         models.forEach(function (m) {
           var tag = document.createElement("span");
-          tag.className = "wb-am-tag";
+          tag.className = used[m] ? "wb-am-tag wb-am-tag-used" : "wb-am-tag";
           tag.textContent = m;
+          var stat = usage[m];
+          if (stat) {
+            var parts = [];
+            if (stat.requests != null) parts.push("调用 " + stat.requests + " 次");
+            if (stat.credit != null) parts.push("积分 " + Math.round(stat.credit * 100) / 100);
+            if (parts.length) tag.title = parts.join(" · ");
+          } else if (used[m]) {
+            tag.title = "该账号调用过此模型";
+          }
           list.appendChild(tag);
         });
 
@@ -317,32 +361,53 @@ async def token_stats_api(request: Request):
     stats = get_aggregated_token_stats()
     return stats
 
+GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", "http://127.0.0.1:18091/v1/models")
+
+
+async def _fetch_gateway_catalog() -> list:
+    """取网关（18091）可路由的完整模型清单。
+
+    网关的清单 = 内置基础清单 + 从官方 usage 自动发现出来的模型，是「当前能调
+    用哪些模型」的唯一权威来源。取不到时降级为空数组，由调用方回退到 usage。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(GATEWAY_MODELS_URL)
+            if r.status_code != 200:
+                return []
+            data = r.json() or {}
+            return [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+    except Exception:
+        return []
+
+
 @app.get("/api/account-models")
 async def account_models_api():
-    """按账号聚合官方 usage 数据中出现过的模型，供账号卡片动态展示。
+    """按账号返回「可用模型 + 已调用模型」，供账号卡片动态展示。
 
-    上游没有「按账号返回可用模型」的接口，但 usage 缓存里每条调用记录都带
-    accountId + model，因此可以据此还原每个账号实际使用过的模型，无需硬编码。
+    上游没有「按账号返回可用模型」的接口。可用清单取网关 /v1/models（自动发现，
+    不硬编码）；已调用清单由官方 usage 缓存里带 accountId + model 的记录聚合得出。
+    没有任何调用记录的新账号同样会拿到完整可用清单，只是 used 为空。
     """
     import json as _json
     data_dir = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
     cache_file = data_dir / "official_usage_cache.json"
-    result = {"accounts": {}, "discovered": []}
-    if not cache_file.exists():
-        return result
+
+    catalog = await _fetch_gateway_catalog()
+    result = {"accounts": {}, "catalog": catalog, "discovered": []}
 
     try:
         with open(cache_file, "r", encoding="utf-8") as f:
             payload = (_json.load(f) or {}).get("payload") or {}
     except Exception:
-        return result
+        payload = {}
 
     agg = {}
 
     def _touch(account_id, account_name):
         entry = agg.get(account_id)
         if entry is None:
-            entry = {"name": account_name, "models": set()}
+            entry = {"name": account_name, "used": set(), "usage": {}}
             agg[account_id] = entry
         elif not entry.get("name") and account_name:
             entry["name"] = account_name
@@ -355,19 +420,35 @@ async def account_models_api():
         for day in acc.get("daily") or []:
             for m in (day or {}).get("models") or []:
                 if isinstance(m, dict) and m.get("model"):
-                    entry["models"].add(m["model"])
+                    entry["used"].add(m["model"])
+
+    # payload.models / requests 补充调用次数与积分，并兜底补齐 model
+    for item in payload.get("models") or []:
+        if isinstance(item, dict) and item.get("model"):
+            for aid in list(agg.keys()):
+                agg[aid]["usage"].setdefault(item["model"], {
+                    "requests": item.get("requestCount"),
+                    "credit": item.get("credit"),
+                })
 
     for req in payload.get("requests") or []:
         if not isinstance(req, dict) or not req.get("accountId") or not req.get("model"):
             continue
-        _touch(req["accountId"], req.get("accountName"))["models"].add(req["model"])
+        entry = _touch(req["accountId"], req.get("accountName"))
+        entry["used"].add(req["model"])
 
-    all_models = set()
+    all_used = set()
     for aid, entry in agg.items():
-        models = sorted(entry["models"])
-        all_models.update(models)
-        result["accounts"][aid] = {"name": entry.get("name"), "models": models}
-    result["discovered"] = sorted(all_models)
+        used = sorted(entry["used"])
+        all_used.update(used)
+        result["accounts"][aid] = {
+            "name": entry.get("name"),
+            # 可用清单与网关保持一致，新账号也不会是空的
+            "models": catalog or sorted(entry["used"]),
+            "used": used,
+            "usage": entry.get("usage") or {},
+        }
+    result["discovered"] = sorted(all_used)
     return result
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])

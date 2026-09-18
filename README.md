@@ -28,7 +28,7 @@
 本项目将官方底层核心管理服务、**容器化定制 Web 控制台**与**自研高效 OpenAI API 网关**深度融为一体：
 - 彻底解决官方原生程序强依赖 macOS/Windows 桌面环境（Finder、完全磁盘访问、导入本机客户端）等容器化痛点。
 - 提供了可收纳折叠的纯净管理面板，支持国内版与国际版账号的热切换、Token 自动保活、实时用量图表与积分查看。
-- 内置高可用 API 网关，将上游全系列顶级大模型（GPT-5.6/5.5、Gemini-3.5、DeepSeek-V3、GLM-5.3、Kimi-K3、混元 Hy3 等）无缝转为标准 OpenAI 格式，供 **Sub2API**、**OpenClaw**、**NextChat**、**DSH** 等下游无感知接入。
+- 内置高可用 API 网关，将上游全系列顶级大模型（GPT-5.6/5.5、Gemini-3.5、DeepSeek-V3/V4.1、GLM-5.3、Kimi-K3、Claude-4.6、混元 Hy3 等 **32 款**）无缝转为标准 OpenAI 格式，供 **Sub2API**、**OpenClaw**、**NextChat**、**DSH** 等下游无感知接入。
 
 ---
 
@@ -43,11 +43,23 @@
   - 容器启动全自动初始化 CodeBuddy CLI 凭证与 Helper，彻底告别「未接入 CLI」报警。
   - 支持 Google 国际版账号、微信扫码登录与备份文件快速导入导出。
 - 🚀 **全量模型 OpenAI 兼容网关**：
-  - 支持 **25+ 款主流顶级大模型与工作模式别名** 端到端极速调用。
+  - 支持 **32 款主流顶级大模型与工作模式别名** 端到端极速调用。
+  - **模型清单自动发现**：官方未提供 `/models` 接口，网关改从实际调用流水（`official_usage_cache.json`）与网关实测统计中自动聚合模型，新模型上线后无需手工补清单。
   - 完美支持 `stream: true` 与 `stream: false` 自动双向流/非流转换。
   - 自动补全系统级 Prompt（`normalize_messages`），保障上游 100% 稳定响应。
+- 🧾 **账号卡片动态模型清单**：
+  - 每个账号下方自动展示**该账号可调用的模型**，数据源为网关 `/v1/models`，与全局清单保持一致，不做任何硬编码。
+  - 已真实调用过的模型高亮标注，悬停可见「调用次数 / 消耗积分」。
+  - 刚添加、尚无调用记录的新账号同样完整展示可用清单，并标注「暂无调用记录」。
+- 🔄 **容器原生的账号轮询**：
+  - 官方轮询依赖重启宿主机桌面客户端，容器内无法执行。网关内置轮询每 30 分钟检测当前账号可用性并自动切换，维护 `rotate/state.json`。
+  - 可通过 `GATEWAY_ROTATE_ENABLED` / `GATEWAY_ROTATE_INTERVAL_MINUTES` 调整，状态见 `/rotate/status`。
+- 🧹 **彻底移除容器内无效的桌面状态**：
+  - 移除右上角 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 三个桌面程序状态图标（容器内无宿主客户端，状态恒为「未运行 / 未安装」，只造成误导）。
+  - 隐藏「设为 IDE / CLI 当前账号」等必然失败的按钮与「无 Buddy」等无参考价值的状态。
 - 🔗 **开箱即用对接 Sub2API**：
   - 完美适配 Sub2API 的 `apikey` 鉴权与渠道路由，实现多账号轮询与配额统计。
+  - Sub2API 的 `model_mapping` 为手工白名单，不会自动发现上游模型；可将网关 `/v1/models` 的返回同步进去。
 
 ---
 
@@ -56,7 +68,9 @@
 | 模型类别 | 模型 ID (`model`) | 别名映射 (`aliases`) | 官方说明与能力特性 |
 | :--- | :--- | :--- | :--- |
 | **混元系列** | `hy3` | `hy4`, `hunyuan` | 腾讯混元增强思考推理模型，强化逻辑与代码能力 |
+| | `hy4-preview-f` | - | 混元 Hy4 预览版（自动发现） |
 | **DeepSeek** | `deepseek-v3` | `deepseek-chat` | DeepSeek-V3 核心旗舰模型 |
+| | `deepseek-v4.1-flash` | - | DeepSeek-V4.1 极速版（自动发现） |
 | **OpenAI 系列** | `gpt-5.6-sol` | - | OpenAI 旗舰长程复杂推理大模型 |
 | | `gpt-5.6-terra` | - | OpenAI 均衡模型，兼顾能力、速度与成本 |
 | | `gpt-5.6-luna` | - | OpenAI 轻量模型，极速响应，适合日常与高并发 |
@@ -66,10 +80,15 @@
 | **Google 系列** | `gemini-3.1-pro` | - | Google 旗舰复杂推理模型 |
 | | `gemini-3.5-flash` | - | Google 均衡超快响应多模态模型 |
 | **Kimi 系列** | `kimi-k3` | `kimi` | 月之暗面 K3，擅长长程科研推理与前端代码生成 |
+| | `kimi-k2.7` | - | Kimi-K2.7（自动发现） |
 | | `kimi-k2.6` | - | Kimi 多模态日常高频模型 |
 | | `kimi-k2.5` | - | Kimi 基础推理模型 |
 | **智谱 GLM** | `glm-5.3` | - | 智谱最新 GLM-5 旗舰模型 |
 | | `glm-5.2` | - | 智谱 1M 超长上下文长程任务模型 |
+| | `glm-5.1` | - | GLM-5.1（自动发现） |
+| **Anthropic** | `claude-opus-4.6` | - | Claude Opus 4.6（自动发现） |
+| | `claude-sonnet-4.6` | - | Claude Sonnet 4.6（自动发现） |
+| **CodeWise** | `codewise-model-a9` | - | CodeWise A9（自动发现） |
 | **MiniMax** | `minimax-m3` | - | 原生多模态模型，擅长复杂代码与 Agent 智能体协同 |
 | **智能模式** | `default-model` | `Auto` | 官方自适应智能调度模式 |
 | | `fast-model` | `Fast` | 极速响应模式，适合简单任务 |
@@ -141,6 +160,16 @@ curl -X POST http://localhost:18091/v1/chat/completions \
     "stream": false
   }'
 ```
+
+### 网关内置接口
+
+| 接口 | 说明 |
+| :--- | :--- |
+| `GET /v1/models` | 返回自动发现后的完整模型清单（下游同步模型列表请以这里为准） |
+| `GET /health` | 健康检查，含 `models_count`、`models_auto_discovered` 与轮询状态快照 |
+| `GET /rotate/status` | 查看账号轮询开关、间隔、上次检查与上次切换结果 |
+| `POST /rotate/run` | 立即执行一次账号可用性检测与切换 |
+| `GET /api/account-models` | Web 控制台用：按账号返回「可用模型 + 已调用模型 + 用量」 |
 
 ---
 
