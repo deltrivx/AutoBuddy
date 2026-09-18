@@ -1,5 +1,4 @@
 import os
-import re
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 import httpx
@@ -55,23 +54,27 @@ COLLAPSE_SCRIPT = """
   aside.wb-collapsed nav a span.wb-nav-label {
     display: none !important;
   }
-  /* 隐藏不适合容器环境的 Mac 专属提示或无法在容器运行的桌面授权区域 */
-  .wb-mac-cleanup {
+  /* 隐藏桌面端专有无法在容器执行的操作按钮与完全磁盘访问提示块 */
+  .wb-mac-btn-hide,
+  .wb-mac-block-hide {
     display: none !important;
   }
 </style>
 <script>
 (function() {
   function sanitizeMacUI() {
-    // 自动清理 DOM 中残存的 Finder / 完全磁盘访问提示
-    document.querySelectorAll("button, a, div, p, li, span").forEach(el => {
-      const text = el.innerText || "";
-      if (text.includes("在 Finder 中显示") || text.includes("打开完全磁盘访问") || text.includes("workbuddy-switch.app")) {
-        if (el.tagName === "BUTTON" || el.tagName === "A") {
-          el.style.display = "none";
-        } else if (text.includes("如何授权") || text.includes("完全磁盘访问")) {
-          el.closest(".border, .rounded-md, div")?.classList.add("wb-mac-cleanup");
-        }
+    document.querySelectorAll("button, a").forEach(el => {
+      const text = (el.innerText || "").trim();
+      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理") {
+        el.classList.add("wb-mac-btn-hide");
+      }
+    });
+
+    // 仅精准清理包含「如何授权」或「完全磁盘访问」的引导小卡片，绝不向上寻找普通大容器
+    document.querySelectorAll("div.border-l-2, div.rounded-md.border").forEach(box => {
+      const text = box.innerText || "";
+      if (text.includes("完全磁盘访问") || text.includes("如何授权") || text.includes("workbuddy-switch.app")) {
+        box.classList.add("wb-mac-block-hide");
       }
     });
   }
@@ -85,7 +88,6 @@ COLLAPSE_SCRIPT = """
     btn.setAttribute("title", "收起/展开侧边栏");
     btn.innerHTML = `<svg id="wb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`;
     
-    // 整理 nav 里的文字为独立 span
     aside.querySelectorAll("nav a").forEach(a => {
       Array.from(a.childNodes).forEach(node => {
         if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
@@ -131,15 +133,13 @@ COLLAPSE_SCRIPT = """
 """
 
 def clean_mac_content(content: bytes) -> bytes:
-    # 替换前端中针对 Mac/Finder 相关的文案为容器化友好文案
     replacements = [
         (b"http://[IP]:57890", b""),
         (b"http://127.0.0.1:57890", b""),
         (b"http://localhost:57890", b""),
         (b":57890", b":18090"),
         (b"/icon-transparent.png", b"/icon.png"),
-        # Mac 相关文案替换
-        (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"), # 在 Finder 中显示 -> 在文件管理器中显示
+        (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"),
         (b"workbuddy-switch.app", b"workbuddy-switch"),
     ]
     for old, new in replacements:
@@ -179,14 +179,19 @@ async def proxy_all(request: Request, path: str):
         )
         content = r.content
         media_type = r.headers.get("content-type", "")
-        if "text/html" in media_type:
+        
+        is_html = "text/html" in media_type or content.lstrip().startswith(b"<!doctype html") or content.lstrip().startswith(b"<html")
+        
+        res_headers = {k: v for k, v in r.headers.items() if k.lower() not in ["content-encoding", "content-length", "transfer-encoding"]}
+        
+        if is_html:
+            res_headers["content-type"] = "text/html; charset=utf-8"
             content = clean_mac_content(content)
             if b"</body>" in content:
                 content = content.replace(b"</body>", f"{COLLAPSE_SCRIPT}</body>".encode("utf-8"))
         elif "javascript" in media_type:
             content = clean_mac_content(content)
             
-        res_headers = {k: v for k, v in r.headers.items() if k.lower() not in ["content-encoding", "content-length", "transfer-encoding"]}
         return Response(
             content=content,
             status_code=r.status_code,
