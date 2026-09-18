@@ -70,8 +70,8 @@ COLLAPSE_SCRIPT = """
   function sanitizeMacUI() {
     document.querySelectorAll("button, a").forEach(el => {
       const text = (el.innerText || "").trim();
-      // 清除无法在容器内执行的动作：Finder、完全磁盘访问、导入本机账号（容器无本地桌面应用）
-      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理" || text === "导入本机账号") {
+      // 彻底清理无法在容器内执行的残留操作：Finder、完全磁盘访问、打开 App 管理
+      if (text === "在 Finder 中显示" || text === "在文件管理器中显示" || text === "打开完全磁盘访问" || text === "打开 App 管理") {
         el.classList.add("wb-mac-btn-hide");
       }
     });
