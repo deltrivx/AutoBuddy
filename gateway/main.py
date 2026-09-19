@@ -13,9 +13,11 @@ from fastapi.responses import StreamingResponse
 import httpx
 
 try:
-    from gateway.token_tracker import record_token_usage, get_aggregated_token_stats
+    from gateway.token_tracker import (record_token_usage, get_aggregated_token_stats,
+                                       UsageScanner, extract_usage)
 except ImportError:
-    from token_tracker import record_token_usage, get_aggregated_token_stats
+    from token_tracker import (record_token_usage, get_aggregated_token_stats,
+                               UsageScanner, extract_usage)
 
 try:
     from gateway import api_keys
@@ -27,6 +29,21 @@ try:
 except ImportError:
     import model_policy
     import model_health
+
+
+# ---------------------------------------------------------------------------
+# 版本号
+#
+# 只有一套号：GitHub Release 标签（同时也是镜像 tag）。发版时这里与 CHANGELOG
+# 的版本段在同一次提交里一起改，`_test_version_sync.py` 在 CI 里把关，对不上
+# 直接构建失败。
+#
+# 历史上这里是与发布号平行的另一套内部版本（1.x），于是面板显示 v1.8.0、
+# 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
+# `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
+# ---------------------------------------------------------------------------
+VERSION_DEFAULT = "0.4.5"
+GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
 @asynccontextmanager
@@ -47,7 +64,7 @@ async def lifespan(_app: FastAPI):
         health_task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.8.0", lifespan=lifespan)
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version=GATEWAY_VERSION, lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
@@ -599,18 +616,16 @@ def update_account_models_config(payload: Dict[str, Any]):
     }
 
 
-
+# ---------------------------------------------------------------------------
 # 网关的两个核心能力之一是「对外提供 OpenAI 兼容 API」，因此「调用地址 + 密钥」
 # 必须能在设置页直接看到、直接改。密钥校验是可选的（默认关闭），开启后 /v1/* 需要
 # Authorization: Bearer <key> 或 x-api-key: <key>。
 # ---------------------------------------------------------------------------
 
-GATEWAY_VERSION = "1.8.0"
 
 # 项目元信息。设置页的「关于」面板由此渲染 —— 放在环境变量里而不是写死在前端，
-# 一是保持单一出处，二是 fork 出去的人可以改成自己的仓库与镜像名，
+# 一是保持单一出处，二是 fork 出去的人可以改成自己的仓库，
 # 不会把使用者引回上游作者的项目。
-GATEWAY_IMAGE = os.getenv("WB_IMAGE", "ghcr.io/deltrivx/workbuddy-switch")
 PROJECT_URL = os.getenv("WB_PROJECT_URL", "https://github.com/deltrivx/workbuddy-switch")
 PROJECT_NAME = os.getenv("WB_PROJECT_NAME", "WorkBuddy Switch")
 
@@ -660,7 +675,6 @@ def _gateway_info() -> Dict[str, Any]:
         "project": {
             "name": PROJECT_NAME,
             "url": PROJECT_URL,
-            "image": GATEWAY_IMAGE,
             "releases": f"{PROJECT_URL}/releases",
             "changelog": f"{PROJECT_URL}/blob/main/CHANGELOG.md",
             "issues": f"{PROJECT_URL}/issues",
@@ -842,11 +856,15 @@ def normalize_messages_for_upstream(messages: List[Dict[str, Any]]) -> List[Dict
         return [{"role": "system", "content": "You are a helpful assistant."}] + messages
     return messages
 
-def estimate_tokens(text: str) -> int:
-    if not text:
+def estimate_tokens_from_chars(char_count: int) -> int:
+    """按 3.5 字符 ≈ 1 token 的粗估。只在拿不到上游 usage 时兜底。"""
+    if char_count <= 0:
         return 0
-    # 简易而高效的 Token 估算：按 3.5 字符约 1 Token
-    return max(1, int(len(text) / 3.5))
+    return max(1, int(char_count / 3.5))
+
+
+def estimate_tokens(text: str) -> int:
+    return estimate_tokens_from_chars(len(text or ""))
 
 @app.post("/v1/chat/completions")
 @app.post("/chat/completions")
@@ -917,39 +935,32 @@ async def chat_completions(request: Request):
         res = await client.send(req, stream=True)
 
         async def stream_generator():
-            output_chunks = []
-            req_id = "chatcmpl-wb"
+            # 逐块扫描而非缓冲：先 yield 把字节送出去，再解析这一块。
+            # 只留「最后一行没读完」的残余，正文只数字符不存内容。
+            scanner = UsageScanner()
             try:
                 async for chunk in res.aiter_bytes():
                     yield chunk
-                    # 抓取文本估算输出 token
-                    chunk_str = chunk.decode("utf-8", errors="ignore")
-                    for line in chunk_str.split("\n"):
-                        line = line.strip()
-                        if line.startswith("data:") and line[5:].strip() != "[DONE]":
-                            try:
-                                j = json.loads(line[5:].strip())
-                                if "id" in j:
-                                    req_id = j["id"]
-                                c = j.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                if c:
-                                    output_chunks.append(c)
-                            except Exception:
-                                pass
+                    scanner.feed(chunk)
             finally:
                 await res.aclose()
                 await client.aclose()
                 duration = time.time() - start_time
-                output_tokens = estimate_tokens("".join(output_chunks))
+                usage = scanner.usage
+                # 拿不到 usage 只有一种情况：客户端中途断开、末帧没到。
+                # 此时回退到字符估算，并把缓存命中记为 0（不知道就是不知道）。
                 record_token_usage(
                     model=raw_model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+                    input_tokens=usage["prompt"] if usage else input_tokens,
+                    output_tokens=(usage["completion"] if usage
+                                   else estimate_tokens_from_chars(scanner.text_chars)),
                     duration_sec=duration,
-                    request_id=req_id,
+                    request_id=scanner.response_id or "chatcmpl-wb",
                     account_id=served_account_id,
                     account_name=served_account_name,
                     variant=variant,
+                    cache_read=usage["cacheRead"] if usage else 0,
+                    cache_write=usage["cacheWrite"] if usage else 0,
                 )
 
         return StreamingResponse(
@@ -969,6 +980,7 @@ async def chat_completions(request: Request):
         collected_content = ""
         response_id = "chatcmpl-wb"
         finish_reason = "stop"
+        usage = None
 
         try:
             async for line in res.aiter_lines():
@@ -982,6 +994,9 @@ async def chat_completions(request: Request):
                     chunk = json.loads(data_str)
                     if "id" in chunk:
                         response_id = chunk["id"]
+                    found = extract_usage(chunk)
+                    if found:
+                        usage = found
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
@@ -996,17 +1011,20 @@ async def chat_completions(request: Request):
             await client.aclose()
 
         duration = time.time() - start_time
-        output_tokens = estimate_tokens(collected_content)
         record_token_usage(
             model=raw_model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=usage["prompt"] if usage else input_tokens,
+            output_tokens=(usage["completion"] if usage else estimate_tokens(collected_content)),
             duration_sec=duration,
             request_id=response_id,
             account_id=served_account_id,
             account_name=served_account_name,
             variant=variant,
+            cache_read=usage["cacheRead"] if usage else 0,
+            cache_write=usage["cacheWrite"] if usage else 0,
         )
+        input_tokens = usage["prompt"] if usage else input_tokens
+        output_tokens = usage["completion"] if usage else estimate_tokens(collected_content)
 
         result_payload = {
             "id": response_id,
@@ -1026,7 +1044,12 @@ async def chat_completions(request: Request):
             "usage": {
                 "prompt_tokens": input_tokens,
                 "completion_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens
+                "total_tokens": input_tokens + output_tokens,
+                # 上游返回了多少就带多少，拿不到就不给 —— 调用方按标准字段读，
+                # 多出来的这些只是把缓存命中透明地透出去。
+                **({"prompt_tokens_details": {"cached_tokens": usage["cacheRead"]},
+                    "cache_read_input_tokens": usage["cacheRead"],
+                    "cache_creation_input_tokens": usage["cacheWrite"]} if usage else {})
             }
         }
         return Response(

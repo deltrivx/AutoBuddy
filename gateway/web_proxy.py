@@ -435,6 +435,37 @@ COLLAPSE_SCRIPT = r"""
     line-height: 1.8;
     color: var(--muted-foreground, #9ca3af);
   }
+  /* 「运行位置」用两列网格而不是一句带分隔符的长文本 ——
+     路径很长而端口很短，挤在一行里换行后必然对不齐，读起来像排版坏了。
+     网格的标签列取 max-content，值列吃掉剩余宽度，天然左对齐。 */
+  .wb-about-grid {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 6px;
+    margin-top: 4px;
+  }
+  .wb-about-k {
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--muted-foreground, #64748b);
+    white-space: nowrap;
+  }
+  .wb-about-v {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--foreground, #0f172a);
+  }
+  .wb-about-v > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 </style>
 <script>
 (function() {
@@ -1092,7 +1123,7 @@ COLLAPSE_SCRIPT = r"""
     var stMain = wbEl("div", "wb-api-main");
     stMain.appendChild(wbEl("div", "wb-api-label", "网关状态"));
     stMain.appendChild(wbEl("div", "wb-api-desc",
-      "网关版本 " + (gw.version || "—") + " · 账号池模式 " +
+      "版本 " + (gw.version || "—") + " · 账号池模式 " +
       ((accounts.mode === "manual") ? "手动指定" : "自动轮换")));
     stRow.appendChild(stMain);
     var stBadges = wbEl("div", null);
@@ -1649,10 +1680,13 @@ COLLAPSE_SCRIPT = r"""
 
   // ---------------------------------------------------------------------
   // 设置页：关于
-  // 放在设置页最底部。这是自建容器，用户需要一处能回答「我装的到底是什么、
-  // 跑的是哪个镜像、升级/报错去哪里看」的地方 —— 否则每次都得回去翻 README。
-  // 项目地址与镜像名由网关下发（可用环境变量覆盖），fork 出去的人不会把使用者
+  // 放在设置页最底部。这是自建容器，用户需要一处能回答「我装的是哪个版本、
+  // 账号长什么样、出问题去哪里看」的地方 —— 否则每次都得回去翻 README。
+  // 项目地址与项目名由网关下发（可用环境变量覆盖），fork 出去的人不会把使用者
   // 引回上游作者的项目。
+  //
+  // 版本号来自网关常量，**与 GitHub Release 标签 / 镜像 tag 同号**
+  // （曾经是两套号：面板 v1.8.0、发布页 v0.4.4，看的人根本没法判断自己是不是最新）。
   // ---------------------------------------------------------------------
   var wbInfoCache = null;
 
@@ -1679,7 +1713,9 @@ COLLAPSE_SCRIPT = r"""
     var nameMain = wbEl("div", "wb-api-main");
     var headLine = wbEl("div", "wb-about-head");
     headLine.appendChild(wbEl("span", "wb-about-name", proj.name || "WorkBuddy Switch"));
-    headLine.appendChild(wbEl("span", "wb-api-badge wb-api-badge-ok", "v" + (data.version || "?")));
+    var versionBadge = wbEl("span", "wb-api-badge wb-api-badge-ok", "v" + (data.version || "?"));
+    versionBadge.title = "与 GitHub 发布标签、镜像 tag 同号";
+    headLine.appendChild(versionBadge);
     nameMain.appendChild(headLine);
     nameMain.appendChild(wbEl("div", "wb-api-desc",
       "把 WorkBuddy / CodeBuddy 账号池变成标准 OpenAI 兼容网关：账号自动轮询、"
@@ -1702,38 +1738,42 @@ COLLAPSE_SCRIPT = r"""
     nameRow.appendChild(nameMain);
     card.appendChild(nameRow);
 
-    // ---- 2. 镜像 ----
-    var imgRow = wbEl("div", "wb-api-row");
-    var imgMain = wbEl("div", "wb-api-main");
-    imgMain.appendChild(wbEl("div", "wb-api-label", "容器镜像"));
-    imgMain.appendChild(wbEl("div", "wb-api-desc",
-      "升级就是拉这个镜像后重建容器。Unraid 上请用容器模板的「强制更新」，"
-      + "不要手工拼 docker run。"));
-    imgRow.appendChild(imgMain);
-    var imgLine = wbEl("div", null);
-    imgLine.style.cssText = "display:flex;align-items:center;gap:6px;flex:0 0 auto;";
-    var imgChip = wbEl("span", "wb-api-chip wb-api-mono", proj.image || "");
-    imgLine.appendChild(imgChip);
-    var imgCopy = wbEl("button", "wb-api-btn", "复制");
-    imgCopy.onclick = function () { wbCopy(proj.image || "", "已复制镜像地址"); };
-    imgLine.appendChild(imgCopy);
-    imgRow.appendChild(imgLine);
-    card.appendChild(imgRow);
-
-    // ---- 3. 运行位置与端口 ----
+    // ---- 2. 运行位置 ----
+    // 只要「数据目录 + 两个入口地址」。镜像名不在这里重复：升级方式属于文档，
+    // 而且版本号已经在上面的徽章里了，再列一次镜像名只会让同一件事出现两遍。
     var runRow = wbEl("div", "wb-api-row wb-api-row-stack");
     var runMain = wbEl("div", "wb-api-main");
-    runMain.appendChild(wbEl("div", "wb-api-label", "数据目录与端口"));
+    runMain.appendChild(wbEl("div", "wb-api-label", "运行位置"));
+
+    var scheme = window.location.protocol === "https:" ? "https:" : "http:";
+    var host = window.location.hostname || "localhost";
+    var consolePort = ports.console || 18090;
+    var gatewayPort = ports.gateway || 18091;
+
+    var grid = wbEl("div", "wb-about-grid");
+    function addRow(key, value, mono, copyValue) {
+      grid.appendChild(wbEl("span", "wb-about-k", key));
+      var cell = wbEl("div", "wb-about-v");
+      cell.appendChild(wbEl("span", mono ? "wb-api-mono" : null, value));
+      if (copyValue) {
+        var btn = wbEl("button", "wb-api-btn", "复制");
+        btn.onclick = function () { wbCopy(copyValue, "已复制" + key); };
+        cell.appendChild(btn);
+      }
+      grid.appendChild(cell);
+    }
+    var dir = data.dataDir || "";
+    addRow("数据目录", dir || "—", true, dir);
+    addRow("控制台", scheme + "//" + host + ":" + consolePort, false, null);
+    addRow("网关 API", scheme + "//" + host + ":" + gatewayPort + "/v1", false, null);
+    runMain.appendChild(grid);
     runMain.appendChild(wbEl("div", "wb-api-desc",
-      "数据目录 " + (data.dataDir || "—")
-      + "　·　网关 " + (ports.gateway || 18091)
-      + "　·　控制台 " + (ports.console || 18090)));
-    runMain.appendChild(wbEl("div", "wb-api-desc",
-      "升级不会动这个目录里的账号、密钥与模型策略配置。"));
+      "浏览器打开「控制台」；程序调用填「网关 API」。升级不会动数据目录里的"
+      + "账号、密钥与模型策略配置。"));
     runRow.appendChild(runMain);
     card.appendChild(runRow);
 
-    // ---- 4. 当前规模 ----
+    // ---- 3. 当前规模 ----
     var scaleRow = wbEl("div", "wb-api-row");
     var scaleMain = wbEl("div", "wb-api-main");
     scaleMain.appendChild(wbEl("div", "wb-api-label", "当前规模"));
@@ -1746,7 +1786,7 @@ COLLAPSE_SCRIPT = r"""
     scaleRow.appendChild(scaleMain);
     card.appendChild(scaleRow);
 
-    // ---- 5. 免责说明 ----
+    // ---- 4. 免责说明 ----
     var noteRow = wbEl("div", "wb-api-row wb-api-row-stack");
     var noteMain = wbEl("div", "wb-api-main");
     noteMain.appendChild(wbEl("div", "wb-api-label", "说明"));
