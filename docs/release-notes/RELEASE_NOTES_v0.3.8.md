@@ -53,9 +53,7 @@
 
 ## 5️⃣ 主页文案按容器真实能力重写
 
-- 原：`统一管理 WorkBuddy、CodeBuddy IDE 与 CodeBuddy CLI 账号、积分和签到状态。`
-  （容器里 IDE / CLI 能力已物理移除，措辞失真）
-- 新：`统一管理 WorkBuddy、账号池与 OpenAI 兼容网关服务、积分和签到状态。`
+原文案宣称管理容器里已不存在的桌面产品，措辞失真。现在改为只描述容器里真实存在的服务。
 
 ---
 
@@ -67,16 +65,6 @@
   各自的作用范围与间隔，说明三者互补而非冲突。
 
 ---
-
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.8
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
 
 ## 不改变的行为
 

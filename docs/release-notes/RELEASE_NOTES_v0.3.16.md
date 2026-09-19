@@ -29,16 +29,6 @@
       hy3 → 约 88 Token · 积分 0
 ```
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.16
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 只清理界面文案口径，账号管理、自动签到、账号池调度与 Token 统计**全部不变**。

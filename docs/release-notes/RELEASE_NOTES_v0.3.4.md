@@ -38,16 +38,6 @@
 补丁引擎从「硬编码超长匹配串」升级为「锚点 + 语法配平扫描」，
 扫描器能正确跳过字符串与模板字面量，因此界面代码里的括号不再干扰表达式边界判定。
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.4
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号管理、自动签到与 Token 统计保持不变。

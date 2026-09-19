@@ -44,16 +44,6 @@ t === "ai" ? <>
 > 全量核对所有桌面专属的动态加载路径，只有一处没加判断，
 > 但它的渲染条件只由桌面分支设置，容器里不会触发。
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.13
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号管理、自动签到、账号池调度与 Token 统计全部保持不变。

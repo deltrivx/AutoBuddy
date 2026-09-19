@@ -25,16 +25,6 @@
 - 已停用账号被指定时返回 `409`；
 - 自动模式连续 5 次调用分摊到 5 个不同账号。
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.5
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号的分配规则本身没有变化，只是把「用哪个账号」这件事**如实记录下来**。

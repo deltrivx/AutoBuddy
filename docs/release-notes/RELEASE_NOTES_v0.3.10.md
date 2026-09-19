@@ -4,10 +4,10 @@
 
 ## 1. git 身份默认值
 
-**问题**：容器内没有 git 身份配置。CLI 的版本控制能力（查看 diff、提交变更、创建分支）
+容器内没有 git 身份配置。CLI 的版本控制能力（查看 diff、提交变更、创建分支）
 依赖用户名与邮箱，缺失时提交会直接报错。
 
-**修复**：镜像内置 **系统级**默认身份，让你在容器里一条命令就能覆盖：
+现在镜像内置 **系统级**默认身份，让你在容器里一条命令就能覆盖：
 
 ```bash
 git config --global user.name "你的名字"
@@ -25,16 +25,6 @@ Unraid 模板新增**可选**挂载位，作为容器内可操作的项目文件
 - CLI **自带 ripgrep**，无需另装。
 - 自动更新已关闭并生效。
 - Node / npm / git 版本均满足要求。
-
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.10
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
 
 ## 不改变的行为
 

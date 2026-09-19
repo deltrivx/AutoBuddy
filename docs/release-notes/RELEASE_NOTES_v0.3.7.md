@@ -54,16 +54,6 @@
 **一条对话请求仍由单个账号完成**（不拆请求，避免上下文与计费混乱），
 **多个同时到达的独立请求才会分摊到不同账号**。
 
-## 📦 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.7
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号管理、自动签到、Token 统计与模型路由全部保持不变。

@@ -51,16 +51,6 @@ v0.3.13 的普查是按「桌面 / CLI **关键词**」筛的。这个筛法有�
 - 账号卡片可见文案：签到状态、积分包、`建议优先使用`、`N 个工具正在使用` —— 均为活功能 ✅
 - 容器挂载只剩 `/data` ✅
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.14
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号管理、自动签到、账号池调度与 Token 统计全部保持不变。

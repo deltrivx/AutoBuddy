@@ -1,11 +1,7 @@
-## 需求
-
-CodeBuddy CLI 早在 v0.3.11 就从镜像里移除了，但它在**数据卷**里留下的痕迹一直没清。
-本版做一次性清理，并修掉唯一还在「制造」残留的源头。
-
 ## 清除清单
 
-删除前已打包备份到 `/mnt/user/appdata/workbuddy-switch/backup/`。
+CodeBuddy CLI 早在 v0.3.11 就从镜像里移除了，但它在**数据卷**里留下的痕迹一直没清。
+本版做一次性清理。删除前已打包备份到 `/mnt/user/appdata/workbuddy-switch/backup/`。
 
 | 路径 | 体积 | 性质 |
 | :--- | ---: | :--- |
@@ -21,9 +17,7 @@ CodeBuddy CLI 早在 v0.3.11 就从镜像里移除了，但它在**数据卷**�
 ## 源头修复
 
 `/data/.wb-switch/rotate` 是个**每次容器启动都会被重建**的空目录 —— 光删文件治不了，
-必须改启动脚本。现在不再创建它。
-
-这是本版**唯一的代码改动**。
+必须改启动脚本。现在不再创建它。这是本版**唯一的代码改动**。
 
 ## 明确不动
 
@@ -40,17 +34,8 @@ CodeBuddy CLI 早在 v0.3.11 就从镜像里移除了，但它在**数据卷**�
 - `/data` 只剩 `.config`（IDE）与 `.wb-switch`（实时数据）；
 - 账号数据完好，控制台与网关各接口全部正常，日志无异常。
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.17
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号管理、自动签到、账号池调度与 Token 统计全部保持不变。
 本版只做数据卷清理与启动脚本的一处修正，界面与接口无变化。
+升级不会动到 `/data` 里的账号数据。

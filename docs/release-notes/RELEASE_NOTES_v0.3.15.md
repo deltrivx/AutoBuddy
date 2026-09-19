@@ -45,16 +45,6 @@ HTML 外壳里根本没有它们 —— 于是**每个 HTML 请求都误报**。
 - 容器内热推送实测：HTML / JS 均 200，替换全部命中，`docker logs` 里告警 / 异常 **0** 条；
 - 浏览器复验：账号页副标题 = `统一管理 WorkBuddy 账号、积分与签到状态，并为 API 网关提供账号。`
 
-## 升级方式
-
-```bash
-docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.15
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
-```
-
-> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
-> 数据目录不变（`/data`），升级不会动到账号数据。
-
 ## 不改变的行为
 
 账号管理、自动签到、账号池调度与 Token 统计全部保持不变。
