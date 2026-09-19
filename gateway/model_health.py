@@ -12,21 +12,25 @@
 1. **复用模型级禁用策略作为唯一事实来源**。自动巡检不另建一套状态，
    它读写的就是 ``model_policy.json``。每个禁用项带来源标记（manual / auto），
    于是「自愈」只放开自己写进去的那些，人手点的一律不动 —— 详见 model_policy 模块。
-2. **探测必须模仿真实调用的请求形态**。上游只接受流式请求（非流式直接 400），
-   且要求首条消息是 system prompt。探测请求体因此与网关转发上游时保持一致，
+2. **探测必须模仿真实调用的请求形态**。上游只接受流式请求（非流式直接 400）、
+   要求首条消息是 system prompt、并且对 ``max_tokens`` 有最小值校验。
+   探测请求体因此刻意做成「什么都不多带」的最小合法请求，与网关转发上游时保持一致，
    否则会得到「全部模型都不可用」这种荒谬结论，进而成批误禁好模型。
-3. **探测量小**。``max_tokens=1``、短提示词，只看「有没有正常返回」而不看内容质量。
-4. **宁漏禁，不误禁**。限流 / 超时等临时状态一律跳过；整轮无一个可用时判定为
-   探测本身出了问题，整轮作废、不写策略。
+3. **探测量小靠早停，不靠 ``max_tokens``**。读完流式响应的第一帧就断开连接，
+   耗时与计费都压到最低，同时不给上游任何可校验的参数。
+4. **宁漏禁，不误禁**。限流 / 超时等临时状态一律跳过；请求被上游参数校验拒绝时
+   判定为探测自身的问题（``probe_defect``）同样跳过；整轮无一个可用时整轮作废、
+   不写策略。凭据整账号失效时也不写 —— 坏的是凭据，不是模型。
 5. **失败不怕**。探测网络异常一律记为临时状态；写盘失败、加载失败一律吞掉，
    绝不影响正常 API 请求。
 """
 
 import json
 import os
+import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
     from gateway import model_policy
@@ -44,26 +48,50 @@ LAST_RUN_FILE = DATA_DIR / "model_health_last.json"
 # 429（限流）是**临时**状态，不计入自动禁用 —— 否则高峰期巡检会把好模型全禁掉。
 UNAVAILABLE_STATUS = {400, 401, 403, 404, 422, 500, 502, 503, 504}
 TRANSIENT_STATUS = {408, 425, 429}
+# 凭据失效。一个账号的 token 过期会让它名下**所有**模型一起失败，
+# 但坏的是凭据不是模型，因此单独识别、不写禁用策略。
+AUTH_STATUS = {401, 403}
+# 整个账号都栽在鉴权上、且至少探了这么多个模型时，按「凭据失效」处理。
+# 取 2 是为了避免只探一个组合就下结论。
+AUTH_GUARD_MIN_MODELS = 2
+
+# 上游表示「请求参数被模型提供方拒绝」的错误码：问题出在**探测请求本身**，
+# 与模型可用性无关。命中时归为 probe_defect，只跳过、不写策略。
+PROBE_DEFECT_CODES = {11133}
+# 响应体里出现这些片段，同样判定为探测请求自身的形态问题。
+# 典型来源：给上游传了超出取值范围的可选参数（如 max_tokens 低于最小值）。
+PROBE_DEFECT_HINTS = (
+    "integer_below_min_value",
+    "integer_above_max_value",
+    "invalid_parameter",
+    "string_too_long",
+    "string_too_short",
+)
 
 DEFAULT_INTERVAL_MINUTES = 60
 MIN_INTERVAL_MINUTES = 5
 
-# 探测用的最小请求体：只要求回一个字，把计费与耗时压到最低。
+# 探测用的最小请求体。请求体里**只放必需的字段**：任何可选的、有取值范围校验的
+# 字段（比如 max_tokens）都可能被上游以参数错误拒掉，进而伪装成「模型不可用」。
 PROBE_USER_CONTENT = "hi"
-PROBE_MAX_TOKENS = 1
 # 上游要求首条消息必须是 system prompt，否则回 400
 # （`first message is not system prompt`）。这里与网关的
 # `normalize_messages_for_upstream()` 保持同一语义，两处改动需同步。
 PROBE_SYSTEM_PROMPT = "You are a helpful assistant."
 
-# 一整轮里「可用」为 0 且「不可用」达到这个数量时，判定为探测机制本身出了问题
-# （鉴权失效、请求体形态被上游拒绝、上游整体故障），整轮作废不写策略。
+# 一整轮里「可用」为 0 且「不可用 + 探测被拒」达到这个数量时，判定为探测机制本身
+# 出了问题（鉴权失效、请求体形态被上游拒绝、上游整体故障），整轮作废不写策略。
 # 宁可漏禁，也不能把一批好模型成批误禁 —— 后者要靠人工逐个放开，代价高得多。
 GUARD_MIN_UNAVAILABLE = 5
 
 # 巡检落盘前留底的备份后缀，即 ``model_policy.json.before-health-check``。
 # 出问题时把这份备份恢复回去、重启容器，即可整份回到巡检改动之前。
 BACKUP_SUFFIX = "before-health-check"
+
+# 从错误响应体里抠出上游错误码，用于诊断与分类。
+_ERROR_CODE_RE = re.compile(r'"code"\s*:\s*"?(\d+)"?')
+# 只留错误响应体的前若干字符做判定，避免把大段响应读进内存。
+_SNIPPET_LIMIT = 400
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +257,12 @@ def build_probe_body(model: str) -> Dict[str, Any]:
 
     - ``stream: True`` —— 上游不接受非流式请求（回 400
       ``Non-stream chat request is currently not supported``）；
-    - 首条消息为 system —— 否则回 400 ``first message is not system prompt``。
-
-    违反任意一条，探测都会把全部组合判成「不可用」，进而成批误禁好模型。
+    - 首条消息为 system —— 否则回 400 ``first message is not system prompt``；
+    - **不带 ``max_tokens``** —— 上游对它有最小值校验，且最小值随模型系列变化。
+      为了省一点输出而传一个很小的值，会被回 400 ``integer_below_min_value``，
+      表现为「这批模型全部不可用」，代价远高于省下的那点额度。
+      不传该字段时上游按默认上限处理，与普通客户端请求完全一致。
+      探测的「量小」由 ``probe_once`` 读完第一帧就断开连接来保证。
     """
     return {
         "model": model,
@@ -239,17 +270,41 @@ def build_probe_body(model: str) -> Dict[str, Any]:
             {"role": "system", "content": PROBE_SYSTEM_PROMPT},
             {"role": "user", "content": PROBE_USER_CONTENT},
         ],
-        "max_tokens": PROBE_MAX_TOKENS,
         "stream": True,
     }
 
 
-def classify_probe(status_code: Optional[int], error: Optional[str] = None) -> str:
-    """把一次探测结果归类为 unavailable / transient / available。
+def _extract_error_code(snippet: Optional[str]) -> Optional[int]:
+    """从上游错误响应体里取错误码；取不到就返回 None。"""
+    if not snippet:
+        return None
+    match = _ERROR_CODE_RE.search(snippet)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
 
-    - 明确的功能性失败（模型不存在、无权限、上游 5xx）→ ``unavailable``
-    - 限流 / 超时等**临时**状态 → ``transient``，不参与自动禁用
+
+def _looks_like_probe_defect(code: Optional[int], snippet: Optional[str]) -> bool:
+    """判断这次失败是不是「探测请求自己有问题」而不是「模型不可用」。"""
+    if code is not None and code in PROBE_DEFECT_CODES:
+        return True
+    text = snippet or ""
+    return any(hint in text for hint in PROBE_DEFECT_HINTS)
+
+
+def classify_probe(status_code: Optional[int], error: Optional[str] = None,
+                   code: Optional[int] = None,
+                   snippet: Optional[str] = None) -> str:
+    """把一次探测结果归类为 available / unavailable / transient / probe_defect。
+
     - 正常返回 → ``available``
+    - 上游拒绝了我们的请求参数 → ``probe_defect``，说明探测形态不对，
+      **不能**据此判定模型好坏，不参与自动禁用
+    - 限流 / 超时等**临时**状态 → ``transient``，不参与自动禁用
+    - 明确的功能性失败（模型不存在、无权限、上游 5xx）→ ``unavailable``
     """
     if error:
         return "transient"
@@ -257,6 +312,10 @@ def classify_probe(status_code: Optional[int], error: Optional[str] = None) -> s
         return "transient"
     if 200 <= status_code < 300:
         return "available"
+    # 先于状态码判断：400 既可能是「模型不可用」，也可能是「请求参数不对」，
+    # 后者绝不能当成模型的问题 —— 否则一次参数改动就能成批误禁好模型。
+    if _looks_like_probe_defect(code, snippet):
+        return "probe_defect"
     if status_code in TRANSIENT_STATUS:
         return "transient"
     if status_code in UNAVAILABLE_STATUS:
@@ -264,31 +323,72 @@ def classify_probe(status_code: Optional[int], error: Optional[str] = None) -> s
     return "transient"
 
 
+def _send_probe(client: Any, url: str, body: Dict[str, Any], headers: Dict[str, str],
+                timeout: float) -> Tuple[Optional[int], str]:
+    """发一次探测请求，返回 ``(状态码, 响应体片段)``。
+
+    优先走流式读取：拿到第一帧就断开连接。上游只接受 ``stream: True``，
+    而完整读完一次生成会白白消耗额度，首帧已足以判断这条链路通不通。
+    客户端没有 ``stream()``（单测里的假客户端）时退回普通 ``post()``。
+    """
+    stream = getattr(client, "stream", None)
+    if callable(stream):
+        with stream("POST", url, json=body, headers=headers, timeout=timeout) as res:
+            status = int(getattr(res, "status_code", 0) or 0)
+            snippet = ""
+            if 200 <= status < 300:
+                # 只取第一帧：SSE 每帧以换行分隔，取一行即可确认确实在流式返回。
+                try:
+                    for line in res.iter_lines():
+                        snippet = line if isinstance(line, str) else line.decode("utf-8", "replace")
+                        break
+                except Exception:
+                    snippet = ""
+            else:
+                # 错误响应体很小，整份读出来才能看清上游给的原因。
+                try:
+                    raw = res.read()
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", "replace")
+                    snippet = raw or ""
+                except Exception:
+                    snippet = ""
+            return status, snippet[:_SNIPPET_LIMIT]
+
+    res = client.post(url, json=body, headers=headers, timeout=timeout)
+    status = int(getattr(res, "status_code", 0) or 0)
+    text = getattr(res, "text", "") or ""
+    return status, str(text)[:_SNIPPET_LIMIT]
+
+
 def probe_once(client: Any, base_url: str, token: str, model: str,
                timeout: float = 30.0) -> Dict[str, Any]:
     """同步探测一个「账号 × 模型」组合。返回探测结果字典。
 
-    只看 HTTP 状态，不解析响应体 —— 探测的目的是「这条路通不通」，
-    不是「回答得好不好」，所以不记录模型输出，避免把探测内容混进用量统计。
-    ``max_tokens=1`` 让流式响应只有极小几帧，收完不影响耗时与计费。
+    只看状态码，不解析模型输出 —— 探测的目的是「这条路通不通」，
+    不是「回答得好不好」，所以不记录输出内容，避免把探测混进用量统计。
+    请求体刻意不带 ``max_tokens``（见 ``build_probe_body``），
+    靠读完第一帧就断开来压低耗时与计费。
     """
     started = time.time()
     body = build_probe_body(model)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     status_code: Optional[int] = None
     error: Optional[str] = None
+    snippet = ""
     try:
-        res = client.post(f"{base_url}/chat/completions", json=body, headers=headers,
-                          timeout=timeout)
-        status_code = int(getattr(res, "status_code", 0) or 0)
+        status_code, snippet = _send_probe(client, f"{base_url}/chat/completions",
+                                           body, headers, timeout)
     except Exception as e:  # 网络异常 / 超时 / DNS 失败
         error = f"{type(e).__name__}: {e}"
 
-    verdict = classify_probe(status_code, error)
+    code = _extract_error_code(snippet)
+    verdict = classify_probe(status_code, error, code, snippet)
     return {
         "model": model,
         "status": status_code,
-        "verdict": verdict,          # available / unavailable / transient
+        "verdict": verdict,          # available / unavailable / transient / probe_defect
+        "code": code,                # 上游错误码，仅用于诊断
         "error": error,
         "elapsedMs": int((time.time() - started) * 1000),
     }
@@ -306,7 +406,7 @@ def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[s
     - ``unavailable`` 且已被禁用 → 保持原来源不变（手动禁用不会被改写为 auto）
     - ``available`` 且 ``auto_enable`` 且来源是 ``auto`` → 移除（自愈）
     - ``available`` 但来源是 ``manual`` → **不动**，手动禁用受保护
-    - ``transient`` → **不动**
+    - ``transient`` / ``probe_defect`` → **不动**（探测没得到有效结论）
 
     返回变更明细，供界面展示与排查。
     """
@@ -348,6 +448,7 @@ def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[s
             else:
                 unchanged.append(model)
         else:
+            # transient / probe_defect：没拿到有效结论，一律保持原样。
             unchanged.append(model)
 
     if entry:
@@ -382,6 +483,10 @@ def run_round(accounts: List[Dict[str, Any]],
     """执行一轮完整巡检并落盘。返回汇总结果。
 
     ``client_factory`` 与 ``base_url_for`` 由调用方注入，便于单测替换成假客户端。
+
+    写入策略前有三道闸门，全部服务于「宁漏禁，不误禁」：
+    探测被上游参数校验拒绝（``probe_defect``）不写；账号凭据整体失效不写；
+    整轮一个可用都没有时整轮作废。
     """
     now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     combos = select_targets(accounts, config, used_models, base_models)
@@ -393,7 +498,9 @@ def run_round(accounts: List[Dict[str, Any]],
 
     policy = model_policy.load_policy()
     account_reports: List[Dict[str, Any]] = []
-    counts = {"available": 0, "unavailable": 0, "transient": 0}
+    counts = {"available": 0, "unavailable": 0, "transient": 0, "probe_defect": 0}
+    auth_failed: List[str] = []
+    defect_codes: Set[int] = set()
 
     # 按账号分组探测，这样一个账号只建一次 HTTP 连接。
     grouped: Dict[str, List[str]] = {}
@@ -413,11 +520,33 @@ def run_round(accounts: List[Dict[str, Any]],
             results = []
             for model in models:
                 item = probe_once(client, base_url, token, model)
-                counts[item["verdict"]] += 1
+                counts[item["verdict"]] = counts.get(item["verdict"], 0) + 1
+                if item.get("verdict") == "probe_defect" and item.get("code") is not None:
+                    defect_codes.add(int(item["code"]))
                 results.append(item)
 
-            report = apply_verdicts(policy, acc_id, results,
-                                    auto_enable=bool(config.get("autoEnable", True)))
+            existing = sorted(model_policy._coerce_entry(policy.get(acc_id)) or {})
+            statuses = {r.get("status") for r in results}
+            # 整账号凭据失效：token 过期会让名下**所有**模型一起变红，
+            # 但坏的是凭据而不是模型。这种情况不写禁用策略，只提示重新登录 ——
+            # 否则一次 token 过期就会自动禁掉整个账号的模型清单。
+            if (len(results) >= AUTH_GUARD_MIN_MODELS
+                    and statuses and statuses <= AUTH_STATUS):
+                auth_failed.append(acc_id)
+                report = {
+                    "accountId": acc_id,
+                    "disabled": [],
+                    "enabled": [],
+                    "protected": [],
+                    "unchanged": sorted(r["model"] for r in results),
+                    "disabledBefore": existing,
+                    "disabledAfter": existing,
+                    "changed": False,
+                    "authFailed": True,
+                }
+            else:
+                report = apply_verdicts(policy, acc_id, results,
+                                        auto_enable=bool(config.get("autoEnable", True)))
             report["accountName"] = acc.get("nickname") or acc.get("email") or acc_id
             report["results"] = results
             account_reports.append(report)
@@ -427,10 +556,12 @@ def run_round(accounts: List[Dict[str, Any]],
         except Exception:
             pass
 
-    # 整轮保护：一个可用的都没有，几乎可以肯定是探测机制本身失效
-    # （凭据 / 请求形态 / 上游整体故障），而不是所有模型同时坏掉。
+    # 整轮保护：一个可用的都没有，而且失败集中在「探测机制本身有问题」的两类上
+    # （请求被上游参数校验拒绝、网络与限流），几乎可以肯定是探测侧失效
+    # （凭据、请求形态、上游整体故障），而不是所有模型同时坏掉。
     # 此时不写策略 —— 成批误禁要靠人工逐个放开，代价远高于漏禁一轮。
-    aborted = counts["available"] == 0 and counts["unavailable"] >= GUARD_MIN_UNAVAILABLE
+    no_signal = counts["unavailable"] + counts["probe_defect"]
+    aborted = counts["available"] == 0 and no_signal >= GUARD_MIN_UNAVAILABLE
     if aborted:
         # 逐账号明细里的变更声明要一并清空：策略没有落盘，
         # 留着会让人以为「这些已经被禁了」，而实际什么都没写。
@@ -438,10 +569,18 @@ def run_round(accounts: List[Dict[str, Any]],
             report["disabled"] = []
             report["enabled"] = []
             report["changed"] = False
-        reason = (
-            f"本轮 {counts['unavailable']} 个组合全部不可用、无一个可用，"
-            "判定为探测异常而非模型失效，已跳过写入。请检查账号凭据与上游状态。"
-        )
+        if counts["probe_defect"] >= GUARD_MIN_UNAVAILABLE:
+            codes = "、".join(str(c) for c in sorted(defect_codes)) or "未知"
+            reason = (
+                f"本轮 {counts['probe_defect']} 个组合的探测请求被上游参数校验拒绝"
+                f"（错误码 {codes}），说明探测请求的形态与真实调用不一致，"
+                "已跳过写入。请升级镜像或反馈该错误码。"
+            )
+        else:
+            reason = (
+                f"本轮 {counts['unavailable']} 个组合全部不可用、无一个可用，"
+                "判定为探测异常而非模型失效，已跳过写入。请检查账号凭据与上游状态。"
+            )
     else:
         reason = None
         # 有实际改动才留底：一轮巡检可能同时改动上百个条目，
@@ -459,6 +598,14 @@ def run_round(accounts: List[Dict[str, Any]],
         "disabled": sorted({m for r in account_reports for m in r["disabled"]}),
         "enabled": sorted({m for r in account_reports for m in r["enabled"]}),
         "protected": sorted({m for r in account_reports for m in r["protected"]}),
+        # 凭据失效被跳过的账号：界面据此提示「请重新登录」，
+        # 而不是让人对着「一轮下来什么都没变」的结果猜原因。
+        "authFailed": [
+            {"id": r["accountId"], "name": r.get("accountName")}
+            for r in account_reports if r.get("authFailed")
+        ],
+        # 探测被上游参数校验拒绝时命中的错误码，用于排查探测形态问题。
+        "defectCodes": sorted(defect_codes),
         "reports": account_reports,
         "aborted": aborted,
         "reason": reason,
@@ -467,6 +614,23 @@ def run_round(accounts: List[Dict[str, Any]],
     if config.get("logResults", True):
         save_last_run(summarize(result))
     return result
+
+
+def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:
+    """给界面用的精简摘要（不带逐条探测明细，避免响应体过大）。"""
+    return {
+        "checkedAt": round_result.get("checkedAt"),
+        "combos": round_result.get("combos", 0),
+        "accounts": round_result.get("accounts", 0),
+        "counts": round_result.get("counts", {}),
+        "disabled": round_result.get("disabled", []),
+        "enabled": round_result.get("enabled", []),
+        "protected": round_result.get("protected", []),
+        "authFailed": round_result.get("authFailed", []),
+        "defectCodes": round_result.get("defectCodes", []),
+        "aborted": bool(round_result.get("aborted")),
+        "reason": round_result.get("reason"),
+    }
 
 
 def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:

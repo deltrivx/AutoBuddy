@@ -7,8 +7,9 @@
   2. 配置读写回环 + 间隔下限钳制 + 损坏回退
   3. 账号范围：空数组 = 全部；显式列表 = 白名单；过期账号被排除
   4. onlyUsedModels：只探测用过的；无记录时退回基础清单
-  5. **探测请求体形态**：必须流式 + 首条为 system
-  6. 探测结果分类：429/超时 = transient（不自动禁用）；404/500 = unavailable
+  5. **探测请求体形态**：流式 + 首条为 system + 不带 max_tokens（上游有最小值校验）
+  6. 探测结果分类：429/超时 = transient；404/500 = unavailable；
+     参数被上游校验拒绝 = probe_defect（与模型可用性无关，绝不写策略）
   7. 不可用 → 自动写入禁用，并标记来源 auto
   8. 可用 → 自动移除**仅限 auto 项**
   9. 手动禁用（manual）受保护：探测可用也不会被放开
@@ -19,8 +20,11 @@
  14. 落盘无 .tmp 残留；落盘内容为 v2 结构
  15. 与手动禁用共用同一份策略（关掉巡检，禁用项仍在）
  16. 整轮误判保护：全部不可用时不写策略
- 17. 生产代码的重入锁与「不阻塞事件循环」
- 18. 上次巡检摘要落盘与回读
+ 17. 探测被上游参数校验拒绝：逐条跳过；全部被拒时整轮作废
+ 18. 账号凭据整体失效：整账号跳过，不写禁用（坏的是凭据不是模型）
+ 19. 生产代码的重入锁与「不阻塞事件循环」、问题提示文案
+ 20. 上次巡检摘要落盘与回读
+ 21. 巡检改动前自动留底
 """
 import json
 import os
@@ -135,7 +139,12 @@ check("必须是流式请求（上游拒绝非流式）", body["stream"] is True
 check("首条消息是 system", (body.get("messages") or [{}])[0].get("role") == "system",
       f"got {body.get('messages')}")
 check("带有 user 消息", len(body["messages"]) >= 2 and body["messages"][1].get("role") == "user")
-check("max_tokens 压到最小", body["max_tokens"] == 1, f"got {body.get('max_tokens')}")
+# 上游对 max_tokens 有最小值校验，且最小值随模型系列变化（曾回 400
+# integer_below_min_value，让整批模型被误判为不可用）。
+# 因此探测请求体里**不能**出现这个字段 —— 不传才与普通客户端请求一致。
+check("不携带 max_tokens（上游有最小值校验，会误判为模型不可用）",
+      "max_tokens" not in body, f"got {body.get('max_tokens')}")
+check("只带必需字段", sorted(body) == ["messages", "model", "stream"], f"got {sorted(body)}")
 
 _sent = {}
 
@@ -161,6 +170,64 @@ check("拼接的是上游 chat/completions 路径",
 check("带上账号 Bearer 凭据",
       "Bearer tok" in str((_sent.get("headers") or {}).get("Authorization", "")))
 
+
+class _StreamingResponse:
+    """模拟流式响应：状态码 + 若干帧。"""
+
+    def __init__(self, status, lines):
+        self.status_code = status
+        self._lines = lines
+        self.read_calls = 0
+
+    def iter_lines(self):
+        for line in self._lines:
+            yield line
+
+    def read(self):
+        self.read_calls += 1
+        return b"".join(x.encode("utf-8") for x in self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _StreamingClient:
+    """支持 stream() 的假客户端，记录实际读了多少帧。"""
+
+    def __init__(self, status, lines=("data: {\"choices\":[]}\n",)):
+        self.status = status
+        self.lines = lines
+        self.responses = []
+        self.saw_body = None
+
+    def stream(self, method, url, json=None, headers=None, timeout=None):
+        self.saw_body = json or {}
+        res = _StreamingResponse(self.status, list(self.lines))
+        self.responses.append(res)
+        return res
+
+    def close(self):
+        pass
+
+
+_stream_client = _StreamingClient(200)
+item = model_health.probe_once(_stream_client, "https://example.test", "tok", "hy3")
+check("流式客户端下同样判定为 available", item["verdict"] == "available", f"got {item}")
+check("流式路径也发出 stream=True",
+      (_stream_client.saw_body or {}).get("stream") is True)
+check("流式路径不携带 max_tokens", "max_tokens" not in (_stream_client.saw_body or {}))
+check("成功时只读第一帧就断开（省额度）",
+      _stream_client.responses and _stream_client.responses[0].read_calls == 0)
+
+_err_client = _StreamingClient(400, ['{"code":11102,"msg":"model not found"}'])
+item = model_health.probe_once(_err_client, "https://example.test", "tok", "hy3")
+check("失败时读出错误体以便诊断", _err_client.responses[0].read_calls == 1)
+check("解析出上游错误码", item["code"] == 11102, f"got {item.get('code')}")
+check("模型不存在 → unavailable", item["verdict"] == "unavailable", f"got {item}")
+
 # ---------------------------------------------------------------------------
 # 6. 结果分类
 # ---------------------------------------------------------------------------
@@ -172,6 +239,20 @@ check("403 → unavailable", model_health.classify_probe(403) == "unavailable")
 check("429 → transient（限流不禁用）", model_health.classify_probe(429) == "transient")
 check("408 → transient", model_health.classify_probe(408) == "transient")
 check("网络异常 → transient", model_health.classify_probe(None, "TimeoutError") == "transient")
+
+# 「请求被上游参数校验拒绝」与模型可用性无关，不能算模型坏。
+# 这是上一版最致命的一处：min 值校验把整批好模型判成了不可用。
+check("上游参数校验码 → probe_defect",
+      model_health.classify_probe(400, None, 11133, "") == "probe_defect")
+check("响应体里的取值越界提示 → probe_defect",
+      model_health.classify_probe(
+          400, None, None, '{"extError":{"code":"integer_below_min_value"}}') == "probe_defect")
+check("probe_defect 优先于 unavailable 判定（同为 400）",
+      model_health.classify_probe(400, None, 11133, "") != "unavailable")
+check("模型不存在的错误码仍判 unavailable",
+      model_health.classify_probe(400, None, 11102, '{"msg":"model not found"}') == "unavailable")
+check("2xx 优先于 probe_defect：成功就是成功",
+      model_health.classify_probe(200, None, 11133, "") == "available")
 
 # ---------------------------------------------------------------------------
 # 7. 自动禁用 + 来源标记
@@ -408,6 +489,122 @@ check("有一个可用即正常落盘", notaborted["aborted"] is False
       and notaborted["counts"]["available"] == 1, f"got {notaborted['counts']}")
 
 # ---------------------------------------------------------------------------
+# 17b. 探测被上游参数校验拒绝（probe_defect）
+#
+# 与「模型不可用」必须分开：请求参数被上游拒了，说明探测形态不对，
+# 我们对模型可用性**一无所知**。这类结果一律不写策略。
+# ---------------------------------------------------------------------------
+print("\n[17b] 探测请求被上游拒绝")
+
+
+class FakeDefectResponse:
+    """400 + 参数校验错误体的假响应。"""
+
+    def __init__(self):
+        self.status_code = 400
+        self.text = '{"code":11133,"msg":"request parameters rejected",' \
+                    '"extError":{"code":"integer_below_min_value"}}'
+
+
+class FakeDefectClient(FakeClient):
+    """除 ``ok_models`` 里的模型外，一律返回「请求参数被上游拒绝」。"""
+
+    def __init__(self, ok_models=()):
+        super().__init__({})
+        self.ok_models = set(ok_models)
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        token = (headers or {}).get("Authorization", "").replace("Bearer ", "")
+        model = (json or {}).get("model")
+        self.calls.append((token, model))
+        # 一部分组合照常返回 200，用来证明「不是整轮作废，而是逐条跳过」
+        if model in self.ok_models:
+            return FakeResponse(200)
+        return FakeDefectResponse()
+
+
+model_policy.save_policy({"a1": {"hy3": "manual"}})
+before_defect = model_policy.load_policy()
+defect_round = model_health.run_round(
+    accounts=accounts,
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeDefectClient(ok_models=["kimi-k3"]),
+    base_url_for=lambda variant: "https://example.test",
+    used_models={},
+    base_models=guard_models,
+)
+check("参数被拒计入 probe_defect", defect_round["counts"]["probe_defect"] > 0,
+      f"got {defect_round['counts']}")
+check("参数被拒不计入 unavailable", defect_round["counts"]["unavailable"] == 0,
+      f"got {defect_round['counts']}")
+check("参数被拒时不写任何禁用", model_policy.load_policy() == before_defect,
+      f"got {model_policy.load_policy()}")
+check("报告里也没有谎报变更",
+      all(not r["disabled"] for r in defect_round["reports"]))
+check("记录被拒的错误码用于排查", defect_round["defectCodes"] == [11133],
+      f"got {defect_round.get('defectCodes')}")
+check("有组合可用时不整轮作废", defect_round["aborted"] is False)
+
+# 全部组合都被参数拒绝：整轮作废，并且原因要说清是「探测形态」而不是「模型坏了」
+all_defect = model_health.run_round(
+    accounts=accounts,
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeDefectClient(),
+    base_url_for=lambda variant: "https://example.test",
+    used_models={},
+    base_models=guard_models,
+)
+check("全部被拒时整轮作废", all_defect["aborted"] is True, f"got {all_defect['counts']}")
+check("作废原因点明参数校验被拒",
+      "参数校验" in (all_defect.get("reason") or "") and "11133" in (all_defect.get("reason") or ""),
+      f"got {all_defect.get('reason')}")
+# ---------------------------------------------------------------------------
+# 17c. 账号凭据整体失效
+#
+# token 过期会让一个账号名下所有模型一起 401 —— 坏的是凭据不是模型。
+# 若按「不可用」处理，一次过期就会自动禁掉整个账号的模型清单。
+# ---------------------------------------------------------------------------
+print("\n[17c] 账号凭据失效")
+model_policy.save_policy({})
+# a1 凭据整体失效（全 401），a2 一切正常。若把 a1 的 401 当「模型不可用」，
+# 就会一次性自动禁用掉 a1 名下的整个模型清单 —— 这正是要避免的。
+auth_round = model_health.run_round(
+    accounts=accounts,
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient({("t1", "hy3"): 401, ("t1", "kimi-k3"): 401,
+                                       ("t1", "glm-5.3"): 401}),
+    base_url_for=lambda variant: "https://example.test",
+    used_models={},
+    base_models=guard_models,
+)
+check("凭据失效的账号被点名",
+      [a["id"] for a in (auth_round.get("authFailed") or [])] == ["a1"],
+      f"got {auth_round.get('authFailed')}")
+check("凭据失效不写禁用", model_policy.load_policy() == {},
+      f"got {model_policy.load_policy()}")
+check("凭据失效的账号报告里没有变更",
+      all(not r["disabled"] and not r["enabled"] for r in auth_round["reports"]))
+check("凭据失效的账号带 authFailed 标记",
+      [r["accountId"] for r in auth_round["reports"] if r.get("authFailed")] == ["a1"])
+check("健康账号照常参与且不误判", auth_round["aborted"] is False
+      and auth_round["counts"]["available"] == len(guard_models), f"got {auth_round['counts']}")
+
+# 只有一个模型、无法区分「凭据坏了」还是「这个模型坏了」时，按普通规则处理
+single = model_health.run_round(
+    accounts=[accounts[0]],
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient({("t1", "hy3"): 401, ("t1", "kimi-k3"): 200}),
+    base_url_for=lambda variant: "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("有可用模型时不误判为凭据失效", not (single.get("authFailed") or []),
+      f"got {single.get('authFailed')}")
+check("混合状态下 401 的模型照常禁用",
+      (model_policy.load_policy().get("a1") or {}).get("hy3") == "auto",
+      f"got {model_policy.load_policy()}")
+
+# ---------------------------------------------------------------------------
 # 18. 上次巡检摘要落盘与回读
 # ---------------------------------------------------------------------------
 print("\n[18] 巡检摘要落盘")
@@ -473,6 +670,11 @@ check("整轮作废时也不动备份", backup_path.read_text(encoding="utf-8") 
 print("\n[19] 生产代码的重入保护")
 main_src = (Path(__file__).parent / "gateway" / "main.py").read_text(encoding="utf-8")
 
+# run_model_health_check() 会调用同模块的 _health_problem_note()，
+# 切片执行时必须把这个依赖一起注入 —— 注入真实实现（而非 lambda 桩），
+# 顺带把它的分支也覆盖掉。
+note_seg = main_src[main_src.index("def _health_problem_note("):
+                    main_src.index("def health_config_snapshot(")]
 seg = main_src[main_src.index("def run_model_health_check("):
                main_src.index("async def model_health_loop(")]
 ns = {
@@ -492,8 +694,28 @@ ns = {
     "_used_models_by_account": lambda: {},
     "_base_model_ids": lambda: [],
 }
+exec(compile(note_seg, "health_problem_note_fn", "exec"), ns)
 exec(compile(seg, "health_check_fn", "exec"), ns)
 run_check = ns["run_model_health_check"]
+problem_note = ns["_health_problem_note"]
+
+# 「本轮结果不可信」的原因必须说清楚，否则界面上看起来跟「什么都没变」一样。
+check("一切正常时没有问题提示",
+      problem_note({"aborted": False, "counts": {"available": 5, "unavailable": 1}}) is None)
+check("整轮作废时回传作废原因",
+      problem_note({"aborted": True, "reason": "R", "counts": {}}) == "R")
+check("探测被上游拒绝时给出提示",
+      "11133" in (problem_note({
+          "aborted": False,
+          "counts": {"probe_defect": 3},
+          "defectCodes": [11133],
+      }) or ""))
+check("凭据失效时提示重新登录",
+      "凭据" in (problem_note({
+          "aborted": False,
+          "counts": {"probe_defect": 0},
+          "authFailed": [{"id": "a1", "name": "acc-1"}],
+      }) or ""))
 
 import threading  # noqa: E402
 

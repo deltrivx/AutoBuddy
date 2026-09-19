@@ -1494,7 +1494,10 @@ COLLAPSE_SCRIPT = r"""
       runDesc.textContent = "上次巡检已跳过（未改动任何配置）：" + (last.reason || "探测异常");
       runDesc.style.color = "#b45309";
     } else if (runtime.lastError) {
-      runDesc.textContent = "上次巡检出错：" + runtime.lastError;
+      // 探测被上游参数校验拒绝、账号凭据失效等情况：本轮结果部分不可信，
+      // 已经跳过了那些组合，必须显式说出来，否则看起来就跟「什么都没变」一样。
+      runDesc.textContent = "上次巡检有情况被跳过：" + runtime.lastError;
+      runDesc.style.color = "#b45309";
     } else if (last) {
       var c = last.counts || {};
       runDesc.textContent = "上次巡检 " + wbTime(last.checkedAt)
@@ -1502,6 +1505,10 @@ COLLAPSE_SCRIPT = r"""
         + " · 可用 " + (c.available || 0)
         + " / 不可用 " + (c.unavailable || 0)
         + " / 跳过 " + (c.transient || 0);
+      // 探测被上游参数校验拒绝：只在真的发生过时才显示，避免日常噪音。
+      if (c.probe_defect) {
+        runDesc.textContent += " / 探测被拒 " + c.probe_defect;
+      }
       if ((last.disabled || []).length) {
         runDesc.textContent += " · 新禁用 " + last.disabled.length + " 项";
       }
@@ -1538,9 +1545,13 @@ COLLAPSE_SCRIPT = r"""
           var msg = "巡检完成 · 可用 " + (cc.available || 0)
             + " / 不可用 " + (cc.unavailable || 0)
             + " / 跳过 " + (cc.transient || 0);
+          if (cc.probe_defect) msg += " / 探测被拒 " + cc.probe_defect;
           if ((out.disabled || []).length) msg += " · 新禁用 " + out.disabled.length + " 项";
           if ((out.enabled || []).length) msg += " · 新启用 " + out.enabled.length + " 项";
           if ((out.protected || []).length) msg += " · 手动禁用已跳过 " + out.protected.length + " 项";
+          if ((out.authFailed || []).length) {
+            msg += " · " + out.authFailed.length + " 个账号凭据失效已跳过";
+          }
           wbToast(msg);
         })
         .catch(function (e) { wbToast("巡检请求失败：" + e, true); })
@@ -1554,6 +1565,21 @@ COLLAPSE_SCRIPT = r"""
     };
     runRow.appendChild(runBtn);
     card.appendChild(runRow);
+
+    // ---- 6b. 凭据失效被整账号跳过的名单（有才显示）----
+    // 一个账号的 token 过期会让它名下所有模型一起失败，但坏的是凭据不是模型。
+    // 巡检会整账号跳过并在这里点名，而不是默默禁用掉整个模型清单。
+    if (last && (last.authFailed || []).length) {
+      var afRow = wbEl("div", "wb-api-row wb-api-row-stack");
+      var afMain = wbEl("div", "wb-api-main");
+      afMain.appendChild(wbEl("div", "wb-api-label", "凭据失效、本轮已跳过的账号"));
+      afMain.appendChild(wbEl("div", "wb-api-desc",
+        (last.authFailed || []).map(function (a) { return a.name || a.id; }).join("、")
+        + " —— 这些账号的上游鉴权已失效，坏的是凭据而不是模型，"
+        + "本轮没有为它们写入任何禁用项。重新登录后再跑一轮即可。"));
+      afRow.appendChild(afMain);
+      card.appendChild(afRow);
+    }
 
     // ---- 7. 最近变更明细（有才显示）----
     if (last && ((last.disabled || []).length || (last.enabled || []).length

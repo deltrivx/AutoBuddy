@@ -47,7 +47,7 @@ async def lifespan(_app: FastAPI):
         health_task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.7.0", lifespan=lifespan)
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.8.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
@@ -605,7 +605,7 @@ def update_account_models_config(payload: Dict[str, Any]):
 # Authorization: Bearer <key> 或 x-api-key: <key>。
 # ---------------------------------------------------------------------------
 
-GATEWAY_VERSION = "1.7.0"
+GATEWAY_VERSION = "1.8.0"
 
 # 项目元信息。设置页的「关于」面板由此渲染 —— 放在环境变量里而不是写死在前端，
 # 一是保持单一出处，二是 fork 出去的人可以改成自己的仓库与镜像名，
@@ -1197,9 +1197,11 @@ def rotate_run():
 #   人手禁的模型不受影响 —— 否则自愈会把「能跑但太贵」这类控成本配置一并放开。
 # - 探测会真实发起一次极小的上游请求，因此**默认关闭**，且默认只探测
 #   「该账号调用过的模型 + 内置基础清单」，避免一上来就把上游打爆。
-# - 探测请求体必须与网关转发上游的形态一致（流式 + 首条为 system），
-#   否则会被上游整体拒绝，表现为「所有模型都不可用」并成批误禁。
-# - 限流（429）与网络异常计为 transient，**不参与自动禁用**；
+# - 探测请求体必须与网关转发上游的形态一致（流式 + 首条为 system +
+#   不带任何可被校验的可选参数），否则会被上游整体拒绝，
+#   表现为「所有模型都不可用」并成批误禁。
+# - 限流（429）与网络异常计为 transient、被上游参数校验拒绝计为
+#   probe_defect，两者**都不参与自动禁用**；账号凭据整体失效时跳过该账号；
 #   整轮无一个可用时判定为探测异常，整轮作废不写策略。
 # ---------------------------------------------------------------------------
 
@@ -1249,6 +1251,30 @@ def _base_model_ids() -> List[str]:
 
 def _health_base_url(variant: str) -> str:
     return AI_BASE_URL if variant == "ai" else CN_BASE_URL
+
+
+def _health_problem_note(summary: Dict[str, Any]) -> Optional[str]:
+    """把「本轮结果不可信」的原因汇总成一句话；一切正常时返回 None。
+
+    这几类情况必须显式说出来，否则界面上只会显示「一轮下来什么都没变」，
+    用户根本无从判断是真的没变化，还是探测压根没跑出有效结论。
+    """
+    if summary.get("aborted"):
+        return summary.get("reason") or "本轮巡检已作废，未写入任何变更。"
+
+    counts = summary.get("counts") or {}
+    notes: List[str] = []
+    defects = int(counts.get("probe_defect") or 0)
+    if defects:
+        codes = "、".join(str(c) for c in (summary.get("defectCodes") or [])) or "未知"
+        notes.append(
+            f"{defects} 个组合的探测请求被上游参数校验拒绝（错误码 {codes}），已跳过未写入"
+        )
+    auth_failed = summary.get("authFailed") or []
+    if auth_failed:
+        names = "、".join(str(a.get("name") or a.get("id")) for a in auth_failed[:5])
+        notes.append(f"{len(auth_failed)} 个账号凭据失效（{names}），已跳过，建议重新登录")
+    return "；".join(notes) if notes else None
 
 
 def health_config_snapshot() -> Dict[str, Any]:
@@ -1350,13 +1376,16 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
             summary["reports"] = raw.get("reports", [])
             _HEALTH_RUNTIME["lastRunAt"] = summary.get("checkedAt")
             _HEALTH_RUNTIME["lastResult"] = model_health.summarize(raw)
-            # 整轮作废时把原因挂到 lastError 上，界面才会把它当异常显示出来，
-            # 而不是伪装成一次「什么都没变」的正常巡检。
-            _HEALTH_RUNTIME["lastError"] = summary.get("reason") if summary.get("aborted") else None
+            # 出问题时要让界面把它当异常显示出来，而不是伪装成一次
+            # 「什么都没变」的正常巡检：整轮作废、探测被上游拒绝、账号凭据失效
+            # 都属于「本轮结果不可信」，逐个给出原因。
+            _HEALTH_RUNTIME["lastError"] = _health_problem_note(summary)
             print(f"[health] round done: combos={summary.get('combos')} "
                   f"available={summary['counts'].get('available')} "
                   f"unavailable={summary['counts'].get('unavailable')} "
                   f"transient={summary['counts'].get('transient')} "
+                  f"probeDefect={summary['counts'].get('probe_defect')} "
+                  f"authFailed={len(summary.get('authFailed') or [])} "
                   f"aborted={summary.get('aborted')}", flush=True)
             return summary
         except Exception as e:
