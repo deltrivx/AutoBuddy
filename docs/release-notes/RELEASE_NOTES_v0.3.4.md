@@ -6,8 +6,8 @@
 
 | 版本 | 方案 | 结果 |
 | :--- | :--- | :--- |
-| v0.3.2 | `MutationObserver` 按 `aria-label` 加隐藏 class | 用户反馈「按钮依然存在」 |
-| v0.3.3 | CSS 属性选择器 `[role="status"][aria-label="..."]` | 用户反馈「按钮依然存在」 |
+| v0.3.2 | `MutationObserver` 按 `aria-label` 加隐藏 class | 按钮依然存在 |
+| v0.3.3 | CSS 属性选择器 `[role="status"][aria-label="..."]` | 按钮依然存在 |
 
 原因是这两个按钮和徽章由 React 在异步数据到达后才渲染，遮掩的时机永远赌不赢。
 
