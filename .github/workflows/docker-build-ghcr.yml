@@ -6,6 +6,16 @@ on:
       - main
     tags:
       - v*
+    # 纯文档改动不重建镜像：README / CHANGELOG / 发布说明 / LICENSE 等
+    # 不影响镜像内容，重建只会白白消耗 CI 并推进 latest 的 revision 标签。
+    # 注意：tag（v*）触发不受 paths-ignore 影响，发版照常构建。
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - '.github/ISSUE_TEMPLATE/**'
   release:
     types: [published]
   workflow_dispatch:
