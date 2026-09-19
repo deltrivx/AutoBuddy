@@ -1,0 +1,16 @@
+services:
+  workbuddy-switch:
+    image: ghcr.io/deltrivx/workbuddy-switch:latest
+    container_name: WorkBuddy-Switch
+    restart: unless-stopped
+    ports:
+      - "18090:18090"
+      - "18091:18091"
+    volumes:
+      - ./workbuddy-switch/data:/data
+    environment:
+      # 影响签到定时任务与统计流水的日期归属
+      TZ: Asia/Shanghai
+      # 容器内端口，一般无需修改；修改时两个端口映射需同步调整
+      PORT: "18090"
+      API_PORT: "18091"

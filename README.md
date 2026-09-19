@@ -139,6 +139,39 @@
 
 ## 🛠️ 快速部署
 
+> 镜像全部由 GitHub Actions **云端构建**并推送到 GHCR，仓库内不含任何本地构建产物。
+
+### Unraid 容器模板（推荐）
+
+Unraid 上请**使用容器模板创建容器，不要手工拼接 `docker run`**：
+
+1. 下载 [unraid/WorkBuddy-Switch.xml](./unraid/WorkBuddy-Switch.xml)（或从任意 Release 的附件中获取）；
+2. Unraid 后台进入 **Docker** → **Add Container**，模板来源选择该 XML；
+3. 按向导确认端口与数据目录后启动即可。
+
+模板已内置：标准容器名 `WorkBuddy-Switch`、官方 Overview 描述、项目与支持链接、WebUI 地址与图标。
+
+图标如需改为本地路径（离线环境），把模板里的 `<Icon>` 换成 `/mnt/user/icons/WorkBuddy-Switch.png` 即可。
+
+### Docker Compose
+
+```yaml
+services:
+  workbuddy-switch:
+    image: ghcr.io/deltrivx/workbuddy-switch:latest
+    container_name: WorkBuddy-Switch
+    restart: unless-stopped
+    ports:
+      - "18090:18090"
+      - "18091:18091"
+    volumes:
+      - ./workbuddy-switch/data:/data
+    environment:
+      TZ: Asia/Shanghai
+```
+
+完整文件见 [docker-compose.yml](./docker-compose.yml)。
+
 ### Docker CLI
 
 ```bash
@@ -296,5 +329,7 @@ python3 patch/patch_binary.py package/bin/wb-switch-linux-x64
 
 ## 📄 更新历史与开源协议
 
+- 版本索引与每个版本的部署产物： [RELEASES.md](./RELEASES.md)。
 - 查看详细历史演进请参阅 [CHANGELOG.md](./CHANGELOG.md)。
+- 各版本的完整发布说明收录在 [docs/release-notes/](./docs/release-notes/)。
 - 本项目基于 [MIT 协议](LICENSE) 开源。

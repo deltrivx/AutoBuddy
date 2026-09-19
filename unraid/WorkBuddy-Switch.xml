@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>WorkBuddy-Switch</Name>
+  <Repository>ghcr.io/deltrivx/workbuddy-switch:latest</Repository>
+  <Registry>https://ghcr.io/deltrivx/workbuddy-switch</Registry>
+  <Network>bridge</Network>
+  <MyIP />
+  <MyMAC />
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/deltrivx/workbuddy-switch/issues</Support>
+  <Project>https://github.com/deltrivx/workbuddy-switch</Project>
+  <ReadMe>https://raw.githubusercontent.com/deltrivx/workbuddy-switch/main/README.md</ReadMe>
+  <Overview>WorkBuddy Switch 是面向 NAS 与服务器的 WorkBuddy / CodeBuddy 多账号管理套件，内置 OpenAI 兼容网关。容器化定制 Web 控制台支持国内版与国际版账号热切换、自动签到保活、积分到期监控、实时用量图表与积分查看；内置网关将 hy4、DeepSeek 等大模型以标准 /v1 接口输出给 Sub2API 及其他 Agent 使用。官方底层服务依赖桌面环境的部分已在构建期物理移除，容器内无需任何桌面程序。</Overview>
+  <Category>AI:Tools:Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:18090]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/deltrivx/workbuddy-switch/main/unraid/WorkBuddy-Switch.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/deltrivx/workbuddy-switch/main/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped --log-opt max-size=50m --log-opt max-file=1</ExtraParams>
+  <PostArgs />
+  <CPUset />
+  <DonateText />
+  <DonateLink />
+  <Requires />
+  <Config Name="WebUI 端口" Target="18090" Default="18090" Mode="tcp" Description="WorkBuddy Switch 管理面板 WebUI 端口" Type="Port" Display="always" Required="true" Mask="false">18090</Config>
+  <Config Name="OpenAI API 端口" Target="18091" Default="18091" Mode="tcp" Description="供 Sub2API / 其他 Agent 调用的 OpenAI 兼容 API 端口" Type="Port" Display="always" Required="true" Mask="false">18091</Config>
+  <Config Name="数据持久化目录" Target="/data" Default="/mnt/user/appdata/workbuddy-switch/data" Mode="rw" Description="账号 Token、自动签到记录、积分快照与统计流水持久化根目录" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/workbuddy-switch/data</Config>
+  <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="影响签到定时任务与统计流水的日期归属" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
+</Container>
