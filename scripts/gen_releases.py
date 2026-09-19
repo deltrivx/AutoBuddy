@@ -7,7 +7,8 @@
 
 规则：
 - 版本号与日期取自 CHANGELOG 的 `## [vX.Y.Z] - YYYY-MM-DD` 标题行；
-- 摘要取自该版本下的第一个 `###` 小标题（去掉 emoji 前缀）；
+- 摘要取自该版本标题行下方的**首段正文**（Keep a Changelog 里这一段就是本版一句话概述）；
+  若首段为空或缺失，则回退到该版本第一个 `###` 分类小标题；
 - 若 docs/release-notes/RELEASE_NOTES_vX.Y.Z.md 存在，则附上「详细说明」链接；
 - 列表按语义化版本号倒序（GitHub Releases 侧栏按发布时间排序，本页按版本号排序，
   避免后补的旧版本让顺序看起来错乱）。
@@ -26,20 +27,32 @@ REPO_SLUG = "deltrivx/workbuddy-switch"
 
 
 def parse_versions(text: str):
+    """解析 CHANGELOG，抽出 (版本号, 日期, 一句话摘要)。"""
+    # 版本标题 -> 该版本自己的正文块（到下一个版本标题为止）
+    blocks = re.split(r"^## \[(v[^\]]+)\] - (\S+)", text, flags=re.MULTILINE)
     entries = []
-    current = None
-    for line in text.split("\n"):
-        header = re.match(r"^## \[(v[^\]]+)\] - (\S+)", line)
-        if header:
-            current = {"version": header.group(1), "date": header.group(2), "title": ""}
-            entries.append(current)
-            continue
-        if current and not current["title"]:
-            title = re.match(r"^###\s+(.*)", line)
-            if title:
-                # 去掉开头的 emoji，保留可读标题
-                current["title"] = re.sub(r"^[^\w\u4e00-\u9fff]+\s*", "", title.group(1).strip())
+    # blocks: [前言, ver1, date1, body1, ver2, date2, body2, ...]
+    for i in range(1, len(blocks) - 1, 3):
+        version, date, body = blocks[i], blocks[i + 1], blocks[i + 2]
+        entries.append({"version": version, "date": date, "title": _summary(body)})
     return entries
+
+
+def _summary(body: str) -> str:
+    """取一段适合放进索引表的摘要。
+
+    摘要以 `<!-- summary: … -->` 注释的形式写在 CHANGELOG 里，由人写死 ——
+    从正文猜出来的只会是半句话（正文首段常是背景铺垫），放进索引表毫无意义。
+    没有该注释时回退到第一个 `###` 分类小标题（去掉 emoji 前缀）。
+    """
+    m = re.search(r"<!--\s*summary:\s*(.+?)\s*-->", body)
+    if m:
+        return m.group(1).strip()
+
+    for line in body.split("\n"):
+        if line.strip().startswith("###"):
+            return re.sub(r"^[^\w\u4e00-\u9fff]+\s*", "", line.strip().lstrip("#").strip())
+    return "—"
 
 
 def version_key(entry):
@@ -108,7 +121,11 @@ docker pull ghcr.io/{REPO_SLUG}:{latest.lstrip('v')}    # 锁定版本
 | `SHA256SUMS` | 上述产物的校验值 |
 """
 
-    OUTPUT.write_text(body, encoding="utf-8")
+    # 仓库约定 LF（见 .gitattributes）。Windows 上 write_text 默认会写成 CRLF，
+    # 所以这里显式走 bytes 并断言，避免产物行尾与仓库不一致。
+    data = body.replace("\r\n", "\n").encode("utf-8")
+    assert b"\r\n" not in data, "生成结果含 CRLF"
+    OUTPUT.write_bytes(data)
     print(f"已写入 {OUTPUT.relative_to(REPO)}：共 {len(entries)} 个版本，当前稳定版 {latest}")
     return 0
 

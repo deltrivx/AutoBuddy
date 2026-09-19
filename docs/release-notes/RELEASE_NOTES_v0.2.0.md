@@ -1,0 +1,50 @@
+## 🚀 重大更新与特性亮点
+
+### 1. WebUI 交互与容器化体验全面升级
+
+- **侧边栏折叠收纳**：新增侧边栏收起 / 展开按钮，紧凑模式自适应主区域排版，
+  并记忆折叠状态。
+- **页面路由彻底修复**：解决二级路由返回的文件类型不正确，导致页面异常白屏
+  或误触发下载的问题，实测秒级加载与交互。
+- **桌面端残留深度清理**：彻底消除原属于桌面版的无用交互
+  （如「在 Finder 中显示」、「打开完全磁盘访问」等提示弹窗），
+  提供专为 NAS、Linux 与 Docker 定制的纯净 Web 控制台。
+- **全链路图标视觉统一**：侧边栏、页面顶栏与浏览器标签页全面同步高清圆角图标。
+
+### 2. 全量顶级大模型实测接入与 OpenAI 兼容网关增强
+
+- **25+ 款前沿模型端到端支持**：完成全量模型实测并发探活，解锁：
+  - **混元系列**：`hy3`（增强思考推理模型，强化代码与复杂逻辑），兼容 `hy4`、`hunyuan`
+  - **DeepSeek 系列**：`deepseek-v3`，兼容 `deepseek-chat`
+  - **OpenAI 旗舰系列**：`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、
+    `gpt-5.5`（旗舰编码大模型）、`gpt-5.4`、`gpt-5.3-codex`、`gpt-4o`
+  - **Google Gemini 系列**：`gemini-3.1-pro`、`gemini-3.5-flash`
+  - **智谱 GLM 系列**：`glm-5.3`、`glm-5.2`（1M 超长上下文）
+  - **Kimi / 月之暗面**：`kimi-k3`（长程科学推理与前端特化）、`kimi-k2.6`、`kimi-k2.5`
+  - **MiniMax 系列**：`minimax-m3`（原生多模态 Agent 协同）
+  - **智能工作模式**：`default-model` (Auto)、`fast-model` (Fast)、
+    `balanced-model` (Balanced)、`primary-model` (Primary)、`deep-model` (Deep)
+- **协议转换**：完善双向流 / 非流转换，自动规范前置系统提示词，
+  可对接 Sub2API、OpenClaw、NextChat 等下游客户端。
+
+### 3. CLI 自动接入与自动化凭证运维
+
+- 容器启动时自动完成 CLI 的认证配置引导，无需人工干预即可激活 CLI 状态，
+  告别「未接入 CLI」报警。（该能力已在 v0.3.11 随 CLI 一并移除）
+
+---
+
+## 📦 升级方式
+
+```bash
+docker pull ghcr.io/deltrivx/workbuddy-switch:v0.2.0
+docker pull ghcr.io/deltrivx/workbuddy-switch:latest
+```
+
+> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
+> 数据目录不变（`/data`），升级不会动到账号数据。
+
+## 不改变的行为
+
+账号管理、自动签到与登录方式保持不变。
+本版升级的是容器化体验、界面纯净度与上游模型接入能力。

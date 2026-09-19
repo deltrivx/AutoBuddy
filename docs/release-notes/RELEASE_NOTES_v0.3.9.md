@@ -1,11 +1,12 @@
 > 回答一个问题：**CodeBuddy CLI 助手在容器里有意义吗？**
 > 有 —— 而且本版把它从「配置写好了却没人用」的空转状态，变成了容器内真正可执行的环境。
+>
+> ⚠️ 本版能力已在 v0.3.11 随 CLI 一并移除，此处仅作历史留档。
 
 ## 一句话总结
 
-镜像内置 CodeBuddy CLI，容器启动时自动接好认证链路，`docker exec` 进去就能用 `codebuddy`，token 由账号池自动注入、**无需交互式登录**。
-
----
+镜像内置 CodeBuddy CLI，容器启动时自动接好认证链路，
+进入容器就能直接使用，凭证由账号池自动注入、**无需交互式登录**。
 
 ## 1. 先回答那个问题：CLI 到底适不适用于容器？
 
@@ -13,68 +14,58 @@
 
 | 判断维度 | 结论 |
 | :--- | :--- |
-| 官方定位 | CodeBuddy CLI 是**无头环境**工具，「不依赖图形界面，可在远程服务器、**Docker 容器**和 CI/CD runner 等无头环境中正常运行」 |
-| 平台支持 | Linux x86_64 / arm64 官方支持；npm 包 `@tencent-ai/codebuddy-code`，要求 Node 18.20+（本镜像 Node 20 ✅） |
-| 无头模式 | `codebuddy -p`（非交互）、`-y`、`--output-format json`、`CODEBUDDY_IS_SANDBOX=1` |
-| 认证机制 | `apiKeyHelper` 是**官方 settings 配置项**，脚本在 `/bin/sh` 执行，输出作为 `X-Api-Key` 与 `Authorization: Bearer` |
-| 上游设计 | wb-switch 二进制同时含 macOS / Windows / **Linux（`/usr/bin/codebuddy`）** 三套路径与 `helper.{sh,cmd,cjs}` 三平台 helper |
+| 官方定位 | 它是**无头环境**工具，官方明确支持在远程服务器、**Docker 容器**和 CI/CD runner 中运行 |
+| 平台支持 | Linux x86_64 / arm64 官方支持 |
+| 无头模式 | 提供非交互执行、自动确认与 JSON 输出等选项 |
+| 凭证注入 | 官方支持通过配置脚本自动注入凭证 |
 
-所以它**不是**「仅适用于 macOS 等桌面系统」，不能按这个理由移除。
+因此不能按「仅桌面」移除，而应补全为真正可用的容器环境。
 
-## 2. 那之前的问题在哪？
+## 2. 镜像内置 CodeBuddy CLI
 
-配置早就写好了，但**缺了执行者**：
+- 镜像构建时安装 CLI，并关闭容器内自动更新
+  （自动更新会在重建时丢失且拖慢启动）。
+- 预留默认工作目录。
+- 镜像体积相应增加，这是「容器内真的能跑 CLI」的代价。
 
-| 缺口 | 后果 |
-| :--- | :--- |
-| 容器里没有 CLI 二进制 | 没有任何进程会读 `settings.json` 或调用 `helper.cjs` → **空转** |
-| `state.json` 不存在 | helper fallback 到 `accounts[0]`，绑定账号不确定，且与面板显示不一致 |
-| 官方「已接入」判据只看配置文件 | 容器里没 CLI 也显示「已接入」→ **假象** |
+## 3. 修复绑定账号不确定的问题
 
-## 3. 本版做了什么
+**问题**：CLI 依赖一个状态文件里的「当前账号」来决定用哪个账号；
+该文件此前**不存在**，只能回落到列表里的第一个，行为不确定，且与面板显示不一致。
 
-### 镜像内置 CLI
-- `npm i -g @tencent-ai/codebuddy-code` + `DISABLE_AUTOUPDATER=1`
-- 补 `git`（CLI 的版本控制能力依赖）与 `/workspace` 工作目录
-- 代价：镜像约 +175 MB
+**修复**：容器启动时，在该文件缺失的情况下自动绑定一个账号，由官方程序自己写出格式正确的状态文件。
 
-### 修复绑定账号不确定
-- 新增 `gateway/cli_bootstrap.py`：启动时若 `state.json` 缺失，调用官方 `POST /api/codebuddy-cli/switch` 绑定一个账号（优先国际版 `variant=ai`，与默认端点 `codebuddy.ai` 匹配），由 wb-switch 自己写出格式正确的 `state.json`
-- **不覆盖已存在的 `state.json`**，不影响手动选择与后续的自动轮换
+**不覆盖已存在的状态文件**，因此不会影响你手动选择或后续的自动轮换。
 
-### 消除「假接入」
-- 新增 `GET /api/cli-info`：**真实探测** `codebuddy` 是否可执行并返回版本（缓存 60 秒）
-- 设置页说明条重写，并实时显示探测结果（绿色 = 可用，橙色 = 未检测到）
+## 4. 界面：消除「假接入」
 
----
+**问题**：官方的「已接入」判据**只看配置文件是否存在，从不检测 CLI 是否真的装了** ——
+容器里没装 CLI 也会显示「已接入」。
 
-## 快速开始
+**修复**：
+
+- 新增接口真实探测容器内 CLI 是否可执行并返回版本；
+- 设置页说明条重写，讲清容器内已安装 CLI 与非交互用法，并**实时显示探测到的版本**
+  （可用为绿色、未检测到为橙色）；
+- 账号卡片上「官方 CLI 绑定」标记的悬停说明同步改写。
+
+## 5. 文档
+
+- README 新增「容器内使用 CodeBuddy CLI」章节：认证链路、交互式与无头用法、
+  工作目录挂载建议，以及「CLI 绑定账号 vs 网关账号池」职责对照表。
+- 修正 README 中两处已过时表述（原写「容器里已无 IDE / CLI 能力」「容器里没有真实 CLI 会话」）。
+
+## 升级方式
 
 ```bash
-# 交互式
-docker exec -it WorkBuddy-Switch codebuddy
-
-# 无头 / 脚本化
-docker exec WorkBuddy-Switch codebuddy -p "分析 /workspace 下的代码并总结" -y
+docker pull ghcr.io/deltrivx/workbuddy-switch:v0.3.9
+docker pull ghcr.io/deltrivx/workbuddy-switch:latest
 ```
 
-认证链路（启动时自动完成，无需登录）：
+> Unraid 请通过容器模板重建，**不要手工拼接 `docker run`**。
+> 数据目录不变（`/data`），升级不会动到账号数据。
 
-```
-~/.codebuddy/settings.json
-  └─ apiKeyHelper → ~/.codebuddy-rotate/helper.cjs
-       └─ 读 ~/.codebuddy-rotate/state.json 的 activeAccountId
-            └─ 输出 "Bearer <该账号 token>" → CLI 作为认证头
-```
+## 不改变的行为
 
-## 升级注意
-
-- 镜像体积增加约 175 MB（CLI 本体）。
-- 已有 `/data` 数据卷无需迁移；`state.json` 会在首次启动时自动补齐。
-- CLI 绑定账号与网关账号池**相互独立**：CLI 拿 token 后直接访问官方端点，不经过本网关。
-
-## 接口变更
-
-| 接口 | 变更 |
-| :--- | :--- |
-| `GET /api/cli-info` | **新增**：真实探测容器内 CLI 可用性（`installed` / `version` / `path`） |
+账号管理、自动签到、账号池调度与 Token 统计全部保持不变。
+本版只新增容器内 CLI 能力，不影响网关的 API 调用路径。
