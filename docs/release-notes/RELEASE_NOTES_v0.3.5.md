@@ -1,5 +1,3 @@
-# v0.3.5 - 修复「最近使用账号」记录缺失 + 卡片标出最近调用
-
 ## 🐞 修复：手动固定 / 指定账号看起来「没生效」
 
 **现象**：把某个账号设为「首选」，或用 `X-WorkBuddy-Account-Id` 指定账号发请求后，`/account-pool/status` 里的 `lastSelectedAccountId` 始终显示成另一个账号，像是配置被忽略了。
