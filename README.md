@@ -50,6 +50,11 @@
   - **模型清单自动发现**：官方未提供 `/models` 接口，网关改从实际调用流水（`official_usage_cache.json`）与网关实测统计中自动聚合模型，新模型上线后无需手工补清单。
   - 完美支持 `stream: true` 与 `stream: false` 自动双向流/非流转换。
   - 自动补全系统级 Prompt（`normalize_messages`），保障上游 100% 稳定响应。
+- 🔑 **API 接入信息与访问密钥（全部在设置页完成）**：
+  - 设置页新增 **API 接入** 面板：对外地址、接口端点、一键复制、密钥开关、密钥增删改、连通性自检、可直接使用的 `curl` 示例——不用翻文档就能把下游客户端接上。
+  - **密钥是可选的**：默认不校验，行为与升级前完全一致；打开后 `/v1/*` 需携带 `Authorization: Bearer sk-wb-…` 或 `x-api-key: sk-wb-…`。
+  - **每把密钥独立管理**：`sk-wb-` + 32 位十六进制，界面显示掩码、可随时复制明文，支持单独启用/停用/删除，并记录调用次数与最近使用时间。
+  - **两道门锁防线**：没有任何可用密钥时不允许开启校验；已开启校验时不允许停用/删除最后一个启用中的密钥、也不允许清空全部——避免一键把自己和所有下游客户端一起关在门外。
 - 🧾 **账号卡片动态模型清单（网关归因，不依赖上游）**：
   - 每个账号下方自动展示**该账号可调用的模型**，数据源为网关 `/v1/models`，与全局清单保持一致，不做任何硬编码。
   - **已调用模型由网关自己归因**：每次 API 调用都会把实际服务该请求的账号写进 `token_stats_logs.json`，因此**每个账号都能显示自己调用过哪些模型**。
@@ -132,6 +137,7 @@
 
 - **数据卷持久化**：
   - `/data`：挂载至宿主机的 AppData 目录（如 `/mnt/user/appdata/workbuddy-switch`），持久化保存账号凭证、积分快照、Token 统计明细及轮换状态。
+  - `/data/.wb-switch/api_keys.json`：API 访问密钥与「强制校验」开关（权限 `0600`）。删除该文件即等于关闭校验并清空全部密钥。
 
 > 本镜像只做两件事：**账号自动签到保活** 与 **提供 OpenAI 兼容 API**。除 `/data` 外不需要任何其他挂载。
 
@@ -203,17 +209,59 @@ services:
 
 ---
 
+## 🔑 API 接入与访问密钥
+
+容器的第二个核心能力是「对外提供 OpenAI 兼容 API」。**接入地址**与**访问密钥**都直接放在 WebUI 的
+**设置 → API 接入** 里，不需要去翻文档。
+
+### 面板提供什么
+
+| 项 | 说明 |
+| :--- | :--- |
+| 对外访问地址 | 按当前访问的主机名自动推导为 `http(s)://<host>:18091/v1`；走域名或隧道时可手动改，改动记在浏览器本地 |
+| 接口端点 | `POST /v1/chat/completions`、`GET /v1/models`，点一下即复制完整地址 |
+| 网关状态 | 版本、账号池模式、可路由模型数、可用账号数与参与调用的账号数 |
+| 密钥校验开关 | 「强制 API 密钥校验」一键开/关，**默认关闭** |
+| 密钥管理 | 新建、复制明文、停用、启用、删除、清空；列表显示掩码、调用次数与最近使用时间 |
+| 连通性自检 | 在容器内回环实测「网关健康 / 模型清单 / 密钥配置自洽性」三步，用来定位「UI 能打开但 API 调不通」 |
+| 调用示例 | 自动带上当前启用密钥的 `curl` 片段，复制即用 |
+
+### 密钥规则
+
+- 格式为 `sk-wb-` + 32 位十六进制。调用时放在 `Authorization: Bearer <key>` 或 `x-api-key: <key>`，两种都支持，`Bearer` 大小写不敏感。
+- **默认不校验**：没有配置密钥的用户，行为与升级前完全一致，`/v1/*` 直接可调。
+- **打开校验后**：缺失密钥返回 `401`（提示缺少密钥）、密钥错误返回 `401`（提示无效）、密钥被停用同样 `401`。
+- **容器内回环免校验**：WebUI 代理与网关同容器，它要读 `/v1/models` 来渲染账号卡片的模型清单，不能被自己的密钥挡住。容器外的请求经 docker NAT 进来，源地址是网桥地址而非 `127.0.0.1`，因此放行回环是安全的。
+- **两道门锁防线**（防止把自己关在门外）：
+  1. 一个可用密钥都没有时，不允许开启校验；
+  2. 已开启校验时，不允许停用/删除最后一个启用中的密钥，也不允许清空全部。
+- 密钥明文保存在 `/data/.wb-switch/api_keys.json`（权限 `0600`），这样才能在界面里随时复制核对。
+
+### 从 0 接一个下游客户端
+
+1. 打开 `http://<NAS-IP>:18090` → **设置** → **API 接入**；
+2. 点 **新建密钥**，起个名字（例如 `Sub2API`），密钥会自动复制到剪贴板；
+3. 把面板里显示的 **对外访问地址** 填进客户端的 `base_url`，把密钥填进 `api_key`；
+4. 需要收紧访问时，把 **强制 API 密钥校验** 打开即可 —— 此时所有未携带合法密钥的调用都会被拒。
+
+> 只在内网使用且不希望增加配置成本时，保持校验关闭即可；一旦端口暴露到公网或经过隧道转发，**务必打开校验**。
+
+---
+
 ## 🔌 下游客户端接入示例
 
 ### Sub2API 接入规范
 1. **渠道（Channel）**：选择 `OpenAI` 格式，Base URL 填入 `http://<IP>:18091/v1`。
-2. **账号类型**：选择 `apikey`，API Key 可任意填写（如 `***`）。
+2. **账号类型**：选择 `apikey`。若已在设置页打开 **强制 API 密钥校验**，这里必须填真实密钥（`sk-wb-…`）；
+   未打开校验时填任意值（如 `***`）都能通过。
 3. **模型映射**：将上方模型（如 `gpt-5.5`, `deepseek-v3`, `kimi-k3` 等）全量映射至对应分组即可。
 
 ### cURL 调用测试
 ```bash
+# 未开启密钥校验时可省略 Authorization 头
 curl -X POST http://localhost:18091/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-wb-你的密钥" \
   -d '{
     "model": "deepseek-v3",
     "messages": [{"role": "user", "content": "你好！"}],
@@ -225,8 +273,16 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 
 | 接口 | 说明 |
 | :--- | :--- |
-| `GET /v1/models` | 返回自动发现后的完整模型清单（下游同步模型列表请以这里为准） |
-| `GET /health` | 健康检查，含 `models_count`、`models_auto_discovered` 与轮询状态快照 |
+| `GET /v1/models` | 返回自动发现后的完整模型清单（下游同步模型列表请以这里为准）；开启密钥校验后需携带密钥 |
+| `POST /v1/chat/completions` | 对话补全；开启密钥校验后需携带密钥 |
+| `GET /health` | 健康检查，含 `version`、`models_count`、`models_auto_discovered`、`require_api_key` 与轮询状态快照（**始终开放**，供容器健康检查使用） |
+| `GET /gateway/info` | 连接信息：`basePath`、`endpoints`、`auth`、模型与账号规模、`features` |
+| `GET /api-keys/status` | 密钥状态：`requireKey`、密钥列表（含掩码）与汇总 `stats`，并附带 `gateway` 信息 |
+| `POST /api-keys` | 新建密钥，`{"name": "Sub2API"}`，返回明文密钥 |
+| `POST /api-keys/update` | 改名 / 启用 / 停用，`{"id": "…", "enabled": false}` |
+| `POST /api-keys/delete` | 删除单把密钥，`{"id": "…"}` |
+| `POST /api-keys/delete-all` | 清空全部密钥（开启校验时会被拒） |
+| `PUT /api-keys/config` | 开关强制校验，`{"requireKey": true}` |
 | `GET /rotate/status` | 查看**网关健康巡检**的开关、间隔、上次检查与上次切换结果（不参与 API 调度，见上文三层链路） |
 | `POST /rotate/run` | 立即执行一次账号可用性检测与切换 |
 | `GET /account-pool/status` | 账号池状态：模式、启用列表、首选账号、各账号 `enabled` / `usable` / `active`、`selectionCounts` |
@@ -238,9 +294,18 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 | `PUT /api/account-pool` | Web 控制台用：转发账号池配置更新 |
 | `GET /api/account-pool/selections` | Web 控制台用：转发并发分摊观测数据 |
 | `POST /api/account-pool/selections/reset` | Web 控制台用：转发清零选账号流水 |
+| `GET /api/api-keys` | Web 控制台用：转发密钥状态（设置页数据源） |
+| `POST /api/api-keys` `/update` `/delete` `/delete-all` | Web 控制台用：转发密钥增删改 |
+| `PUT /api/api-keys/config` | Web 控制台用：转发密钥校验开关 |
+| `GET /api/gateway-info` | Web 控制台用：转发连接信息 |
+| `POST /api/gateway-selftest` | Web 控制台用：容器内回环自检（健康 / 模型清单 / 密钥配置自洽性） |
 
 > **接口分工**：决定 API 用哪个账号的是 `select_account()`（账号池）；`/rotate/*` 只做账号健康巡检，
 > 不参与 API 调度。
+>
+> **鉴权范围**：密钥校验只作用于对外的 `/v1/*`。`/health`、`/gateway/info`、`/api-keys/*`、`/account-pool/*`
+> 等管理接口不拦截，它们只供本机 WebUI 与运维使用 —— 因此**不要把 18091 直接暴露到公网**，
+> 需要外网访问请用 WebUI（18090）或前置反代并自行加认证。
 
 ### 账号池与手动指定账号
 
@@ -332,4 +397,5 @@ python3 patch/patch_binary.py package/bin/wb-switch-linux-x64
 - 版本索引与每个版本的部署产物： [RELEASES.md](./RELEASES.md)。
 - 查看详细历史演进请参阅 [CHANGELOG.md](./CHANGELOG.md)。
 - 各版本的完整发布说明收录在 [docs/release-notes/](./docs/release-notes/)。
+- 改了 CHANGELOG 后请跑 `python3 scripts/gen_releases.py` 重新生成版本索引，避免两处漂移。
 - 本项目基于 [MIT 协议](LICENSE) 开源。

@@ -17,6 +17,11 @@ try:
 except ImportError:
     from token_tracker import record_token_usage, get_aggregated_token_stats
 
+try:
+    from gateway import api_keys
+except ImportError:
+    import api_keys
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -28,7 +33,7 @@ async def lifespan(_app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.4.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
@@ -464,22 +469,209 @@ def update_account_pool(config: Dict[str, Any]):
     })
     return {"ok": True, "config": saved, "status": account_pool_status()}
 
+# ---------------------------------------------------------------------------
+# API 接入信息与访问密钥
+#
+# 网关的两个核心能力之一是「对外提供 OpenAI 兼容 API」，因此「调用地址 + 密钥」
+# 必须能在设置页直接看到、直接改。密钥校验是可选的（默认关闭），开启后 /v1/* 需要
+# Authorization: Bearer <key> 或 x-api-key: <key>。
+# ---------------------------------------------------------------------------
+
+GATEWAY_VERSION = "1.4.0"
+
+# 容器内的 WebUI 代理与网关同容器，靠 loopback 访问。容器外的请求经 docker NAT
+# 进来源地址是网桥地址而非 127.0.0.1，所以放行 loopback 不会把外部请求放进来。
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"}
+
+
+def _client_is_loopback(request: Request) -> bool:
+    client = getattr(request, "client", None)
+    host = str(getattr(client, "host", "") or "")
+    if not host:
+        return False
+    if host in _LOOPBACK_HOSTS:
+        return True
+    # ::ffff:127.0.0.1 这类 IPv4-mapped 形式
+    return host.startswith("127.") or host.endswith(":127.0.0.1")
+
+
+def _extract_api_key(request: Request) -> Optional[str]:
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-api-key") or request.headers.get("api-key")
+
+
+def _gateway_auth(request: Request) -> Dict[str, Any]:
+    """统一的 /v1 访问校验。返回 ``{"ok": bool, ...}``，失败时由调用方转 401。"""
+    state = api_keys.get_state()
+    if not state.get("requireKey"):
+        return {"ok": True, "mode": "open", "requireKey": False}
+    if _client_is_loopback(request):
+        return {"ok": True, "mode": "internal", "requireKey": True}
+    return api_keys.authenticate(_extract_api_key(request))
+
+
+def _gateway_info() -> Dict[str, Any]:
+    accounts = _load_accounts()
+    now_ms = int(time.time() * 1000)
+    catalog = get_model_catalog()
+    config = _load_pool_config()
+    keys = api_keys.get_config()
+    enabled = _enabled_accounts(accounts, config)
+    return {
+        "version": GATEWAY_VERSION,
+        "basePath": "/v1",
+        "endpoints": {
+            "chatCompletions": "/v1/chat/completions",
+            "models": "/v1/models",
+            "health": "/health",
+        },
+        "auth": {
+            "requireKey": keys["requireKey"],
+            "header": "Authorization: Bearer <key>",
+            "altHeader": "x-api-key: <key>",
+            "keysTotal": keys["stats"]["total"],
+            "keysEnabled": keys["stats"]["enabled"],
+        },
+        "models": {
+            "count": len(catalog),
+            "autoDiscovered": len(catalog) - len(BASE_MODELS),
+            "sample": [m["id"] for m in catalog[:12]],
+        },
+        "accounts": {
+            "total": len(accounts),
+            "usable": len([a for a in accounts if _account_is_usable(a, now_ms)]),
+            "inPool": len(enabled),
+            "mode": config.get("mode"),
+        },
+        "features": {
+            "stream": True,
+            "accountPinHeader": "X-WorkBuddy-Account-Id",
+            "accountPinBody": "account_id",
+            "aliasRouting": True,
+        },
+    }
+
+
+@app.get("/gateway/info")
+def gateway_info():
+    """连接信息面板的数据源：地址、端点、模型/账号规模、密钥状态。"""
+    return _gateway_info()
+
+
+@app.get("/api-keys/status")
+def api_keys_status():
+    info = api_keys.get_config()
+    info["gateway"] = _gateway_info()
+    return info
+
+
+@app.post("/api-keys")
+def api_keys_create(payload: Optional[Dict[str, Any]] = None):
+    record, error = api_keys.create_key((payload or {}).get("name"))
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return {"ok": True, "key": record, "status": api_keys_status()}
+
+
+def _guard_last_enabled_key(key_id: str) -> None:
+    """挡住「把最后一个可用密钥停用/删除」这种把自己锁在门外的操作。
+
+    与「零密钥时不允许开启校验」是同一类防线：一旦开启校验又没有任何启用中的密钥，
+    所有下游客户端立刻全部 401，而且只能进容器手改文件才能救回来。
+    """
+    if not api_keys.get_state().get("requireKey"):
+        return
+    others = [
+        k for k in api_keys.get_config()["keys"]
+        if k["enabled"] and str(k["id"]) != str(key_id)
+    ]
+    if not others:
+        raise HTTPException(
+            status_code=400,
+            detail="这是最后一个启用中的密钥，且已开启密钥校验。"
+                   "停用或删除会让所有下游客户端立即失去访问权限；请先关闭密钥校验，或先新建另一个密钥。")
+
+
+@app.post("/api-keys/update")
+def api_keys_update(payload: Dict[str, Any]):
+    key_id = payload.get("id")
+    if not key_id:
+        raise HTTPException(status_code=400, detail="id is required")
+    patch = {k: payload[k] for k in ("name", "enabled") if k in payload}
+    if not patch:
+        raise HTTPException(status_code=400, detail="nothing to update")
+    if patch.get("enabled") is False:
+        _guard_last_enabled_key(str(key_id))
+    record, error = api_keys.update_key(str(key_id), patch)
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+    return {"ok": True, "key": record, "status": api_keys_status()}
+
+
+@app.post("/api-keys/delete")
+def api_keys_delete(payload: Dict[str, Any]):
+    key_id = payload.get("id")
+    if not key_id:
+        raise HTTPException(status_code=400, detail="id is required")
+    _guard_last_enabled_key(str(key_id))
+    if not api_keys.delete_key(str(key_id)):
+        raise HTTPException(status_code=404, detail="key not found")
+    return {"ok": True, "status": api_keys_status()}
+
+
+@app.post("/api-keys/delete-all")
+def api_keys_delete_all():
+    """一键清空。仅用于「重置成未设防状态」，前端会二次确认。
+
+    开着密钥校验时不允许清空：清完就没人能调了。要重置请先关掉校验 —— 这里选择
+    显式报错而不是「顺手帮你把校验关掉」，因为静默降低安全性比多一次点击更糟。
+    """
+    if api_keys.get_state().get("requireKey"):
+        raise HTTPException(
+            status_code=400,
+            detail="已开启密钥校验，清空全部密钥会让所有下游客户端立即失去访问权限。请先关闭密钥校验。")
+    removed = api_keys.delete_all_keys()
+    return {"ok": True, "removed": removed, "status": api_keys_status()}
+
+
+@app.put("/api-keys/config")
+def api_keys_config(payload: Dict[str, Any]):
+    if "requireKey" not in payload:
+        raise HTTPException(status_code=400, detail="requireKey is required")
+    require = bool(payload.get("requireKey"))
+    if require and api_keys.get_config()["stats"]["enabled"] == 0:
+        # 开了校验却一个可用密钥都没有 = 把自己锁在门外
+        raise HTTPException(status_code=400,
+                            detail="请先创建至少一个可用密钥，再开启密钥校验。")
+    api_keys.set_require_key(require)
+    return {"ok": True, "status": api_keys_status()}
+
+
 @app.get("/health")
 def health():
     acc = get_active_account()
     catalog = get_model_catalog()
     return {
         "status": "healthy",
+        "version": GATEWAY_VERSION,
         "has_active_account": acc is not None,
         "active_account_variant": acc.get("variant") if acc else None,
         "models_count": len(catalog),
         "models_auto_discovered": len(catalog) - len(BASE_MODELS),
+        "require_api_key": api_keys.get_state().get("requireKey"),
         "rotate": _rotate_state_snapshot()
     }
 
 @app.get("/v1/models")
 @app.get("/models")
-async def list_models():
+async def list_models(request: Request):
+    gate = _gateway_auth(request)
+    if not gate["ok"]:
+        raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
+    if gate.get("keyId"):
+        api_keys.mark_used(gate["keyId"])
     catalog = get_model_catalog()
     return {
         "object": "list",
@@ -513,6 +705,15 @@ def estimate_tokens(text: str) -> int:
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
     start_time = time.time()
+
+    # 访问密钥校验（默认关闭）。开启后 /v1/* 需携带 Authorization: Bearer <key>
+    # 或 x-api-key: <key>；容器内 WebUI 代理走 loopback 免校验，不会被自己的密钥挡住。
+    gate = _gateway_auth(request)
+    if not gate["ok"]:
+        raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
+    if gate.get("keyId"):
+        api_keys.mark_used(gate["keyId"])
+
     body = await request.json()
 
     # 请求级账号选择：显式 header/body 优先，其次按 account-pool 配置自动分配。

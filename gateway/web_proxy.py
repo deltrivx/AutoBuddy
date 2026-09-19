@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI, Request, Response
 import httpx
 import uvicorn
@@ -12,10 +13,26 @@ except ImportError:
 
 app = FastAPI()
 
+# ---------------------------------------------------------------------------
+# 容器内的内部调用（WebUI 代理 -> 官方后端 57890 / -> 网关 18091）全部走 loopback。
+#
+# httpx 默认 trust_env=True，会读取宿主机的 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。
+# NAS 上为了下载或科学上网设了全局代理的环境很常见，一旦被代理接管，内部调用会被
+# 转发到代理上并返回 404 —— 表现为「UI 打不开 / 模型清单为空」，但网关本身是好的。
+# 内部调用一律 trust_env=False，绕开代理环境变量。
+#
+# 注意：网关（main.py）访问上游模型服务的客户端**不能**这样改，
+# 那里恰恰需要代理环境变量才能出网。
+# ---------------------------------------------------------------------------
+def _internal_client(timeout: float = 10.0) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout, trust_env=False)
+
+
+
 BACKEND_URL = "http://127.0.0.1:57890"
 ICON_PATH = Path("/app/icon.png")
 
-COLLAPSE_SCRIPT = """
+COLLAPSE_SCRIPT = r"""
 <style>
   aside {
     transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -155,6 +172,173 @@ COLLAPSE_SCRIPT = """
     color: var(--primary, #1d4ed8);
     font-weight: 600;
   }
+  /* ---------------- 设置页：API 接入面板 ---------------- */
+  .wb-api-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--card, #ffffff);
+    color: var(--card-foreground, #0f172a);
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .wb-api-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    margin: 0 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border, rgba(120, 120, 120, 0.2));
+  }
+  @media (min-width: 640px) { .wb-api-row { margin: 0 20px; } }
+  .wb-api-row:last-child { border-bottom: 0; }
+  .wb-api-row-stack { flex-direction: column; align-items: stretch; }
+  .wb-api-main { min-width: 0; flex: 1 1 auto; }
+  .wb-api-label {
+    font-size: 13px;
+    line-height: 1.5;
+    font-weight: 500;
+    color: var(--foreground, #0f172a);
+  }
+  .wb-api-desc {
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted-foreground, #64748b);
+  }
+  .wb-api-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .wb-api-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--muted, rgba(120, 120, 120, 0.12));
+    color: var(--foreground, #0f172a);
+  }
+  .wb-api-chip > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wb-api-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 5px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.35));
+    background: var(--background, #ffffff);
+    color: var(--foreground, #0f172a);
+    font-size: 12px;
+  }
+  .wb-api-input:focus { outline: 2px solid var(--primary, #1d4ed8); outline-offset: 1px; }
+  .wb-api-btn {
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1.9;
+    padding: 1px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.35));
+    background: transparent;
+    color: var(--foreground, #374151);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .wb-api-btn:hover { background: rgba(120, 120, 120, 0.12); }
+  .wb-api-btn-primary {
+    border-color: rgba(59, 130, 246, 0.55);
+    background: rgba(59, 130, 246, 0.14);
+    color: #1d4ed8;
+    font-weight: 600;
+  }
+  .wb-api-btn-danger {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.1);
+    color: #b91c1c;
+  }
+  .wb-api-btn-on {
+    border-color: rgba(34, 197, 94, 0.55);
+    background: rgba(34, 197, 94, 0.14);
+    color: #15803d;
+    font-weight: 600;
+  }
+  .wb-api-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    line-height: 1.9;
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: var(--muted, rgba(120, 120, 120, 0.14));
+    color: var(--muted-foreground, #64748b);
+    white-space: nowrap;
+  }
+  .wb-api-badge-ok { background: rgba(34, 197, 94, 0.16); color: #15803d; font-weight: 600; }
+  .wb-api-badge-warn { background: rgba(245, 158, 11, 0.18); color: #b45309; font-weight: 600; }
+  .wb-api-keyrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex-wrap: wrap;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border, rgba(120, 120, 120, 0.2));
+  }
+  .wb-api-keyrow:last-child { border-bottom: 0; }
+  .wb-api-keyname {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--foreground, #0f172a);
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wb-api-code {
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--muted, rgba(120, 120, 120, 0.12));
+    color: var(--foreground, #0f172a);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .wb-api-empty {
+    padding: 10px 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted-foreground, #64748b);
+  }
+  .wb-api-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 9999;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #ffffff;
+    background: rgba(15, 23, 42, 0.92);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .wb-api-toast-show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+  .wb-api-toast-err { background: rgba(185, 28, 28, 0.94); }
 </style>
 <script>
 (function() {
@@ -435,12 +619,454 @@ COLLAPSE_SCRIPT = """
     injectAccountPool();
   }
 
+  /* ------------------------------------------------------------------
+     设置页：API 接入
+     容器只做两件事 —— 账号管理/自动签到，以及对外提供 OpenAI 兼容 API。
+     但接入地址与密钥此前在 UI 上完全不可见，这里把「怎么连、用什么密钥连」
+     直接落到设置页，用户不用去翻 README。
+     ------------------------------------------------------------------ */
+
+  var WB_API_BASE_LS = "wb_api_base_url";
+
+  function wbToast(message, isError) {
+    var el = document.createElement("div");
+    el.className = "wb-api-toast" + (isError ? " wb-api-toast-err" : "");
+    el.textContent = message;
+    document.body.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add("wb-api-toast-show"); });
+    setTimeout(function () {
+      el.classList.remove("wb-api-toast-show");
+      setTimeout(function () { el.remove(); }, 260);
+    }, 1800);
+  }
+
+  function wbCopy(text, okMessage) {
+    // 局域网走的是 http://，不是安全上下文，navigator.clipboard 直接不可用，
+    // 所以必须有 execCommand 兜底，否则「复制」按钮点了没反应。
+    function fallback() {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        var ok = document.execCommand("copy");
+        ta.remove();
+        wbToast(ok ? (okMessage || "已复制") : "复制失败，请手动选中复制", !ok);
+      } catch (e) {
+        wbToast("复制失败，请手动选中复制", true);
+      }
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { wbToast(okMessage || "已复制"); }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  // 所有写操作走这里：统一把网关返回的 detail 弹出来。
+  // 后端的「最后一个密钥不能停用」「零密钥不能开启校验」这类防线必须让用户看见，
+  // 否则点了按钮没反应，只会以为 UI 坏了。
+  function wbApiAction(url, method, payload, okMessage) {
+    return fetch(url, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: payload === undefined ? undefined : JSON.stringify(payload)
+    })
+      .then(function (r) {
+        return r.json()
+          .catch(function () { return {}; })
+          .then(function (body) { return { ok: r.ok, body: body || {} }; });
+      })
+      .then(function (res) {
+        if (!res.ok || res.body.ok === false) {
+          var d = res.body.detail;
+          wbToast(typeof d === "string" && d ? d : (res.body.error || "操作失败"), true);
+          return null;
+        }
+        if (okMessage) wbToast(okMessage);
+        wbRefreshApi(true);
+        return res.body;
+      })
+      .catch(function () {
+        wbToast("请求失败，请刷新页面后重试", true);
+        return null;
+      });
+  }
+
+  function wbApiBase() {    var saved = "";
+    try { saved = localStorage.getItem(WB_API_BASE_LS) || ""; } catch (e) { saved = ""; }
+    if (saved) return saved;
+    var loc = window.location;
+    var host = loc.hostname || "127.0.0.1";
+    // IPv6 需要方括号
+    if (host.indexOf(":") >= 0 && host.charAt(0) !== "[") host = "[" + host + "]";
+    var scheme = loc.protocol === "https:" ? "https:" : "http:";
+    return scheme + "//" + host + ":18091/v1";
+  }
+
+  function wbSetApiBase(value) {
+    try {
+      if (value) localStorage.setItem(WB_API_BASE_LS, value);
+      else localStorage.removeItem(WB_API_BASE_LS);
+    } catch (e) {}
+  }
+
+  function wbEl(tag, className, text) {
+    var el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  function wbApiRow(label, desc, control) {
+    var row = wbEl("div", "wb-api-row");
+    var main = wbEl("div", "wb-api-main");
+    main.appendChild(wbEl("div", "wb-api-label", label));
+    if (desc) main.appendChild(wbEl("div", "wb-api-desc", desc));
+    row.appendChild(main);
+    if (control) row.appendChild(control);
+    return row;
+  }
+
+  function wbChip(text) {
+    var chip = wbEl("span", "wb-api-chip wb-api-mono");
+    chip.appendChild(wbEl("span", null, text));
+    return chip;
+  }
+
+  function wbTime(ms) {
+    if (!ms) return "从未";
+    try {
+      var d = new Date(ms);
+      var p = function (n) { return (n < 10 ? "0" : "") + n; };
+      return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+        " " + p(d.getHours()) + ":" + p(d.getMinutes());
+    } catch (e) { return "—"; }
+  }
+
+  function wbFindSettingsHost() {
+    // 设置页标题是唯一的 h1「设置」，用它定位比依赖路由稳定。
+    var h1s = document.querySelectorAll("h1");
+    for (var i = 0; i < h1s.length; i++) {
+      if ((h1s[i].textContent || "").trim() !== "设置") continue;
+      var header = h1s[i].closest("header");
+      if (!header) continue;
+      return header.nextElementSibling || header.parentElement || null;
+    }
+    return null;
+  }
+
+  function wbRenderApiSection(host, data) {
+    var gw = data.gateway || {};
+    var auth = gw.auth || {};
+    var models = gw.models || {};
+    var accounts = gw.accounts || {};
+    var stats = data.stats || {};
+    var keys = data.keys || [];
+    var base = wbApiBase();
+
+    var section = wbEl("section", "min-w-0 space-y-2.5");
+    section.id = "settings-api-access";
+    var head = wbEl("div", "px-1");
+    var h2 = wbEl("h2", "text-[13px] font-medium leading-5", "API 接入");
+    h2.id = "settings-api-access-title";
+    head.appendChild(h2);
+    section.appendChild(head);
+    section.setAttribute("aria-labelledby", "settings-api-access-title");
+
+    var card = wbEl("div", "wb-api-card");
+
+    // ---- 1. 对外访问地址（可改，覆盖隧道/反代场景）----
+    var addrRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    var addrHead = wbEl("div", null);
+    addrHead.appendChild(wbEl("div", "wb-api-label", "对外访问地址"));
+    addrHead.appendChild(wbEl("div", "wb-api-desc",
+      "下游客户端（Sub2API、Cherry Studio、各类 Agent）填这个地址。默认按当前访问的主机名自动推导，走域名或隧道时可手动改。"));
+    addrRow.appendChild(addrHead);
+
+    var addrLine = wbEl("div", null);
+    addrLine.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px;";
+    var addrInput = document.createElement("input");
+    addrInput.className = "wb-api-input wb-api-mono";
+    addrInput.value = base;
+    addrInput.spellcheck = false;
+    var addrCopy = wbEl("button", "wb-api-btn wb-api-btn-primary", "复制");
+    addrCopy.onclick = function () { wbCopy(addrInput.value.trim(), "已复制接入地址"); };
+    var addrReset = wbEl("button", "wb-api-btn", "恢复默认");
+    addrReset.onclick = function () {
+      wbSetApiBase("");
+      addrInput.value = wbApiBase();
+      wbToast("已恢复为自动推导地址");
+    };
+    addrInput.onchange = function () {
+      wbSetApiBase(addrInput.value.trim());
+      wbToast("已保存自定义地址");
+    };
+    addrLine.appendChild(addrInput);
+    addrLine.appendChild(addrCopy);
+    addrLine.appendChild(addrReset);
+    addrRow.appendChild(addrLine);
+    card.appendChild(addrRow);
+
+    // ---- 2. 端点 ----
+    var epRow = wbEl("div", "wb-api-row");
+    var epMain = wbEl("div", "wb-api-main");
+    epMain.appendChild(wbEl("div", "wb-api-label", "接口端点"));
+    epMain.appendChild(wbEl("div", "wb-api-desc", "标准 OpenAI 协议，改 base_url 即可直接替换官方端点。"));
+    epRow.appendChild(epMain);
+    var epBtns = wbEl("div", null);
+    epBtns.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
+    [["POST /v1/chat/completions", "/v1/chat/completions"],
+     ["GET /v1/models", "/v1/models"]].forEach(function (item) {
+      var b = wbEl("button", "wb-api-btn wb-api-mono", item[0]);
+      b.title = "点击复制完整地址";
+      b.onclick = function () { wbCopy(addrInput.value.trim().replace(/\/+$/, "") + item[1], "已复制 " + item[1]); };
+      epBtns.appendChild(b);
+    });
+    epRow.appendChild(epBtns);
+    card.appendChild(epRow);
+
+    // ---- 3. 运行状态 ----
+    var stRow = wbEl("div", "wb-api-row");
+    var stMain = wbEl("div", "wb-api-main");
+    stMain.appendChild(wbEl("div", "wb-api-label", "网关状态"));
+    stMain.appendChild(wbEl("div", "wb-api-desc",
+      "网关版本 " + (gw.version || "—") + " · 账号池模式 " +
+      ((accounts.mode === "manual") ? "手动指定" : "自动轮换")));
+    stRow.appendChild(stMain);
+    var stBadges = wbEl("div", null);
+    stBadges.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
+    stBadges.appendChild(wbEl("span", "wb-api-badge wb-api-badge-ok",
+      "模型 " + (models.count || 0) + " 个"));
+    stBadges.appendChild(wbEl("span", "wb-api-badge" + ((accounts.usable || 0) > 0 ? " wb-api-badge-ok" : " wb-api-badge-warn"),
+      "可用账号 " + (accounts.usable || 0) + "/" + (accounts.total || 0)));
+    stBadges.appendChild(wbEl("span", "wb-api-badge", "参与调用 " + (accounts.inPool || 0) + " 个"));
+    stRow.appendChild(stBadges);
+    card.appendChild(stRow);
+
+    // ---- 4. 密钥校验开关 ----
+    var authRow = wbEl("div", "wb-api-row");
+    var authMain = wbEl("div", "wb-api-main");
+    authMain.appendChild(wbEl("div", "wb-api-label", "强制 API 密钥校验"));
+    authMain.appendChild(wbEl("div", "wb-api-desc", data.requireKey
+      ? "已开启：调用 /v1/* 必须携带有效密钥，缺失或错误返回 401。"
+      : "未开启：任何能访问该端口的客户端都可直接调用。仅建议在纯内网环境下保持关闭。"));
+    authRow.appendChild(authMain);
+    var authToggle = wbEl("button",
+      "wb-api-btn" + (data.requireKey ? " wb-api-btn-on" : ""),
+      data.requireKey ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+    authToggle.onclick = function () {
+      authToggle.disabled = true;
+      wbApiAction("/api/api-keys/config", "PUT", { requireKey: !data.requireKey },
+        !data.requireKey ? "已开启密钥校验" : "已关闭密钥校验")
+        .then(function () { authToggle.disabled = false; });
+    };
+    authRow.appendChild(authToggle);
+    card.appendChild(authRow);
+
+    // ---- 5. 密钥列表 ----
+    var keyHead = wbEl("div", "wb-api-row");
+    var keyMain = wbEl("div", "wb-api-main");
+    keyMain.appendChild(wbEl("div", "wb-api-label", "API 密钥"));
+    keyMain.appendChild(wbEl("div", "wb-api-desc",
+      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个 · 累计调用 " + (stats.calls || 0) + " 次"
+      + " · 最近使用 " + wbTime(stats.lastUsedAt)));
+    keyHead.appendChild(keyMain);
+    var keyActions = wbEl("div", null);
+    keyActions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
+    var addKey = wbEl("button", "wb-api-btn wb-api-btn-primary", "新建密钥");
+    addKey.onclick = function () {
+      var name = window.prompt("给这个密钥起个名字（便于区分调用方，可留空）：", "");
+      if (name === null) return;
+      wbApiAction("/api/api-keys", "POST", { name: name }).then(function (res) {
+        if (res && res.key) wbCopy(res.key.key, "新密钥已生成并复制");
+      });
+    };
+    keyActions.appendChild(addKey);
+    if ((stats.total || 0) > 1) {
+      var clearKeys = wbEl("button", "wb-api-btn wb-api-btn-danger", "清空全部");
+      clearKeys.onclick = function () {
+        if (!window.confirm("确认清空全部 " + stats.total + " 个密钥？已在使用这些密钥的客户端会立即失去访问权限。")) return;
+        wbApiAction("/api/api-keys/delete-all", "POST", undefined, "已清空全部密钥");
+      };
+      keyActions.appendChild(clearKeys);
+    }
+    keyHead.appendChild(keyActions);
+    card.appendChild(keyHead);
+
+    var listRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    if (!keys.length) {
+      listRow.appendChild(wbEl("div", "wb-api-empty",
+        "还没有密钥。点「新建密钥」生成一个 —— 密钥格式为 sk-wb-…，明文保存在 /data/.wb-switch/api_keys.json（权限 0600）。"));
+    } else {
+      keys.forEach(function (k) {
+        var line = wbEl("div", "wb-api-keyrow");
+        var enabled = wbEl("span", "wb-api-badge" + (k.enabled ? " wb-api-badge-ok" : " wb-api-badge-warn"),
+          k.enabled ? "启用" : "已停用");
+        line.appendChild(enabled);
+        line.appendChild(wbEl("span", "wb-api-keyname", k.name || "未命名"));
+        line.appendChild(wbChip(k.maskedKey));
+
+        var meta = wbEl("span", "wb-api-badge", "调用 " + (k.callCount || 0) + " 次");
+        meta.title = "创建于 " + wbTime(k.createdAt) + " · 最近使用 " + wbTime(k.lastUsedAt);
+        line.appendChild(meta);
+
+        var spacer = wbEl("span", null);
+        spacer.style.cssText = "flex:1 1 auto;";
+        line.appendChild(spacer);
+
+        var copyBtn = wbEl("button", "wb-api-btn", "复制明文");
+        copyBtn.onclick = function () { wbCopy(k.key, "已复制该密钥明文"); };
+        line.appendChild(copyBtn);
+
+        var toggleBtn = wbEl("button", "wb-api-btn", k.enabled ? "停用" : "启用");
+        toggleBtn.onclick = function () {
+          wbApiAction("/api/api-keys/update", "POST", { id: k.id, enabled: !k.enabled },
+            k.enabled ? "已停用该密钥" : "已启用该密钥");
+        };
+        line.appendChild(toggleBtn);
+
+        var delBtn = wbEl("button", "wb-api-btn wb-api-btn-danger", "删除");
+        delBtn.onclick = function () {
+          if (!window.confirm("确认删除密钥「" + (k.name || "未命名") + "」？使用它的客户端会立即失去访问权限。")) return;
+          wbApiAction("/api/api-keys/delete", "POST", { id: k.id }, "已删除");
+        };
+        line.appendChild(delBtn);
+
+        listRow.appendChild(line);
+      });
+    }
+    card.appendChild(listRow);
+
+    // ---- 6. 自检 ----
+    var selfRow = wbEl("div", "wb-api-row");
+    var selfMain = wbEl("div", "wb-api-main");
+    selfMain.appendChild(wbEl("div", "wb-api-label", "连通性自检"));
+    var selfDesc = wbEl("div", "wb-api-desc",
+      "在容器内回环实测网关健康、模型清单与密钥配置，用来确认「UI 能打开但 API 调不通」这类问题。");
+    selfMain.appendChild(selfDesc);
+    var selfResult = wbEl("div", "wb-api-empty");
+    selfResult.style.display = "none";
+    selfMain.appendChild(selfResult);
+    selfRow.appendChild(selfMain);
+    var selfBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "开始自检");
+    selfBtn.onclick = function () {
+      selfBtn.disabled = true;
+      selfBtn.textContent = "检测中…";
+      selfResult.style.display = "";
+      selfResult.textContent = "正在检测…";
+      fetch("/api/gateway-selftest", { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          var lines = (res.steps || []).map(function (s) {
+            return (s.ok ? "✓ " : "✗ ") + s.name + " — " + s.detail;
+          });
+          selfResult.textContent = lines.join("\n");
+          selfResult.style.whiteSpace = "pre-wrap";
+          selfResult.style.color = res.ok ? "#15803d" : "#b91c1c";
+          wbToast(res.ok ? "自检通过" : "自检发现问题", !res.ok);
+        })
+        .catch(function () {
+          selfResult.textContent = "自检失败：无法访问代理接口。";
+          selfResult.style.color = "#b91c1c";
+          wbToast("自检失败", true);
+        })
+        .finally(function () {
+          selfBtn.disabled = false;
+          selfBtn.textContent = "重新自检";
+        });
+    };
+    selfRow.appendChild(selfBtn);
+    card.appendChild(selfRow);
+
+    // ---- 7. 调用示例 ----
+    var sampleRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    var sampleHead = wbEl("div", null);
+    sampleHead.appendChild(wbEl("div", "wb-api-label", "调用示例"));
+    sampleHead.appendChild(wbEl("div", "wb-api-desc",
+      "把 <你的密钥> 换成上面任意一个启用中的密钥即可。"));
+    sampleRow.appendChild(sampleHead);
+
+    var sampleKey = (keys.filter(function (k) { return k.enabled; })[0] || {}).key || "<你的密钥>";
+    var apiRoot = addrInput.value.trim().replace(/\/+$/, "");
+    var sampleText =
+      "curl " + apiRoot + "/chat/completions \\\n" +
+      "  -H \"Content-Type: application/json\" \\\n" +
+      "  -H \"Authorization: Bearer " + sampleKey + "\" \\\n" +
+      "  -d '{\n" +
+      "    \"model\": \"hy3\",\n" +
+      "    \"messages\": [{\"role\": \"user\", \"content\": \"你好\"}]\n" +
+      "  }'";
+    sampleRow.appendChild(wbEl("div", "wb-api-code", sampleText));
+    var sampleBar = wbEl("div", null);
+    sampleBar.style.cssText = "display:flex;gap:6px;margin-top:8px;justify-content:flex-end;";
+    var copySample = wbEl("button", "wb-api-btn", "复制示例");
+    copySample.onclick = function () { wbCopy(sampleText, "已复制调用示例"); };
+    sampleBar.appendChild(copySample);
+    var copyAll = wbEl("button", "wb-api-btn wb-api-btn-primary", "复制接入信息");
+    copyAll.onclick = function () {
+      wbCopy([
+        "WorkBuddy Switch · OpenAI 兼容 API",
+        "Base URL: " + apiRoot,
+        "端点: POST /v1/chat/completions, GET /v1/models",
+        "鉴权: Authorization: Bearer <key>" + (data.requireKey ? "（当前强制校验）" : "（当前未强制校验）"),
+        "密钥: " + (keys.filter(function (k) { return k.enabled; }).map(function (k) { return k.key; }).join(" / ") || "（尚未创建）"),
+        "可用模型: " + (models.count || 0) + " 个",
+        "账号池: " + (accounts.inPool || 0) + " 个账号参与调用"
+      ].join("\n"), "已复制完整接入信息");
+    };
+    sampleBar.appendChild(copyAll);
+    sampleRow.appendChild(sampleBar);
+    card.appendChild(sampleRow);
+
+    section.appendChild(card);
+    host.appendChild(section);
+  }
+
+  var wbApiCache = null;
+
+  function wbRefreshApi(force) {
+    if (force) wbApiCache = null;
+    var old = document.getElementById("settings-api-access");
+    if (old) old.remove();
+    injectApiAccess();
+    return wbApiCache;
+  }
+
+  function injectApiAccess() {
+    var host = wbFindSettingsHost();
+    if (!host) return;
+    if (document.getElementById("settings-api-access")) return;
+
+    function render(data) {
+      var host2 = wbFindSettingsHost();
+      if (!host2 || document.getElementById("settings-api-access")) return;
+      wbRenderApiSection(host2, data);
+    }
+
+    if (wbApiCache) { render(wbApiCache); return; }
+    fetch("/api/api-keys", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || data.error) return;
+        wbApiCache = data;
+        render(data);
+      })
+      .catch(function () {});
+  }
+
   function run() {
     initCollapse();
     sanitizeMacUI();
     enforceTitle();
     injectAccountModels();
     injectAccountPool();
+    injectApiAccess();
   }
 
   const observer = new MutationObserver(() => run());
@@ -515,7 +1141,7 @@ async def get_icon():
         with open(ICON_PATH, "rb") as f:
             content = f.read()
         return Response(content=content, media_type="image/png")
-    async with httpx.AsyncClient() as client:
+    async with _internal_client() as client:
         r = await client.get(f"{BACKEND_URL}/icon.png")
         return Response(content=r.content, media_type="image/png")
 
@@ -534,7 +1160,7 @@ GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/
 async def account_pool_get():
     """转发到网关的账号池状态（WebUI 控制台用）。"""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _internal_client(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
@@ -548,7 +1174,7 @@ async def account_pool_put(request: Request):
     """转发账号池配置更新（模式 / 启用列表 / 首选账号）。"""
     body = await request.body()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _internal_client(timeout=5.0) as client:
             r = await client.put(GATEWAY_BASE_URL + "/account-pool/config",
                                  content=body,
                                  headers={"Content-Type": "application/json"})
@@ -563,7 +1189,7 @@ async def account_pool_put(request: Request):
 async def account_pool_selections(limit: int = 50):
     """转发选账号分摊流水：各账号被分摊到的请求次数 + 最近明细。"""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _internal_client(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-pool/selections",
                                  params={"limit": limit})
             return Response(content=r.content, status_code=r.status_code,
@@ -577,13 +1203,133 @@ async def account_pool_selections(limit: int = 50):
 async def account_pool_selections_reset():
     """清空选账号流水，便于重新观测并发分摊。"""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _internal_client(timeout=5.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-pool/selections/reset")
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)}), status_code=502,
                         media_type="application/json")
+
+
+# ---------------------------------------------------------------------------
+# API 接入信息与访问密钥的转发（WebUI 设置页用）
+#
+# 这些路由必须注册在文件末尾的 catch-all 之前 —— Starlette 按注册顺序匹配，
+# 否则会被 `/{path:path}` 抢走并转发到官方后端 57890（那边没有这些接口）。
+# ---------------------------------------------------------------------------
+
+async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None):
+    """把请求转发到网关（18091）。失败返回 502 而不是让页面白屏。"""
+    try:
+        headers = {"Content-Type": "application/json"} if body else None
+        async with _internal_client(timeout=10.0) as client:
+            r = await client.request(method, GATEWAY_BASE_URL + path,
+                                     content=body, headers=headers)
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.get("/api/gateway-info")
+async def gateway_info_api():
+    """连接信息：对外地址、端点、模型/账号规模、密钥状态。"""
+    return await _forward_gateway("GET", "/gateway/info")
+
+
+@app.get("/api/api-keys")
+async def api_keys_get():
+    return await _forward_gateway("GET", "/api-keys/status")
+
+
+@app.post("/api/api-keys")
+async def api_keys_create(request: Request):
+    return await _forward_gateway("POST", "/api-keys", await request.body())
+
+
+@app.post("/api/api-keys/update")
+async def api_keys_update(request: Request):
+    return await _forward_gateway("POST", "/api-keys/update", await request.body())
+
+
+@app.post("/api/api-keys/delete")
+async def api_keys_delete(request: Request):
+    return await _forward_gateway("POST", "/api-keys/delete", await request.body())
+
+
+@app.post("/api/api-keys/delete-all")
+async def api_keys_delete_all():
+    return await _forward_gateway("POST", "/api-keys/delete-all")
+
+
+@app.put("/api/api-keys/config")
+async def api_keys_config(request: Request):
+    return await _forward_gateway("PUT", "/api-keys/config", await request.body())
+
+
+@app.post("/api/gateway-selftest")
+async def gateway_selftest():
+    """从容器内实测一次网关连通性。
+
+    浏览器无法直接访问 18091（跨源且网关无 CORS），所以自检必须由代理侧发起：
+    loopback 请求免密钥校验，正好验证「网关活着 + 模型清单可用 + 密钥配置自洽」。
+    """
+    steps = []
+    out = {"steps": steps}
+
+    async with _internal_client(timeout=8.0) as client:
+        try:
+            r = await client.get(GATEWAY_BASE_URL + "/health")
+            ok = r.status_code == 200
+            detail = f"HTTP {r.status_code}"
+            if ok:
+                try:
+                    h = r.json()
+                    out["models"] = h.get("models_count")
+                    out["requireKey"] = h.get("require_api_key")
+                    detail = f"HTTP 200 · {h.get('models_count')} 个模型 · 密钥校验{'已开启' if h.get('require_api_key') else '未开启'}"
+                except Exception:
+                    pass
+            steps.append({"name": "网关健康检查 /health", "ok": ok, "detail": detail})
+        except Exception as e:
+            steps.append({"name": "网关健康检查 /health", "ok": False, "detail": str(e)})
+
+        try:
+            r = await client.get(GATEWAY_BASE_URL + "/v1/models")
+            count = 0
+            if r.status_code == 200:
+                try:
+                    count = len((r.json() or {}).get("data") or [])
+                except Exception:
+                    count = 0
+            steps.append({
+                "name": "模型清单 /v1/models",
+                "ok": r.status_code == 200,
+                "detail": f"HTTP {r.status_code} · {count} 个模型",
+            })
+        except Exception as e:
+            steps.append({"name": "模型清单 /v1/models", "ok": False, "detail": str(e)})
+
+        try:
+            r = await client.get(GATEWAY_BASE_URL + "/api-keys/status")
+            keys = {}
+            if r.status_code == 200:
+                try:
+                    keys = (r.json() or {})
+                except Exception:
+                    keys = {}
+            require = bool(keys.get("requireKey"))
+            enabled = int((keys.get("stats") or {}).get("enabled") or 0)
+            ok = not require or enabled > 0
+            detail = ("已开启校验，可用密钥 %d 个" % enabled) if require else "未开启校验，接口开放访问"
+            steps.append({"name": "密钥配置自洽性", "ok": ok, "detail": detail})
+        except Exception as e:
+            steps.append({"name": "密钥配置自洽性", "ok": False, "detail": str(e)})
+
+    out["ok"] = all(s["ok"] for s in steps)
+    return out
 
 
 async def _fetch_gateway_catalog() -> list:
@@ -593,7 +1339,7 @@ async def _fetch_gateway_catalog() -> list:
     用哪些模型」的唯一权威来源。取不到时降级为空数组，由调用方回退到 usage。
     """
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _internal_client(timeout=5.0) as client:
             r = await client.get(GATEWAY_MODELS_URL)
             if r.status_code != 200:
                 return []
@@ -714,7 +1460,7 @@ async def proxy_all(request: Request, path: str):
     headers.pop("host", None)
     headers.pop("content-length", None)
     
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with _internal_client(timeout=60.0) as client:
         r = await client.request(
             method=request.method,
             url=url,
