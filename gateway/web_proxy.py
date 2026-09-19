@@ -1746,7 +1746,9 @@ COLLAPSE_SCRIPT = r"""
     runMain.appendChild(wbEl("div", "wb-api-label", "运行位置"));
 
     var scheme = window.location.protocol === "https:" ? "https:" : "http:";
-    var host = window.location.hostname || "localhost";
+    // 注意别用 `host` 这个名字：本函数的参数就叫 host（要往里挂节点的容器），
+    // `var` 会把它整个顶掉，函数末尾 host.appendChild 就抛异常、整块面板静默消失。
+    var hostName = window.location.hostname || "localhost";
     var consolePort = ports.console || 18090;
     var gatewayPort = ports.gateway || 18091;
 
@@ -1764,8 +1766,8 @@ COLLAPSE_SCRIPT = r"""
     }
     var dir = data.dataDir || "";
     addRow("数据目录", dir || "—", true, dir);
-    addRow("控制台", scheme + "//" + host + ":" + consolePort, false, null);
-    addRow("网关 API", scheme + "//" + host + ":" + gatewayPort + "/v1", false, null);
+    addRow("控制台", scheme + "//" + hostName + ":" + consolePort, false, null);
+    addRow("网关 API", scheme + "//" + hostName + ":" + gatewayPort + "/v1", false, null);
     runMain.appendChild(grid);
     runMain.appendChild(wbEl("div", "wb-api-desc",
       "浏览器打开「控制台」；程序调用填「网关 API」。升级不会动数据目录里的"

@@ -13,7 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v0.4.5](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.5) | 2026-09-19 | 缓存命中率不再是恒为 0（改为采用上游真实用量），版本号合并为一套，设置页「关于」重新排版 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.5.md) |
+| [v0.4.5](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.5) | 2026-09-19 | 缓存命中率不再恒为 0（改为采用上游真实用量），版本号合并为一套，设置页「关于」重新排版 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.5.md) |
 | [v0.4.4](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.4) | 2026-09-19 | 巡检探测彻底对齐真实调用，并补上「探测被拒」「凭据失效」两道跳过规则 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.4.md) |
 | [v0.4.3](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.3) | 2026-09-19 | 修复巡检误报导致的成批误禁，禁用项区分「手动 / 巡检」来源，设置页补上「关于」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.3.md) |
 | [v0.4.2](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.2) | 2026-09-19 | 模型可用性自动巡检：调不通自动禁用，恢复自动启用 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.2.md) |

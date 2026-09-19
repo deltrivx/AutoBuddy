@@ -27,9 +27,12 @@ env:
 
 jobs:
   # 本地单测。这些测试刻意不依赖 fastapi / httpx（自行 stub），因此不需要装任何包。
-  # 它们覆盖的是「错了会静默改坏用户配置」的地方 —— 模型级禁用策略、可用性巡检判定、
-  # 账号轮询与 API 鉴权。放在构建之前，保证问题镜像根本推不上去
-  # （曾有一次探测请求体形态写错，导致一轮巡检把上百个好模型成批误禁）。
+  # 它们覆盖的是「错了会静默改坏配置或让界面少一块」的地方 —— 模型级禁用策略、
+  # 可用性巡检判定、账号轮询、API 鉴权、Token 用量统计、版本号一致性，
+  # 以及 WebUI 注入面板的渲染（注入的 JS 一旦抛异常，那块面板会静默消失）。
+  # 放在构建之前，保证问题镜像根本推不上去
+  # （曾有一次探测请求体形态写错，一轮巡检把上百个好模型成批误禁；
+  #   也曾有一次 JS 变量遮蔽让「关于」面板整块不显示）。
   test:
     runs-on: ubuntu-latest
     permissions:
@@ -43,6 +46,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # WebUI 注入面板的渲染冒烟测试需要 node 跑 DOM 桩。
+      # 不显式提供的话，那个测试会「跳过」而不是失败 —— 门禁就形同虚设。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Run unit tests
         run: |
