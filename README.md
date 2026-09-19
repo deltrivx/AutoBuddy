@@ -87,6 +87,22 @@
   最后一个启用中的密钥，也不允许清空全部 —— 避免一键把自己和所有下游客户端一起关在门外。
 - **连通性自检**：一键在容器内回环实测，专门用来定位「UI 能打开但 API 调不通」。
 
+### 🩺 模型可用性巡检：调不通自动禁用，恢复自动启用
+
+手动禁用解决了「知道哪个模型坏了」的场景，但模型失效与恢复**都是静默的** ——
+坏了不会通知，恢复了也没人知道。这一版让网关定期替你试一遍。
+
+- **一键开关**：设置页可开启 / 关闭自动巡检，并设定巡检间隔（最短 5 分钟）。默认**关闭**。
+- **可按账号圈定范围**：不选即全部账号参与，也可以只勾选部分账号。
+- **三档判定，宁漏勿误**：`429` 限流、超时与网络异常一律**跳过、不改配置** ——
+  上游高峰期限流是常态，把它当故障会在高峰后留下一批被误禁的好模型。
+- **只探「用过的模型」**：默认只检测该账号实际调用过的模型，避免组合数量失控；
+  新账号无调用记录时退回内置基础清单，保证也能被覆盖。
+- **同一份策略**：巡检写入的就是手动禁用用的那一份配置，**关掉巡检后已写入的禁用项继续生效**，
+  随时可以在账号卡片上手动启用 / 重新禁用。
+- **不拖慢网关**：探测在独立线程执行，且同一时刻只允许一轮巡检，转发请求不受影响。
+- **可即时手动巡检**：面板上的「立即巡检」不改变开关状态，跑完直接回显本轮结果与变更明细。
+
 ### 🔌 全量模型 OpenAI 兼容网关
 
 - 上游全系列主流大模型与官方工作模式，全部转为标准 OpenAI 格式。
@@ -287,6 +303,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 | `GET /account-pool/status` · `PUT /account-pool/config` | 账号池状态与配置 |
 | `GET /account-pool/selections` · `POST /account-pool/selections/reset` | 并发分摊观测与清零 |
 | `GET /account-models/config` · `PUT /account-models/config` | 模型级禁用策略 |
+| `GET /model-health/config` · `PUT /model-health/config` · `GET /model-health/status` · `POST /model-health/run` | 模型可用性巡检：配置、状态与手动触发 |
 | `GET /api-keys/status` · `POST /api-keys` · `POST /api-keys/update` · `POST /api-keys/delete` · `POST /api-keys/delete-all` · `PUT /api-keys/config` | 密钥管理 |
 
 > **鉴权范围**：密钥校验只作用于 `/v1/*`。其余管理接口不拦截，它们只供本机 WebUI 与运维使用 ——
@@ -295,7 +312,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 ### 控制台接口（`18090`）
 
 控制台通过 `/api/*` 前缀转发上述管理能力，供设置页与账号卡片使用
-（如 `/api/gateway-info`、`/api/api-keys`、`/api/account-models`、`/api/gateway-selftest`）。
+（如 `/api/gateway-info`、`/api/api-keys`、`/api/account-models`、`/api/model-health`、`/api/gateway-selftest`）。
 
 ### 账号池配置
 

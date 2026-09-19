@@ -96,6 +96,11 @@ ns = {
     "Any": __import__("typing").Any,
     "set": set,
 }
+# main.py 的策略读写已改为转发 model_policy 模块（巡检与手动禁用共用一份实现），
+# 因此切片执行时必须把 model_policy 注入命名空间，否则 `MODEL_ALIAS_MAP = model_policy...` 会 NameError。
+import model_policy as _mp  # noqa: E402
+
+ns["model_policy"] = _mp
 # 抽取需要的常量与函数体
 start = src.index("DATA_DIR = Path(")
 end = src.index("def infer_owner(")
@@ -105,7 +110,8 @@ exec(compile(src[start:end], "main_slice", "exec"), ns)
 MODEL_POLICY_FILE = tmpdir / "model_policy.json"
 ns["MODEL_POLICY_FILE"] = MODEL_POLICY_FILE
 
-# 把策略函数单独取出来执行（它们依赖 DATA_DIR / MODEL_ALIAS_MAP / MODEL_POLICY_FILE）
+# 把策略函数单独取出来执行（它们是转发到 model_policy 的薄包装，
+# 这里仍按 main.py 里的字面实现执行，以验证包装函数本身没走样）
 fn_start = src.index("def _load_model_policy(")
 fn_end = src.index("def _account_id(")
 fn_ns = dict(ns)

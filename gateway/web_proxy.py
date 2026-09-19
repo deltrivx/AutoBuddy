@@ -1180,8 +1180,274 @@ COLLAPSE_SCRIPT = r"""
     if (force) wbApiCache = null;
     var old = document.getElementById("settings-api-access");
     if (old) old.remove();
+    var oldHealth = document.getElementById("settings-model-health");
+    if (oldHealth) oldHealth.remove();
     injectApiAccess();
+    injectModelHealth();
     return wbApiCache;
+  }
+
+  // ---------------------------------------------------------------------
+  // 设置页：模型可用性巡检
+  // 探测会真实向上游发请求，所以默认关闭；开启后按间隔逐个检测「账号 × 模型」，
+  // 不可用自动禁用、恢复自动启用 —— 写的都是同一份 model_policy.json。
+  // ---------------------------------------------------------------------
+  function wbRenderHealthSection(host, data) {
+    var cfg = data.config || {};
+    var runtime = data.runtime || {};
+    var accounts = data.accounts || [];
+    var last = runtime.lastResult || null;
+
+    var section = wbEl("section", "min-w-0 space-y-2.5");
+    section.id = "settings-model-health";
+    var head = wbEl("div", "px-1");
+    var h2 = wbEl("h2", "text-[13px] font-medium leading-5", "模型可用性巡检");
+    h2.id = "settings-model-health-title";
+    head.appendChild(h2);
+    section.appendChild(head);
+    section.setAttribute("aria-labelledby", "settings-model-health-title");
+
+    var card = wbEl("div", "wb-api-card");
+
+    // ---- 1. 总开关 ----
+    var swRow = wbEl("div", "wb-api-row");
+    var swMain = wbEl("div", "wb-api-main");
+    swMain.appendChild(wbEl("div", "wb-api-label", "自动巡检"));
+    swMain.appendChild(wbEl("div", "wb-api-desc",
+      "开启后每隔一段时间检测账号的模型可用性 —— 调不通的自动禁用，恢复的自动启用。"
+      + "关掉后之前自动写入的禁用项依然生效，仍可在账号卡片上手动禁用 / 启用。"));
+    swRow.appendChild(swMain);
+    var swBtn = wbEl("button",
+      "wb-api-btn" + (cfg.enabled ? " wb-api-btn-on" : ""),
+      cfg.enabled ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+    swBtn.onclick = function () {
+      swBtn.disabled = true;
+      wbApiAction("/api/model-health", "PUT", { enabled: !cfg.enabled },
+        !cfg.enabled ? "已开启自动巡检" : "已关闭自动巡检")
+        .then(function () { swBtn.disabled = false; });
+    };
+    swRow.appendChild(swBtn);
+    card.appendChild(swRow);
+
+    // ---- 2. 巡检间隔 ----
+    var itvRow = wbEl("div", "wb-api-row");
+    var itvMain = wbEl("div", "wb-api-main");
+    itvMain.appendChild(wbEl("div", "wb-api-label", "巡检间隔"));
+    itvMain.appendChild(wbEl("div", "wb-api-desc",
+      "两次巡检之间等待多久，最短 " + (data.minIntervalMinutes || 5) + " 分钟。"
+      + "每个组合都要发一次真实请求，间隔太短会产生可观的上游调用量。"));
+    itvRow.appendChild(itvMain);
+    var itvWrap = document.createElement("div");
+    itvWrap.style.cssText = "display:flex;align-items:center;gap:6px;flex:0 0 auto;";
+    var itvInput = document.createElement("input");
+    itvInput.className = "wb-api-input wb-api-mono";
+    itvInput.style.cssText = "width:78px;flex:0 0 auto;text-align:center;";
+    itvInput.type = "number";
+    itvInput.min = String(data.minIntervalMinutes || 5);
+    itvInput.value = String(cfg.intervalMinutes || 60);
+    var itvSave = wbEl("button", "wb-api-btn", "保存");
+    itvSave.onclick = function () {
+      var v = parseInt(itvInput.value, 10);
+      if (isNaN(v)) { wbToast("请输入分钟数", true); return; }
+      itvSave.disabled = true;
+      wbApiAction("/api/model-health", "PUT", { intervalMinutes: v }, "已保存巡检间隔")
+        .then(function () { itvSave.disabled = false; });
+    };
+    itvWrap.appendChild(itvInput);
+    itvWrap.appendChild(wbEl("span", "wb-api-badge", "分钟"));
+    itvWrap.appendChild(itvSave);
+    itvRow.appendChild(itvWrap);
+    card.appendChild(itvRow);
+
+    // ---- 3. 账号范围 ----
+    var scopeRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    var scopeMain = wbEl("div", "wb-api-main");
+    scopeMain.appendChild(wbEl("div", "wb-api-label", "巡检账号范围"));
+    scopeMain.appendChild(wbEl("div", "wb-api-desc",
+      "不勾选任何账号 = 全部账号参与巡检。勾选后只有被选中的账号会被探测。"));
+    scopeRow.appendChild(scopeMain);
+
+    var picked = {};
+    (cfg.accountIds || []).forEach(function (id) { picked[String(id)] = true; });
+    var listWrap = wbEl("div", null);
+    listWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;";
+
+    accounts.forEach(function (a) {
+      var id = String(a.id);
+      var on = !(cfg.accountIds || []).length || picked[id];
+      var tag = wbEl("button",
+        "wb-am-tag wb-am-tag-click" + (on ? " wb-am-tag-used" : ""),
+        (a.name || id) + (a.variant === "ai" ? " · 国际版" : " · 国内版"));
+      tag.title = on ? "已参与巡检，点击排除" : "未参与巡检，点击加入";
+      tag.onclick = function () {
+        var all = (cfg.accountIds || []).slice();
+        var isAll = all.length === 0;
+        var next;
+        if (isAll) {
+          // 从「全部」切到「显式列表」：先展开成全部账号，再去掉当前这个
+          next = accounts.map(function (x) { return String(x.id); })
+            .filter(function (x) { return x !== id; });
+        } else if (all.indexOf(id) >= 0) {
+          next = all.filter(function (x) { return x !== id; });
+        } else {
+          next = all.concat([id]);
+        }
+        // 显式选满全部账号时收敛回空数组，语义与「全部」等价
+        if (next.length === accounts.length) next = [];
+        wbApiAction("/api/model-health", "PUT", { accountIds: next }, "已更新巡检范围");
+      };
+      listWrap.appendChild(tag);
+    });
+    if (!accounts.length) {
+      listWrap.appendChild(wbEl("div", "wb-api-empty", "还没有账号。"));
+    }
+    scopeRow.appendChild(listWrap);
+
+    var scopeHint = wbEl("div", "wb-api-desc");
+    scopeHint.style.marginTop = "8px";
+    scopeHint.textContent = (cfg.accountIds || []).length
+      ? "当前：指定 " + cfg.accountIds.length + " 个账号"
+      : "当前：全部 " + accounts.length + " 个账号";
+    scopeRow.appendChild(scopeHint);
+    card.appendChild(scopeRow);
+
+    // ---- 4. 自动启用 ----
+    var aeRow = wbEl("div", "wb-api-row");
+    var aeMain = wbEl("div", "wb-api-main");
+    aeMain.appendChild(wbEl("div", "wb-api-label", "检测到可用时自动启用"));
+    aeMain.appendChild(wbEl("div", "wb-api-desc",
+      "开启时：模型恢复可用就自动移出禁用列表。关闭时只做「自动禁用」，"
+      + "恢复可用不会自动放开，需要你手动启用。"));
+    aeRow.appendChild(aeMain);
+    var aeBtn = wbEl("button",
+      "wb-api-btn" + (cfg.autoEnable ? " wb-api-btn-on" : ""),
+      cfg.autoEnable ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+    aeBtn.onclick = function () {
+      aeBtn.disabled = true;
+      wbApiAction("/api/model-health", "PUT", { autoEnable: !cfg.autoEnable },
+        !cfg.autoEnable ? "已开启自动启用" : "已关闭自动启用")
+        .then(function () { aeBtn.disabled = false; });
+    };
+    aeRow.appendChild(aeBtn);
+    card.appendChild(aeRow);
+
+    // ---- 5. 探测范围口径 ----
+    var umRow = wbEl("div", "wb-api-row");
+    var umMain = wbEl("div", "wb-api-main");
+    umMain.appendChild(wbEl("div", "wb-api-label", "只探测用过的模型"));
+    umMain.appendChild(wbEl("div", "wb-api-desc",
+      "开启时只检测该账号实际调用过的模型（新账号无记录时退回基础清单）；"
+      + "关闭时会探测全部已知模型 —— 组合数量会大很多，谨慎使用。"));
+    umRow.appendChild(umMain);
+    var umBtn = wbEl("button",
+      "wb-api-btn" + (cfg.onlyUsedModels ? " wb-api-btn-on" : ""),
+      cfg.onlyUsedModels ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+    umBtn.onclick = function () {
+      umBtn.disabled = true;
+      wbApiAction("/api/model-health", "PUT", { onlyUsedModels: !cfg.onlyUsedModels },
+        !cfg.onlyUsedModels ? "已收窄探测范围" : "已放开探测范围")
+        .then(function () { umBtn.disabled = false; });
+    };
+    umRow.appendChild(umBtn);
+    card.appendChild(umRow);
+
+    // ---- 6. 立即巡检 + 上次结果 ----
+    var runRow = wbEl("div", "wb-api-row");
+    var runMain = wbEl("div", "wb-api-main");
+    runMain.appendChild(wbEl("div", "wb-api-label", "立即巡检一次"));
+    var runDesc = wbEl("div", "wb-api-desc");
+    if (runtime.running) {
+      runDesc.textContent = "正在巡检中…";
+    } else if (runtime.lastError) {
+      runDesc.textContent = "上次巡检出错：" + runtime.lastError;
+    } else if (last) {
+      var c = last.counts || {};
+      runDesc.textContent = "上次巡检 " + wbTime(last.checkedAt)
+        + " · 共 " + (last.combos || 0) + " 个组合（" + (last.accounts || 0) + " 个账号）"
+        + " · 可用 " + (c.available || 0)
+        + " / 不可用 " + (c.unavailable || 0)
+        + " / 跳过 " + (c.transient || 0);
+      if ((last.disabled || []).length) {
+        runDesc.textContent += " · 新禁用 " + last.disabled.length + " 项";
+      }
+      if ((last.enabled || []).length) {
+        runDesc.textContent += " · 新启用 " + last.enabled.length + " 项";
+      }
+    } else {
+      runDesc.textContent = "还没有执行过巡检。点右边按钮可以立刻跑一轮，"
+        + "不改变上面的开关状态。";
+    }
+    runMain.appendChild(runDesc);
+    runRow.appendChild(runMain);
+
+    var runBtn = wbEl("button", "wb-api-btn wb-api-btn-primary",
+      runtime.running ? "巡检中…" : "立即巡检");
+    if (runtime.running) runBtn.disabled = true;
+    runBtn.onclick = function () {
+      runBtn.disabled = true;
+      runBtn.textContent = "巡检中…";
+      wbToast("已开始巡检，逐个组合探测中，请稍候…");
+      fetch("/api/model-health/run", { method: "POST", body: "{}" })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          var out = res && res.result ? res.result : res;
+          if (!out || out.error) {
+            wbToast("巡检失败：" + ((out && out.error) || "未知错误"), true);
+            return;
+          }
+          var cc = out.counts || {};
+          var msg = "巡检完成 · 可用 " + (cc.available || 0)
+            + " / 不可用 " + (cc.unavailable || 0)
+            + " / 跳过 " + (cc.transient || 0);
+          if ((out.disabled || []).length) msg += " · 新禁用 " + out.disabled.length + " 项";
+          if ((out.enabled || []).length) msg += " · 新启用 " + out.enabled.length + " 项";
+          wbToast(msg);
+        })
+        .catch(function (e) { wbToast("巡检请求失败：" + e, true); })
+        .then(function () {
+          runBtn.disabled = false;
+          runBtn.textContent = "立即巡检";
+          wbApiCache = null;
+          refresh();
+        });
+    };
+    runRow.appendChild(runBtn);
+    card.appendChild(runRow);
+
+    // ---- 7. 最近变更明细（有才显示）----
+    if (last && ((last.disabled || []).length || (last.enabled || []).length)) {
+      var logRow = wbEl("div", "wb-api-row wb-api-row-stack");
+      var logMain = wbEl("div", "wb-api-main");
+      logMain.appendChild(wbEl("div", "wb-api-label", "上次巡检的变更"));
+      logMain.appendChild(wbEl("div", "wb-api-desc",
+        "自动禁用：" + ((last.disabled || []).join("、") || "无")
+        + "　自动启用：" + ((last.enabled || []).join("、") || "无")));
+      logRow.appendChild(logMain);
+      card.appendChild(logRow);
+    }
+
+    section.appendChild(card);
+    host.appendChild(section);
+  }
+
+  function injectModelHealth() {
+    var host = wbFindSettingsHost();
+    if (!host) return;
+    if (document.getElementById("settings-model-health")) return;
+
+    function render(data) {
+      var host2 = wbFindSettingsHost();
+      if (!host2 || document.getElementById("settings-model-health")) return;
+      wbRenderHealthSection(host2, data);
+    }
+
+    fetch("/api/model-health", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || data.error) return;
+        render(data);
+      })
+      .catch(function () {});
   }
 
   function injectApiAccess() {
@@ -1213,6 +1479,7 @@ COLLAPSE_SCRIPT = r"""
     injectAccountModels();
     injectAccountPool();
     injectApiAccess();
+    injectModelHealth();
   }
 
   const observer = new MutationObserver(() => run());
@@ -1392,6 +1659,38 @@ async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None)
         async with _internal_client(timeout=10.0) as client:
             r = await client.request(method, GATEWAY_BASE_URL + path,
                                      content=body, headers=headers)
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.get("/api/model-health")
+async def model_health_get():
+    """巡检配置 + 可选账号 + 上次运行状态（设置页面板数据源）。"""
+    return await _forward_gateway("GET", "/model-health/config")
+
+
+@app.put("/api/model-health")
+async def model_health_put(request: Request):
+    """更新巡检配置（开关 / 间隔 / 账号范围 / 自动启用）。"""
+    return await _forward_gateway("PUT", "/model-health/config", await request.body())
+
+
+@app.post("/api/model-health/run")
+async def model_health_run(request: Request):
+    """立即执行一轮巡检。
+
+    探测是逐个账号 × 模型发真实请求，可能耗时较久，因此这里放宽超时
+    （默认 5s 的内部客户端不够用）。
+    """
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=300.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/model-health/run",
+                                  content=body or b"{}",
+                                  headers={"Content-Type": "application/json"})
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:

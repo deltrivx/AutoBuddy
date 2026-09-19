@@ -22,18 +22,26 @@ try:
 except ImportError:
     import api_keys
 
+try:
+    from gateway import model_policy, model_health
+except ImportError:
+    import model_policy
+    import model_health
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """容器内的账号轮询随应用启停（替代已弃用的 on_event）。"""
+    """容器内的账号轮询与模型巡检随应用启停（替代已弃用的 on_event）。"""
     task = asyncio.create_task(account_rotate_loop())
+    health_task = asyncio.create_task(model_health_loop())
     try:
         yield
     finally:
         task.cancel()
+        health_task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.5.0", lifespan=lifespan)
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.6.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
@@ -82,16 +90,8 @@ BASE_MODELS = [
     {"id": "deep-model", "name": "Deep (深度推理分析)", "owned_by": "tencent-codebuddy"}
 ]
 
-MODEL_ALIAS_MAP = {
-    "hy4": "hy3",
-    "hunyuan-4": "hy3",
-    "hunyuan": "hy3",
-    "deepseek-chat": "deepseek-v3",
-    "kimi": "kimi-k3",
-    "gpt-4o": "gpt-5.4",
-    "gpt-4": "gpt-5.4",
-    "gpt-4o-mini": "gpt-5.6-luna",
-}
+# 模型别名表由 model_policy 统一维护（禁用别名要连带挡住目标模型）。
+MODEL_ALIAS_MAP = model_policy.MODEL_ALIAS_MAP
 
 # ---------------------------------------------------------------------------
 # 模型自动发现
@@ -255,58 +255,25 @@ def _save_pool_config(config: Dict[str, Any]) -> Dict[str, Any]:
 # 个别账号的个别模型可能调不通。停用整个账号损失太大，需要的粒度是
 # 「这个账号的这一个模型不参与轮询」，其余模型照常。
 #
-# 存储结构：``{"<accountId>": ["<model>", ...]}``，只记被禁用的模型，
-# 未列出的模型一律视为可用 —— 这样新增模型天然是可用态，不需要迁移。
+# 策略的读写实现已抽到 model_policy 模块 —— 因为「模型可用性自动巡检」
+# 也要读写同一份策略，两处各写一份早晚会漂移。这里只做转发。
 # ---------------------------------------------------------------------------
 
 def _load_model_policy() -> Dict[str, List[str]]:
-    """读取模型禁用策略；文件缺失或损坏时返回空策略，绝不抛异常。"""
-    try:
-        if MODEL_POLICY_FILE.exists():
-            with open(MODEL_POLICY_FILE, "r", encoding="utf-8") as f:
-                value = json.load(f) or {}
-            if isinstance(value, dict):
-                policy: Dict[str, List[str]] = {}
-                for acc_id, models in value.items():
-                    if isinstance(models, list):
-                        policy[str(acc_id)] = sorted({str(m) for m in models if m})
-                return policy
-    except Exception as e:
-        print(f"[model-policy] failed to load policy: {e}", flush=True)
-    return {}
+    return model_policy.load_policy()
 
 
 def _save_model_policy(policy: Dict[str, List[str]]) -> Dict[str, List[str]]:
-    """整份重写 + 原子替换。写盘失败一律吞掉，绝不能把 API 请求打死。"""
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = MODEL_POLICY_FILE.with_name(MODEL_POLICY_FILE.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(policy, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, MODEL_POLICY_FILE)
-    except Exception as e:
-        print(f"[model-policy] failed to persist policy: {e}", flush=True)
-    return policy
+    return model_policy.save_policy(policy)
 
 
 def _disabled_models_for(account_id: Optional[str], policy: Optional[Dict[str, List[str]]] = None) -> set:
-    """返回某账号被禁用的模型集合（已归一到别名目标，避免 hy4 / hy3 绕过禁用）。"""
-    if not account_id:
-        return set()
-    pol = policy if policy is not None else _load_model_policy()
-    raw = pol.get(str(account_id)) or []
-    # 用户可能禁用别名（hy4），但上游实际收到的是目标模型（hy3）。
-    # 这里把两侧都归一化，保证「禁用 hy4」也能挡住直接请求 hy3 的调用方。
-    targets = {MODEL_ALIAS_MAP.get(m, m) for m in raw}
-    return targets | set(raw)
+    return model_policy.disabled_models_for(account_id, policy)
 
 
 def _model_is_disabled(account_id: Optional[str], model: Optional[str],
                        policy: Optional[Dict[str, List[str]]] = None) -> bool:
-    if not model:
-        return False
-    return str(model) in _disabled_models_for(account_id, policy) \
-        or MODEL_ALIAS_MAP.get(str(model), str(model)) in _disabled_models_for(account_id, policy)
+    return model_policy.model_is_disabled(account_id, model, policy)
 
 
 def _account_id(acc: Dict[str, Any]) -> Optional[str]:
@@ -628,7 +595,7 @@ def update_account_models_config(payload: Dict[str, Any]):
 # Authorization: Bearer <key> 或 x-api-key: <key>。
 # ---------------------------------------------------------------------------
 
-GATEWAY_VERSION = "1.5.0"
+GATEWAY_VERSION = "1.6.0"
 
 # 容器内的 WebUI 代理与网关同容器，靠 loopback 访问。容器外的请求经 docker NAT
 # 进来源地址是网桥地址而非 127.0.0.1，所以放行 loopback 不会把外部请求放进来。
@@ -1186,6 +1153,201 @@ def rotate_status():
 @app.post("/rotate/run")
 def rotate_run():
     return rotate_once()
+
+
+# ---------------------------------------------------------------------------
+# 模型可用性自动巡检
+#
+# 需求来源（用户 2026-09-19）：在设置里能开关一个轮询，开启后每隔一段时间检测
+# 每个账号（或指定账号）对应模型的可用性，不可用就自动禁用、恢复可用就自动启用；
+# 关掉之后仍然可以手动禁用。
+#
+# 实现要点：
+# - 巡检读写的就是 model_policy.json —— 与手动禁用是同一份策略，
+#   所以「关掉巡检后手动禁用照常有效」，自动写入的禁用项也不会凭空消失。
+# - 探测会真实发起一次极小的上游请求，因此**默认关闭**，且默认只探测
+#   「该账号调用过的模型 + 内置基础清单」，避免一上来就把上游打爆。
+# - 限流（429）与网络异常计为 transient，**不参与自动禁用** ——
+#   否则高峰期巡检会把好模型全禁掉。
+# ---------------------------------------------------------------------------
+
+_HEALTH_RUNTIME: Dict[str, Any] = {
+    "running": False,
+    "lastRunAt": None,
+    "lastResult": None,
+    "lastError": None,
+}
+# 同一时刻只允许一轮巡检：手动「立即巡检」与后台定时轮次可能撞车，
+# 并发跑会重复探测同一个组合，还会让两轮各自读到的策略互相覆盖。
+_HEALTH_RUN_LOCK = threading.Lock()
+
+
+def _used_models_by_account() -> Dict[str, set]:
+    """按账号聚合「调用过哪些模型」，供 onlyUsedModels 收窄探测范围。
+
+    数据源是网关自己的 token 流水（``token_stats_logs.json``），
+    它带 ``accountId``，能精确归因；官方 usage 缓存只对当前账号返回明细，不适用。
+    """
+    log_file = DATA_DIR / "token_stats_logs.json"
+    if not log_file.exists():
+        return {}
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(records, list):
+        return {}
+
+    result: Dict[str, set] = {}
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        acc = r.get("accountId")
+        model = r.get("model")
+        if acc and model:
+            result.setdefault(str(acc), set()).add(str(model))
+    return result
+
+
+def _base_model_ids() -> List[str]:
+    """内置基础模型清单（不含自动发现的），作为「新账号还没调用记录」时的兜底范围。"""
+    return [str(m["id"]) for m in BASE_MODELS if m.get("id")]
+
+
+def _health_base_url(variant: str) -> str:
+    return AI_BASE_URL if variant == "ai" else CN_BASE_URL
+
+
+def health_config_snapshot() -> Dict[str, Any]:
+    cfg = model_health.load_config()
+    accounts = _load_accounts()
+    wanted = set(cfg.get("accountIds") or [])
+    selected = [
+        {
+            "id": str(_account_id(a)),
+            "name": _account_label(a),
+            "variant": a.get("variant", "ai"),
+        }
+        for a in accounts
+        if _account_id(a) and (not wanted or str(_account_id(a)) in wanted)
+    ]
+    return {
+        "ok": True,
+        "config": cfg,
+        "accounts": [
+            {"id": str(_account_id(a)), "name": _account_label(a), "variant": a.get("variant", "ai")}
+            for a in accounts if _account_id(a)
+        ],
+        "activeAccounts": len(selected),
+        "intervalMinutes": cfg.get("intervalMinutes"),
+        "minIntervalMinutes": model_health.MIN_INTERVAL_MINUTES,
+        "runtime": dict(_HEALTH_RUNTIME),
+    }
+
+
+@app.get("/model-health/config")
+def model_health_config():
+    """返回巡检配置、可选账号清单与上次运行状态。"""
+    return health_config_snapshot()
+
+
+@app.put("/model-health/config")
+def update_model_health_config(payload: Dict[str, Any]):
+    """更新巡检配置（只覆盖显式给出的字段）。"""
+    model_health.merge_config(payload or {})
+    return health_config_snapshot()
+
+
+@app.get("/model-health/status")
+def model_health_status():
+    return {
+        "ok": True,
+        "config": model_health.load_config(),
+        "runtime": dict(_HEALTH_RUNTIME),
+        "disabledTotal": model_policy.disabled_total(),
+    }
+
+
+@app.post("/model-health/run")
+def model_health_run(payload: Optional[Dict[str, Any]] = None):
+    """立即执行一轮巡检（不改变开关状态）。
+
+    请求体可临时覆盖本轮参数（如只探测某几个账号），便于先小范围试跑。
+    """
+    overrides = payload or {}
+    result = run_model_health_check(overrides=overrides if isinstance(overrides, dict) else None)
+    return {"ok": True, "result": result}
+
+
+def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """执行一轮巡检并记录运行状态。任何异常都不向上抛，只记录到 lastError。
+
+    并发调用会被直接拒绝：手动「立即巡检」与后台定时轮次可能同时到达，
+    没有互斥就会双倍消耗上游额度，还会让两轮各自读到的策略互相覆盖。
+    """
+    if not _HEALTH_RUN_LOCK.acquire(blocking=False):
+        return {"error": "已有巡检正在进行，请稍后再试", "skipped": True}
+    try:
+        cfg = model_health.load_config()
+        if overrides:
+            merged = dict(cfg)
+            for key in ("accountIds", "onlyUsedModels", "autoEnable"):
+                if key in overrides:
+                    merged[key] = overrides[key]
+            cfg = model_health._coerce_config(merged)
+
+        _HEALTH_RUNTIME["running"] = True
+        try:
+            raw = model_health.run_round(
+                accounts=_load_accounts(),
+                config=cfg,
+                client_factory=lambda: httpx.Client(timeout=30.0),
+                base_url_for=_health_base_url,
+                used_models=_used_models_by_account(),
+                base_models=_base_model_ids(),
+            )
+            summary = model_health.summarize(raw)
+            summary["reports"] = raw.get("reports", [])
+            _HEALTH_RUNTIME["lastRunAt"] = summary.get("checkedAt")
+            _HEALTH_RUNTIME["lastResult"] = model_health.summarize(raw)
+            _HEALTH_RUNTIME["lastError"] = None
+            return summary
+        except Exception as e:
+            _HEALTH_RUNTIME["lastError"] = f"{type(e).__name__}: {e}"
+            print(f"[health] run failed: {e}", flush=True)
+            return {"error": _HEALTH_RUNTIME["lastError"]}
+        finally:
+            _HEALTH_RUNTIME["running"] = False
+    finally:
+        _HEALTH_RUN_LOCK.release()
+
+
+async def model_health_loop() -> None:
+    """按配置间隔执行巡检。配置改成关闭时，下一轮自动跳过（不退出循环）。
+
+    巡检本身是同步阻塞的（几十上百次 HTTP 往返），必须丢到线程里跑，
+    否则会把事件循环卡死 —— 巡检期间所有转发请求都会一起停摆。
+    """
+    print("[health] model availability check loop started")
+    while True:
+        try:
+            cfg = model_health.load_config()
+            interval = int(cfg.get("intervalMinutes") or model_health.DEFAULT_INTERVAL_MINUTES)
+            if cfg.get("enabled"):
+                result = await asyncio.to_thread(run_model_health_check)
+                counts = (result or {}).get("counts") or {}
+                print(f"[health] round done: combos={(result or {}).get('combos')} "
+                      f"available={counts.get('available')} "
+                      f"unavailable={counts.get('unavailable')} "
+                      f"transient={counts.get('transient')}", flush=True)
+            # 关闭状态也要按间隔轮询配置变更，否则改完开关要等整整一个周期才生效。
+            await asyncio.sleep(interval * 60)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[health] loop error: {e}", flush=True)
+            await asyncio.sleep(60)
 
 if __name__ == "__main__":
     import uvicorn

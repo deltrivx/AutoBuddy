@@ -45,6 +45,11 @@ ns = {
     "time": __import__("time"),
     "Counter": __import__("collections").Counter,
 }
+# main.py 已把策略读写抽到 model_policy 模块（巡检与手动禁用共用），
+# 切片执行常量区时会引用到 model_policy，必须注入命名空间。
+import model_policy as _mp  # noqa: E402
+
+ns["model_policy"] = _mp
 ns["ACCOUNT_POOL_FILE"] = tmp / "account_pool_config.json"
 ns["SELECTION_LOG_FILE"] = tmp / "selection_logs.json"
 ns["MODEL_POLICY_FILE"] = tmp / "model_policy.json"
