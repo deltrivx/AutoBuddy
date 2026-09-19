@@ -1,0 +1,23 @@
+# 统一按 LF 存储与检出。
+#
+# 原因：Unraid 容器模板（unraid/*.xml）、docker-compose.yml、icon.png 等文件会作为
+# Release 产物上传。Windows 上 core.autocrlf=true 会把检出的副本转成 CRLF，
+# 导致「仓库里的文件」与「Release 附件」字节不一致，SHA256SUMS 也就对不上仓库内容，
+# 对着仓库核验的人会以为产物被篡改过。
+#
+# 固定为 LF 后，checkout 出来的字节与仓库内容完全一致，产物可直接与仓库互校。
+
+* text=auto eol=lf
+
+# 二进制文件不做任何换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.gz binary
+*.tgz binary
