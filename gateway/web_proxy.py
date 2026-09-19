@@ -172,6 +172,43 @@ COLLAPSE_SCRIPT = r"""
     color: var(--primary, #1d4ed8);
     font-weight: 600;
   }
+  /* 模型标签可点击：点一下禁用该模型对该账号的调用，再点恢复。
+     默认态刻意不加边框/下划线，避免一排标签看起来像按钮墙；
+     只有悬停与键盘聚焦时才显形，暗示「这是可以点的」。 */
+  .wb-am-tag-click {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+  }
+  .wb-am-tag-click:hover {
+    box-shadow: inset 0 0 0 1px rgba(120, 120, 120, 0.55);
+  }
+  .wb-am-tag-click:focus-visible {
+    outline: 2px solid rgba(59, 130, 246, 0.65);
+    outline-offset: 1px;
+  }
+  /* 禁用态：压暗 + 删除线。用「灰掉」而不是「红掉」——
+     红色读起来像出错告警，而这里是用户主动的选择，不是故障。 */
+  .wb-am-tag-off {
+    background: rgba(120, 120, 120, 0.10);
+    color: var(--muted-foreground, #9ca3af);
+    text-decoration: line-through;
+    font-weight: 400;
+  }
+  .wb-am-tag-off:hover {
+    box-shadow: inset 0 0 0 1px rgba(120, 120, 120, 0.35);
+  }
+  /* 被禁用的模型数：让用户在折叠的卡片上也能感知「这里动过手」 */
+  .wb-am-offcount {
+    font-size: 10px;
+    line-height: 1.7;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px dashed rgba(120, 120, 120, 0.45);
+    color: var(--muted-foreground, #6b7280);
+    margin-left: 6px;
+    font-variant-numeric: tabular-nums;
+  }
   /* ---------------- 设置页：API 接入面板 ---------------- */
   .wb-api-card {
     display: flex;
@@ -422,9 +459,65 @@ COLLAPSE_SCRIPT = r"""
 
   var wbModelsCache = null;
 
+  // 本地点按后需要立刻重绘，但重新拉一次 /api/account-models 会有可见延迟。
+  // 这里在内存里维护一份「账号 -> 禁用模型集合」，点一下就地改、就地重绘，
+  // 网络请求只负责落盘，不参与渲染，点按手感才是即时的。
+  var wbModelPolicy = {};
+
+  function wbPolicySet(accountId) {
+    if (!wbModelPolicy[accountId]) wbModelPolicy[accountId] = {};
+    return wbModelPolicy[accountId];
+  }
+
+  function wbIsModelDisabled(accountId, model) {
+    var set = wbModelPolicy[accountId];
+    return !!(set && set[model]);
+  }
+
+  function wbToggleModel(accountId, model, done) {
+    var next = !wbIsModelDisabled(accountId, model);
+    var set = wbPolicySet(accountId);
+    if (next) { set[model] = true; } else { delete set[model]; }
+
+    fetch("/api/account-models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: accountId, model: model, disabled: next })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, body: body || {} };
+        });
+      })
+      .then(function (res) {
+        if (!res.ok || res.body.ok === false) {
+          // 落盘失败就把内存里的乐观改动回滚，否则界面会显示一个并未生效的状态。
+          if (next) { delete wbPolicySet(accountId)[model]; }
+          else { wbPolicySet(accountId)[model] = true; }
+          var d = res.body.detail;
+          wbToast(typeof d === "string" && d ? d : "操作失败，请重试", true);
+          if (done) done(false);
+          return;
+        }
+        wbModelPolicy[accountId] = {};
+        (res.body.disabledModels || []).forEach(function (m) { wbModelPolicy[accountId][m] = true; });
+        wbToast(next ? ("已禁用 " + model + " · 不再对该账号轮询") : ("已恢复 " + model));
+        if (done) done(true);
+      })
+      .catch(function () {
+        if (next) { delete wbPolicySet(accountId)[model]; }
+        else { wbPolicySet(accountId)[model] = true; }
+        wbToast("请求失败，请刷新页面后重试", true);
+        if (done) done(false);
+      });
+  }
+
   function injectAccountModels() {
     // 在每个账号卡片下方动态插入「已使用模型」标签。
     // 数据来自官方 usage 记录（按 accountId + model 聚合），不硬编码模型清单。
+    //
+    // 每个标签可点击：点一下把该模型对该账号禁用（不参与轮询），再点恢复。
+    // 「可用 / 已用 / 已禁用」三态互斥，已禁用优先于已用 —— 用户主动关闭是更强的意图。
     var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
     if (!cards.length) return;
 
@@ -455,6 +548,9 @@ COLLAPSE_SCRIPT = r"""
         (entry.used || []).forEach(function (m) { used[m] = true; });
         if (!models.length) return;
 
+        // 该卡片的账号 id：取自后端，避免用昵称反查导致的错配。
+        var accountId = entry.id || null;
+
         var box = document.createElement("div");
         box.className = "wb-am-box";
 
@@ -464,26 +560,65 @@ COLLAPSE_SCRIPT = r"""
         // 模型是否被调用过，由标签高亮（wb-am-tag-used）表达即可 —— 用户 2026-09-19 反馈。
         var title = document.createElement("div");
         title.className = "wb-am-title";
-        title.textContent = "可用模型 · " + models.length;
+
+        var titleText = document.createElement("span");
+        titleText.textContent = "可用模型 · " + models.length;
+        title.appendChild(titleText);
+
+        var offCount = 0;
+        models.forEach(function (m) {
+          if (accountId && wbIsModelDisabled(accountId, m)) offCount += 1;
+        });
+        if (offCount) {
+          var badge = document.createElement("span");
+          badge.className = "wb-am-offcount";
+          badge.textContent = "已禁用 " + offCount;
+          title.appendChild(badge);
+        }
 
         var usage = entry.usage || {};
         var list = document.createElement("div");
         list.className = "wb-am-list";
         models.forEach(function (m) {
+          var off = accountId ? wbIsModelDisabled(accountId, m) : false;
           var tag = document.createElement("span");
-          tag.className = used[m] ? "wb-am-tag wb-am-tag-used" : "wb-am-tag";
+          // 已禁用优先：禁用态压掉「已用」高亮，否则用户看不到自己刚点掉的那个。
+          tag.className = (off ? "wb-am-tag wb-am-tag-off" : (used[m] ? "wb-am-tag wb-am-tag-used" : "wb-am-tag"))
+            + (accountId ? " wb-am-tag-click" : "");
           tag.textContent = m;
           var stat = usage[m];
+          var tip = [];
+          if (off) tip.push("已禁用：该账号不再被分配到 " + m);
           if (stat) {
             // 只留「用量」类信息（Token / 积分），**不再显示调用次数**。
             // 调用次数是账号维度的指标，只保留在账号池条上的「已调用 N 次」一处。
-            var parts = [];
-            if (stat.tokens) parts.push("约 " + stat.tokens + " Token");
-            if (stat.credit != null) parts.push("积分 " + Math.round(stat.credit * 100) / 100);
-            if (parts.length) tag.title = parts.join(" · ");
-          } else if (used[m]) {
-            tag.title = "该账号用过此模型";
+            if (stat.tokens) tip.push("约 " + stat.tokens + " Token");
+            if (stat.credit != null) tip.push("积分 " + Math.round(stat.credit * 100) / 100);
+          } else if (used[m] && !off) {
+            tip.push("该账号用过此模型");
           }
+          if (accountId) {
+            tip.push(off ? "点击恢复" : "点击禁用（不再对该账号轮询）");
+            tag.onclick = function () {
+              if (tag.dataset.wbBusy === "1") return;
+              tag.dataset.wbBusy = "1";
+              wbToggleModel(accountId, m, function () {
+                // 就地重绘：只清掉本卡的模型区，用缓存重画（不再打一次网络请求），
+                // 点按反馈才是即时的。缓存里的 updated 状态由 wbToggleModel 维护。
+                box.remove();
+                injectAccountModels();
+              });
+            };
+            tag.setAttribute("role", "button");
+            tag.setAttribute("tabindex", "0");
+            tag.onkeydown = function (ev) {
+              if (ev.key === "Enter" || ev.key === " ") {
+                ev.preventDefault();
+                tag.onclick();
+              }
+            };
+          }
+          if (tip.length) tag.title = tip.join(" · ");
           list.appendChild(tag);
         });
 
@@ -499,7 +634,18 @@ COLLAPSE_SCRIPT = r"""
     }
     fetch("/api/account-models", { cache: "no-store" })
       .then(function (r) { return r.json(); })
-      .then(function (data) { wbModelsCache = data; render(data); })
+      .then(function (data) {
+        wbModelsCache = data;
+        // 后端下发的策略是权威值，覆盖本地乐观副本，保证刷新后状态一致。
+        var accs = (data && data.accounts) || {};
+        Object.keys(accs).forEach(function (id) {
+          if (accs[id] && accs[id].disabled) {
+            wbModelPolicy[id] = {};
+            accs[id].disabled.forEach(function (m) { wbModelPolicy[id][m] = true; });
+          }
+        });
+        render(data);
+      })
       .catch(function () {});
   }
 
@@ -1199,6 +1345,26 @@ async def account_pool_selections(limit: int = 50):
                         media_type="application/json")
 
 
+@app.put("/api/account-models")
+async def account_models_put(request: Request):
+    """转发模型级禁用的切换请求（账号 x 模型）。
+
+    前端点一下模型标签就走这里：网关那边只认 ``accountId`` + ``model`` + ``disabled``，
+    这里不做任何业务判断，纯粹转发，把错误 detail 原样带回给 UI 弹提示。
+    """
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.put(GATEWAY_BASE_URL + "/account-models/config",
+                                 content=body,
+                                 headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
 @app.post("/api/account-pool/selections/reset")
 async def account_pool_selections_reset():
     """清空选账号流水，便于重新观测并发分摊。"""
@@ -1370,6 +1536,17 @@ async def account_models_api():
     catalog = await _fetch_gateway_catalog()
     result = {"accounts": {}, "catalog": catalog, "discovered": []}
 
+    # 模型级禁用策略：由网关（18091）持有并落盘，这里读一份用于渲染禁用态。
+    # 读不到就当空策略 —— UI 显示「全部可用」，绝不因为策略读取失败而让整卡消失。
+    disabled_by_account = {}
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/account-models/config")
+            if r.status_code == 200:
+                disabled_by_account = (r.json() or {}).get("policy") or {}
+    except Exception:
+        disabled_by_account = {}
+
     agg = {}
 
     def _touch(account_id, account_name):
@@ -1433,19 +1610,29 @@ async def account_models_api():
         entry = _touch(req["accountId"], req.get("accountName"))
         entry["used"].add(req["model"])
 
+    # 兜底：某账号可能「一条调用记录都没有，但已被用户禁用过模型」。
+    # 不补进 agg 的话，它的禁用状态会静默丢失，用户会以为点了没生效。
+    for aid, models in disabled_by_account.items():
+        if aid not in agg and models:
+            _touch(str(aid), None)
+
     all_used = set()
     for aid, entry in agg.items():
         used = sorted(entry["used"])
         all_used.update(used)
         result["accounts"][aid] = {
+            "id": aid,
             "name": entry.get("name"),
             # 可用清单与网关保持一致，新账号也不会是空的
             "models": catalog or sorted(entry["used"]),
             "used": used,
             "usage": entry.get("usage") or {},
             "gatewayCalls": entry.get("gatewayCalls", 0),
+            # 该账号被用户手工禁用的模型（模型级禁用），供卡片渲染灰化删除线状态
+            "disabled": disabled_by_account.get(str(aid)) or [],
         }
     result["discovered"] = sorted(all_used)
+    result["disabledTotal"] = sum(len(v) for v in disabled_by_account.values())
     return result
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])

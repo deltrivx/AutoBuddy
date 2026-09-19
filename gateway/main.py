@@ -33,11 +33,14 @@ async def lifespan(_app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.4.0", lifespan=lifespan)
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.5.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
 SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
+# 模型级禁用策略：某些账号的个别模型会因优惠政策调整 / 时效到期而不可调用，
+# 需要在**账号 x 模型**这个粒度上拉黑，而不是停用整个账号。
+MODEL_POLICY_FILE = DATA_DIR / "model_policy.json"
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
 
@@ -245,6 +248,67 @@ def _save_pool_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
+# ---------------------------------------------------------------------------
+# 模型级禁用策略（账号 x 模型）
+#
+# 需求来源（用户 2026-09-19）：账号提供了很多模型，但受优惠政策 / 时效性影响，
+# 个别账号的个别模型可能调不通。停用整个账号损失太大，需要的粒度是
+# 「这个账号的这一个模型不参与轮询」，其余模型照常。
+#
+# 存储结构：``{"<accountId>": ["<model>", ...]}``，只记被禁用的模型，
+# 未列出的模型一律视为可用 —— 这样新增模型天然是可用态，不需要迁移。
+# ---------------------------------------------------------------------------
+
+def _load_model_policy() -> Dict[str, List[str]]:
+    """读取模型禁用策略；文件缺失或损坏时返回空策略，绝不抛异常。"""
+    try:
+        if MODEL_POLICY_FILE.exists():
+            with open(MODEL_POLICY_FILE, "r", encoding="utf-8") as f:
+                value = json.load(f) or {}
+            if isinstance(value, dict):
+                policy: Dict[str, List[str]] = {}
+                for acc_id, models in value.items():
+                    if isinstance(models, list):
+                        policy[str(acc_id)] = sorted({str(m) for m in models if m})
+                return policy
+    except Exception as e:
+        print(f"[model-policy] failed to load policy: {e}", flush=True)
+    return {}
+
+
+def _save_model_policy(policy: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    """整份重写 + 原子替换。写盘失败一律吞掉，绝不能把 API 请求打死。"""
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = MODEL_POLICY_FILE.with_name(MODEL_POLICY_FILE.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(policy, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, MODEL_POLICY_FILE)
+    except Exception as e:
+        print(f"[model-policy] failed to persist policy: {e}", flush=True)
+    return policy
+
+
+def _disabled_models_for(account_id: Optional[str], policy: Optional[Dict[str, List[str]]] = None) -> set:
+    """返回某账号被禁用的模型集合（已归一到别名目标，避免 hy4 / hy3 绕过禁用）。"""
+    if not account_id:
+        return set()
+    pol = policy if policy is not None else _load_model_policy()
+    raw = pol.get(str(account_id)) or []
+    # 用户可能禁用别名（hy4），但上游实际收到的是目标模型（hy3）。
+    # 这里把两侧都归一化，保证「禁用 hy4」也能挡住直接请求 hy3 的调用方。
+    targets = {MODEL_ALIAS_MAP.get(m, m) for m in raw}
+    return targets | set(raw)
+
+
+def _model_is_disabled(account_id: Optional[str], model: Optional[str],
+                       policy: Optional[Dict[str, List[str]]] = None) -> bool:
+    if not model:
+        return False
+    return str(model) in _disabled_models_for(account_id, policy) \
+        or MODEL_ALIAS_MAP.get(str(model), str(model)) in _disabled_models_for(account_id, policy)
+
+
 def _account_id(acc: Dict[str, Any]) -> Optional[str]:
     return acc.get("id") or acc.get("uid")
 
@@ -365,7 +429,7 @@ def selection_stats(limit: int = 20) -> Dict[str, Any]:
     }
 
 
-def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def select_account(requested_id: Optional[str] = None, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """为每一个 API 请求选择账号。
 
     - X-WorkBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
@@ -374,10 +438,22 @@ def select_account(requested_id: Optional[str] = None) -> Optional[Dict[str, Any
 
     这里是「请求级并行」：一条对话请求仍由一个账号完成，但多个同时到达的
     独立请求会分摊到多个账号，不会把同一个请求拆成两份导致上下文/计费混乱。
+
+    ``model`` 用于叠加**模型级禁用**：该账号若把本请求要用的模型拉黑了，就不再
+    参与本次轮询，转而选择下一个账号。这样「某账号某模型不可用」不会让整个请求失败。
     """
     accounts = _load_accounts()
     config = _load_pool_config()
     candidates = _enabled_accounts(accounts, config)
+
+    if model:
+        policy = _load_model_policy()
+        allowed = [a for a in candidates if not _model_is_disabled(_account_id(a), model, policy)]
+        # 若所有账号都禁用了该模型，宁可回退到原始候选集也不直接失败 ——
+        # 让上游去返回真实错误，比在网关层编一个「无账号」更利于排查。
+        if allowed:
+            candidates = allowed
+
     by_id = {str(_account_id(a)): a for a in candidates if _account_id(a)}
 
     if requested_id:
@@ -413,6 +489,7 @@ def account_pool_status():
         "lastSelectedAccountId": _ACCOUNT_POOL_RUNTIME.get("last_selected_id"),
         "lastSelectedSource": _ACCOUNT_POOL_RUNTIME.get("last_selected_source"),
         "selectionCounts": stats["counts"],
+        "modelPolicy": _load_model_policy(),
         "accounts": [
             {
                 "id": _account_id(a),
@@ -469,15 +546,89 @@ def update_account_pool(config: Dict[str, Any]):
     })
     return {"ok": True, "config": saved, "status": account_pool_status()}
 
+
 # ---------------------------------------------------------------------------
-# API 接入信息与访问密钥
+# 模型级禁用：账号 x 模型
 #
+# 与账号池配置是**正交**的两件事：
+#   - 账号池决定「这个账号参不参与调用」；
+#   - 模型策略决定「这个账号的哪些模型不参与调用」。
+# 因此单独一个文件、单独一组接口，互不覆盖。
+# ---------------------------------------------------------------------------
+
+@app.get("/account-models/config")
+def account_models_config():
+    """返回模型禁用策略，供账号卡片渲染标签的禁用态。"""
+    policy = _load_model_policy()
+    return {
+        "ok": True,
+        "policy": policy,
+        "disabledTotal": sum(len(v) for v in policy.values()),
+    }
+
+
+@app.put("/account-models/config")
+def update_account_models_config(payload: Dict[str, Any]):
+    """切换某账号某个模型的禁用状态。
+
+    入参两种写法，都支持：
+      - 精确式：``{"accountId": "...", "model": "hy3", "disabled": true}``
+      - 覆盖式：``{"accountId": "...", "models": ["hy3", "kimi-k3"]}``（整份替换该账号列表）
+
+    ``disabled=False`` 且该模型不在列表里时是无副作用的空操作，直接返回成功，
+    避免前端连点造成 4xx。
+    """
+    account_id = payload.get("accountId")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+    account_id = str(account_id)
+
+    accounts = _load_accounts()
+    known = {str(_account_id(a)) for a in accounts if _account_id(a)}
+    if account_id not in known:
+        raise HTTPException(status_code=400, detail={"unknownAccountId": account_id})
+
+    policy = _load_model_policy()
+    if "models" in payload:
+        models = payload.get("models")
+        if not isinstance(models, list):
+            raise HTTPException(status_code=400, detail="models must be an array")
+        current = sorted({str(m) for m in models if m})
+    else:
+        model = payload.get("model")
+        if not model:
+            raise HTTPException(status_code=400, detail="model is required")
+        model = str(model)
+        disabled = bool(payload.get("disabled"))
+        current = set(policy.get(account_id) or [])
+        if disabled:
+            current.add(model)
+        else:
+            current.discard(model)
+        current = sorted(current)
+
+    if current:
+        policy[account_id] = current
+    else:
+        # 该账号已无任何禁用模型，直接删掉这个键，让配置文件保持干净。
+        policy.pop(account_id, None)
+    _save_model_policy(policy)
+
+    return {
+        "ok": True,
+        "accountId": account_id,
+        "disabledModels": current,
+        "disabledTotal": sum(len(v) for v in policy.values()),
+    }
+
+
+
 # 网关的两个核心能力之一是「对外提供 OpenAI 兼容 API」，因此「调用地址 + 密钥」
 # 必须能在设置页直接看到、直接改。密钥校验是可选的（默认关闭），开启后 /v1/* 需要
 # Authorization: Bearer <key> 或 x-api-key: <key>。
 # ---------------------------------------------------------------------------
 
-GATEWAY_VERSION = "1.4.0"
+GATEWAY_VERSION = "1.5.0"
 
 # 容器内的 WebUI 代理与网关同容器，靠 loopback 访问。容器外的请求经 docker NAT
 # 进来源地址是网桥地址而非 127.0.0.1，所以放行 loopback 不会把外部请求放进来。
@@ -538,6 +689,7 @@ def _gateway_info() -> Dict[str, Any]:
             "count": len(catalog),
             "autoDiscovered": len(catalog) - len(BASE_MODELS),
             "sample": [m["id"] for m in catalog[:12]],
+            "disabledCombos": sum(len(v) for v in _load_model_policy().values()),
         },
         "accounts": {
             "total": len(accounts),
@@ -725,7 +877,13 @@ async def chat_completions(request: Request):
     )
     body.pop("account_id", None)
     body.pop("_account_id", None)
-    acc = select_account(requested_account_id)
+
+    # 模型要在选账号**之前**取出：模型级禁用是「账号 x 模型」维度的，
+    # 选账号时必须知道本次请求要用的模型，才能跳过拉黑了该模型的账号。
+    raw_model = body.get("model", "hy3")
+    target_model = MODEL_ALIAS_MAP.get(raw_model, raw_model)
+
+    acc = select_account(requested_account_id, model=raw_model)
     if not acc or not acc.get("access_token"):
         if requested_account_id:
             raise HTTPException(status_code=409, detail="Requested WorkBuddy account is disabled, expired, or unavailable.")
@@ -740,9 +898,7 @@ async def chat_completions(request: Request):
     served_account_name = _account_label(acc)
 
     requested_stream = body.get("stream", False)
-    
-    raw_model = body.get("model", "hy3")
-    target_model = MODEL_ALIAS_MAP.get(raw_model, raw_model)
+
     body["model"] = target_model
 
     prompt_text = ""
