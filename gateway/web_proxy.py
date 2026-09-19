@@ -209,6 +209,23 @@ COLLAPSE_SCRIPT = r"""
     margin-left: 6px;
     font-variant-numeric: tabular-nums;
   }
+  /* 巡检自动禁用：与手动禁用一样「已禁用」，但来源不同 ——
+     它由可用性巡检写入、模型恢复后会自行解除，所以用琥珀色虚线区分，
+     让用户一眼看出「这不是我关的」。 */
+  .wb-am-tag-auto {
+    background: rgba(245, 158, 11, 0.14);
+    color: #b45309;
+    text-decoration: line-through;
+    font-weight: 400;
+    box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.32);
+  }
+  .wb-am-tag-auto:hover {
+    box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.6);
+  }
+  .wb-am-offcount-auto {
+    border-color: rgba(245, 158, 11, 0.5);
+    color: #b45309;
+  }
   /* ---------------- 设置页：API 接入面板 ---------------- */
   .wb-api-card {
     display: flex;
@@ -376,6 +393,48 @@ COLLAPSE_SCRIPT = r"""
   }
   .wb-api-toast-show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
   .wb-api-toast-err { background: rgba(185, 28, 28, 0.94); }
+  /* ---------------- 设置页：关于面板 ----------------
+     这一块是设置页的最后一段：容器是自建项目，用户需要知道它是什么、
+     跑的是哪个镜像、出问题去哪里看，否则只能靠翻文档回忆。 */
+  .wb-about-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .wb-about-name {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.6;
+    color: var(--foreground, #374151);
+  }
+  .wb-about-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .wb-about-link {
+    font-size: 11px;
+    line-height: 1.7;
+    padding: 1px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(120, 120, 120, 0.35);
+    color: var(--foreground, #374151);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .wb-about-link:hover {
+    background: rgba(120, 120, 120, 0.12);
+    border-color: rgba(120, 120, 120, 0.55);
+  }
+  .wb-about-note {
+    font-size: 10px;
+    line-height: 1.8;
+    color: var(--muted-foreground, #9ca3af);
+  }
 </style>
 <script>
 (function() {
@@ -460,8 +519,9 @@ COLLAPSE_SCRIPT = r"""
   var wbModelsCache = null;
 
   // 本地点按后需要立刻重绘，但重新拉一次 /api/account-models 会有可见延迟。
-  // 这里在内存里维护一份「账号 -> 禁用模型集合」，点一下就地改、就地重绘，
+  // 这里在内存里维护一份「账号 -> {模型: 来源}」，点一下就地改、就地重绘，
   // 网络请求只负责落盘，不参与渲染，点按手感才是即时的。
+  // 存来源而不只存布尔值，是为了区分手动禁用（我关的）与巡检禁用（它关的）。
   var wbModelPolicy = {};
 
   function wbPolicySet(accountId) {
@@ -469,15 +529,21 @@ COLLAPSE_SCRIPT = r"""
     return wbModelPolicy[accountId];
   }
 
-  function wbIsModelDisabled(accountId, model) {
+  // "manual" | "auto" | undefined
+  function wbModelSource(accountId, model) {
     var set = wbModelPolicy[accountId];
-    return !!(set && set[model]);
+    return set ? set[model] : undefined;
+  }
+
+  function wbIsModelDisabled(accountId, model) {
+    return !!wbModelSource(accountId, model);
   }
 
   function wbToggleModel(accountId, model, done) {
     var next = !wbIsModelDisabled(accountId, model);
     var set = wbPolicySet(accountId);
-    if (next) { set[model] = true; } else { delete set[model]; }
+    // 人点出来的禁用一律算 manual —— 这是它后续不被巡检自动放开的依据。
+    if (next) { set[model] = "manual"; } else { delete set[model]; }
 
     fetch("/api/account-models", {
       method: "PUT",
@@ -493,23 +559,37 @@ COLLAPSE_SCRIPT = r"""
         if (!res.ok || res.body.ok === false) {
           // 落盘失败就把内存里的乐观改动回滚，否则界面会显示一个并未生效的状态。
           if (next) { delete wbPolicySet(accountId)[model]; }
-          else { wbPolicySet(accountId)[model] = true; }
+          else { wbPolicySet(accountId)[model] = "manual"; }
           var d = res.body.detail;
           wbToast(typeof d === "string" && d ? d : "操作失败，请重试", true);
           if (done) done(false);
           return;
         }
         wbModelPolicy[accountId] = {};
-        (res.body.disabledModels || []).forEach(function (m) { wbModelPolicy[accountId][m] = true; });
+        wbApplySources(accountId, res.body.disabledSources, res.body.disabledModels);
         wbToast(next ? ("已禁用 " + model + " · 不再对该账号轮询") : ("已恢复 " + model));
         if (done) done(true);
       })
       .catch(function () {
         if (next) { delete wbPolicySet(accountId)[model]; }
-        else { wbPolicySet(accountId)[model] = true; }
+        else { wbPolicySet(accountId)[model] = "manual"; }
         wbToast("请求失败，请刷新页面后重试", true);
         if (done) done(false);
       });
+  }
+
+  // 后端下发的来源表是权威值，覆盖本地乐观副本。
+  // 兼容只有 disabledModels（无来源表）的旧响应：那些一律当手动禁用。
+  function wbApplySources(accountId, sources, models) {
+    wbModelPolicy[accountId] = {};
+    var set = wbModelPolicy[accountId];
+    if (sources && typeof sources === "object") {
+      Object.keys(sources).forEach(function (m) {
+        set[m] = sources[m] === "auto" ? "auto" : "manual";
+      });
+      return;
+    }
+    (models || []).forEach(function (m) { set[m] = "manual"; });
   }
 
   function injectAccountModels() {
@@ -566,8 +646,13 @@ COLLAPSE_SCRIPT = r"""
         title.appendChild(titleText);
 
         var offCount = 0;
+        var autoCount = 0;
         models.forEach(function (m) {
-          if (accountId && wbIsModelDisabled(accountId, m)) offCount += 1;
+          if (!accountId) return;
+          var src = wbModelSource(accountId, m);
+          if (!src) return;
+          offCount += 1;
+          if (src === "auto") autoCount += 1;
         });
         if (offCount) {
           var badge = document.createElement("span");
@@ -575,20 +660,38 @@ COLLAPSE_SCRIPT = r"""
           badge.textContent = "已禁用 " + offCount;
           title.appendChild(badge);
         }
+        if (autoCount) {
+          // 单独标出「巡检关的」：它与手动禁用同属禁用，但会自行解除，
+          // 用户需要能分辨，否则会以为是自己误操作。
+          var autoBadge = document.createElement("span");
+          autoBadge.className = "wb-am-offcount wb-am-offcount-auto";
+          autoBadge.textContent = "巡检 " + autoCount;
+          autoBadge.title = "其中 " + autoCount + " 个是可用性巡检自动禁用的，模型恢复后会自动启用";
+          title.appendChild(autoBadge);
+        }
 
         var usage = entry.usage || {};
         var list = document.createElement("div");
         list.className = "wb-am-list";
         models.forEach(function (m) {
-          var off = accountId ? wbIsModelDisabled(accountId, m) : false;
+          var src = accountId ? wbModelSource(accountId, m) : undefined;
+          var off = !!src;
           var tag = document.createElement("span");
           // 已禁用优先：禁用态压掉「已用」高亮，否则用户看不到自己刚点掉的那个。
-          tag.className = (off ? "wb-am-tag wb-am-tag-off" : (used[m] ? "wb-am-tag wb-am-tag-used" : "wb-am-tag"))
+          var stateClass = src === "auto" ? "wb-am-tag-off wb-am-tag-auto"
+            : (off ? "wb-am-tag-off" : (used[m] ? "wb-am-tag-used" : ""));
+          tag.className = ("wb-am-tag " + stateClass).replace(/\s+$/, "")
             + (accountId ? " wb-am-tag-click" : "");
           tag.textContent = m;
           var stat = usage[m];
           var tip = [];
-          if (off) tip.push("已禁用：该账号不再被分配到 " + m);
+          if (src === "auto") {
+            tip.push("巡检发现调用不通，已自动禁用");
+            tip.push("模型恢复后会自动启用");
+          } else if (off) {
+            tip.push("已手动禁用：该账号不再被分配到 " + m);
+            tip.push("巡检不会自动放开手动禁用的模型");
+          }
           if (stat) {
             // 只留「用量」类信息（Token / 积分），**不再显示调用次数**。
             // 调用次数是账号维度的指标，只保留在账号池条上的「已调用 N 次」一处。
@@ -639,10 +742,7 @@ COLLAPSE_SCRIPT = r"""
         // 后端下发的策略是权威值，覆盖本地乐观副本，保证刷新后状态一致。
         var accs = (data && data.accounts) || {};
         Object.keys(accs).forEach(function (id) {
-          if (accs[id] && accs[id].disabled) {
-            wbModelPolicy[id] = {};
-            accs[id].disabled.forEach(function (m) { wbModelPolicy[id][m] = true; });
-          }
+          if (accs[id]) wbApplySources(id, accs[id].disabledSources, accs[id].disabled);
         });
         render(data);
       })
@@ -650,6 +750,16 @@ COLLAPSE_SCRIPT = r"""
   }
 
   var wbPoolCache = null;
+
+  // 巡检改过禁用策略后，卡片上的模型标签需要整体重画。
+  // injectAccountModels() 只处理「还没有标签区」的卡片，所以必须先移除旧的，
+  // 否则界面会停留在巡检之前的状态。
+  function refreshModelTags() {
+    Array.prototype.slice.call(document.querySelectorAll(".wb-am-box"))
+      .forEach(function (el) { el.remove(); });
+    wbModelsCache = null;
+    injectAccountModels();
+  }
 
   function effectiveEnabledIds(data) {
     if (data.allEnabledByDefault) {
@@ -1177,13 +1287,17 @@ COLLAPSE_SCRIPT = r"""
   var wbApiCache = null;
 
   function wbRefreshApi(force) {
-    if (force) wbApiCache = null;
+    if (force) { wbApiCache = null; wbInfoCache = null; }
     var old = document.getElementById("settings-api-access");
     if (old) old.remove();
     var oldHealth = document.getElementById("settings-model-health");
     if (oldHealth) oldHealth.remove();
+    var oldAbout = document.getElementById("settings-about");
+    if (oldAbout) oldAbout.remove();
     injectApiAccess();
     injectModelHealth();
+    // 关于面板里有一行「当前规模」，禁用项增减后要跟着变，所以一并重取。
+    injectAbout();
     return wbApiCache;
   }
 
@@ -1316,8 +1430,9 @@ COLLAPSE_SCRIPT = r"""
     var aeMain = wbEl("div", "wb-api-main");
     aeMain.appendChild(wbEl("div", "wb-api-label", "检测到可用时自动启用"));
     aeMain.appendChild(wbEl("div", "wb-api-desc",
-      "开启时：模型恢复可用就自动移出禁用列表。关闭时只做「自动禁用」，"
-      + "恢复可用不会自动放开，需要你手动启用。"));
+      "开启时：巡检自己禁掉的模型恢复可用后会自动放开（自愈）。"
+      + "你在账号卡片上手动禁用的模型不受影响 —— 手动禁用代表明确的取舍"
+      + "（常见于「能跑但太贵」），不会被自愈抹掉。关闭时只做自动禁用。"));
     aeRow.appendChild(aeMain);
     var aeBtn = wbEl("button",
       "wb-api-btn" + (cfg.autoEnable ? " wb-api-btn-on" : ""),
@@ -1330,6 +1445,21 @@ COLLAPSE_SCRIPT = r"""
     };
     aeRow.appendChild(aeBtn);
     card.appendChild(aeRow);
+
+    // ---- 4b. 当前禁用构成 ----
+    // 把「谁关的」摊开给用户看。这两类禁用含义不同、恢复方式也不同，
+    // 混在一个「已禁用 N」里会让人无法判断巡检是否已经生效。
+    var srcRow = wbEl("div", "wb-api-row");
+    var srcMain = wbEl("div", "wb-api-main");
+    srcMain.appendChild(wbEl("div", "wb-api-label", "当前禁用构成"));
+    var bySource = data.disabledBySource || {};
+    var manualN = bySource.manual || 0;
+    var autoN = bySource.auto || 0;
+    srcMain.appendChild(wbEl("div", "wb-api-desc",
+      "手动禁用 " + manualN + " 项（你点的，巡检不会自动放开）"
+      + " · 巡检禁用 " + autoN + " 项（探测不通自动写的，恢复后自动放开）"));
+    srcRow.appendChild(srcMain);
+    card.appendChild(srcRow);
 
     // ---- 5. 探测范围口径 ----
     var umRow = wbEl("div", "wb-api-row");
@@ -1358,6 +1488,11 @@ COLLAPSE_SCRIPT = r"""
     var runDesc = wbEl("div", "wb-api-desc");
     if (runtime.running) {
       runDesc.textContent = "正在巡检中…";
+    } else if (last && last.aborted) {
+      // 整轮作废：一个可用的都没有，说明探测本身出了问题。
+      // 这必须说得比「上次巡检完成」更显眼，否则用户会以为巡检正常但模型全坏了。
+      runDesc.textContent = "上次巡检已跳过（未改动任何配置）：" + (last.reason || "探测异常");
+      runDesc.style.color = "#b45309";
     } else if (runtime.lastError) {
       runDesc.textContent = "上次巡检出错：" + runtime.lastError;
     } else if (last) {
@@ -1395,33 +1530,47 @@ COLLAPSE_SCRIPT = r"""
             wbToast("巡检失败：" + ((out && out.error) || "未知错误"), true);
             return;
           }
+          if (out.aborted) {
+            wbToast("巡检已跳过（未改动配置）：" + (out.reason || "探测异常"), true);
+            return;
+          }
           var cc = out.counts || {};
           var msg = "巡检完成 · 可用 " + (cc.available || 0)
             + " / 不可用 " + (cc.unavailable || 0)
             + " / 跳过 " + (cc.transient || 0);
           if ((out.disabled || []).length) msg += " · 新禁用 " + out.disabled.length + " 项";
           if ((out.enabled || []).length) msg += " · 新启用 " + out.enabled.length + " 项";
+          if ((out.protected || []).length) msg += " · 手动禁用已跳过 " + out.protected.length + " 项";
           wbToast(msg);
         })
         .catch(function (e) { wbToast("巡检请求失败：" + e, true); })
         .then(function () {
           runBtn.disabled = false;
           runBtn.textContent = "立即巡检";
-          wbApiCache = null;
-          refresh();
+          // 重取配置与上次结果：巡检可能改了禁用策略，账号卡片与巡检面板都要跟着更新。
+          wbRefreshApi(true);
+          refreshModelTags();
         });
     };
     runRow.appendChild(runBtn);
     card.appendChild(runRow);
 
     // ---- 7. 最近变更明细（有才显示）----
-    if (last && ((last.disabled || []).length || (last.enabled || []).length)) {
+    if (last && ((last.disabled || []).length || (last.enabled || []).length
+        || (last.protected || []).length)) {
       var logRow = wbEl("div", "wb-api-row wb-api-row-stack");
       var logMain = wbEl("div", "wb-api-main");
       logMain.appendChild(wbEl("div", "wb-api-label", "上次巡检的变更"));
       logMain.appendChild(wbEl("div", "wb-api-desc",
         "自动禁用：" + ((last.disabled || []).join("、") || "无")
         + "　自动启用：" + ((last.enabled || []).join("、") || "无")));
+      if ((last.protected || []).length) {
+        // 这一行是「来源标记」机制的可观测证据：这些模型探测得到「可用」，
+        // 但因为是你手动禁用的，巡检没有动它们。
+        logMain.appendChild(wbEl("div", "wb-api-desc",
+          "因手动禁用而被跳过（探测可用但未放开）："
+          + (last.protected || []).join("、")));
+      }
       logRow.appendChild(logMain);
       card.appendChild(logRow);
     }
@@ -1472,6 +1621,155 @@ COLLAPSE_SCRIPT = r"""
       .catch(function () {});
   }
 
+  // ---------------------------------------------------------------------
+  // 设置页：关于
+  // 放在设置页最底部。这是自建容器，用户需要一处能回答「我装的到底是什么、
+  // 跑的是哪个镜像、升级/报错去哪里看」的地方 —— 否则每次都得回去翻 README。
+  // 项目地址与镜像名由网关下发（可用环境变量覆盖），fork 出去的人不会把使用者
+  // 引回上游作者的项目。
+  // ---------------------------------------------------------------------
+  var wbInfoCache = null;
+
+  function wbRenderAboutSection(host, data) {
+    var proj = data.project || {};
+    var models = data.models || {};
+    var accounts = data.accounts || {};
+    var ports = data.ports || {};
+    var bySource = data.disabledBySource || {};
+
+    var section = wbEl("section", "min-w-0 space-y-2.5");
+    section.id = "settings-about";
+    var head = wbEl("div", "px-1");
+    var h2 = wbEl("h2", "text-[13px] font-medium leading-5", "关于");
+    h2.id = "settings-about-title";
+    head.appendChild(h2);
+    section.appendChild(head);
+    section.setAttribute("aria-labelledby", "settings-about-title");
+
+    var card = wbEl("div", "wb-api-card");
+
+    // ---- 1. 项目名 + 版本 ----
+    var nameRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    var nameMain = wbEl("div", "wb-api-main");
+    var headLine = wbEl("div", "wb-about-head");
+    headLine.appendChild(wbEl("span", "wb-about-name", proj.name || "WorkBuddy Switch"));
+    headLine.appendChild(wbEl("span", "wb-api-badge wb-api-badge-ok", "v" + (data.version || "?")));
+    nameMain.appendChild(headLine);
+    nameMain.appendChild(wbEl("div", "wb-api-desc",
+      "把 WorkBuddy / CodeBuddy 账号池变成标准 OpenAI 兼容网关：账号自动轮询、"
+      + "模型级可用性自愈，容器内自带这个控制台。"));
+    var linkRow = wbEl("div", "wb-about-links");
+    [
+      ["项目主页", proj.url],
+      ["更新日志", proj.changelog],
+      ["发布版本", proj.releases],
+      ["问题反馈", proj.issues],
+    ].forEach(function (item) {
+      if (!item[1]) return;
+      var a = wbEl("a", "wb-about-link", item[0]);
+      a.href = item[1];
+      a.target = "_blank";
+      a.rel = "noreferrer noopener";
+      linkRow.appendChild(a);
+    });
+    nameMain.appendChild(linkRow);
+    nameRow.appendChild(nameMain);
+    card.appendChild(nameRow);
+
+    // ---- 2. 镜像 ----
+    var imgRow = wbEl("div", "wb-api-row");
+    var imgMain = wbEl("div", "wb-api-main");
+    imgMain.appendChild(wbEl("div", "wb-api-label", "容器镜像"));
+    imgMain.appendChild(wbEl("div", "wb-api-desc",
+      "升级就是拉这个镜像后重建容器。Unraid 上请用容器模板的「强制更新」，"
+      + "不要手工拼 docker run。"));
+    imgRow.appendChild(imgMain);
+    var imgLine = wbEl("div", null);
+    imgLine.style.cssText = "display:flex;align-items:center;gap:6px;flex:0 0 auto;";
+    var imgChip = wbEl("span", "wb-api-chip wb-api-mono", proj.image || "");
+    imgLine.appendChild(imgChip);
+    var imgCopy = wbEl("button", "wb-api-btn", "复制");
+    imgCopy.onclick = function () { wbCopy(proj.image || "", "已复制镜像地址"); };
+    imgLine.appendChild(imgCopy);
+    imgRow.appendChild(imgLine);
+    card.appendChild(imgRow);
+
+    // ---- 3. 运行位置与端口 ----
+    var runRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    var runMain = wbEl("div", "wb-api-main");
+    runMain.appendChild(wbEl("div", "wb-api-label", "数据目录与端口"));
+    runMain.appendChild(wbEl("div", "wb-api-desc",
+      "数据目录 " + (data.dataDir || "—")
+      + "　·　网关 " + (ports.gateway || 18091)
+      + "　·　控制台 " + (ports.console || 18090)));
+    runMain.appendChild(wbEl("div", "wb-api-desc",
+      "升级不会动这个目录里的账号、密钥与模型策略配置。"));
+    runRow.appendChild(runMain);
+    card.appendChild(runRow);
+
+    // ---- 4. 当前规模 ----
+    var scaleRow = wbEl("div", "wb-api-row");
+    var scaleMain = wbEl("div", "wb-api-main");
+    scaleMain.appendChild(wbEl("div", "wb-api-label", "当前规模"));
+    scaleMain.appendChild(wbEl("div", "wb-api-desc",
+      "账号 " + (accounts.total || 0) + " 个（可用 " + (accounts.usable || 0)
+      + "，参与调用 " + (accounts.inPool || 0) + "）"
+      + " · 模型 " + (models.count || 0) + " 个"
+      + " · 禁用组合 " + (models.disabledCombos || 0) + " 项"
+      + "（手动 " + (bySource.manual || 0) + " / 巡检 " + (bySource.auto || 0) + "）"));
+    scaleRow.appendChild(scaleMain);
+    card.appendChild(scaleRow);
+
+    // ---- 5. 免责说明 ----
+    var noteRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    var noteMain = wbEl("div", "wb-api-main");
+    noteMain.appendChild(wbEl("div", "wb-api-label", "说明"));
+    var note = wbEl("div", "wb-about-note",
+      "非官方项目，与 WorkBuddy / CodeBuddy 官方无任何关联，仅供个人自用；"
+      + "使用前请自行确认符合相关服务条款。容器内不含任何官方客户端二进制以外的东西，"
+      + "账号凭据始终保存在你自己的数据卷里。");
+    noteMain.appendChild(note);
+    noteRow.appendChild(noteMain);
+    card.appendChild(noteRow);
+
+    section.appendChild(card);
+    host.appendChild(section);
+  }
+
+  function injectAbout() {
+    var host = wbFindSettingsHost();
+    if (!host) return;
+    if (document.getElementById("settings-about")) return;
+
+    function render(data) {
+      var host2 = wbFindSettingsHost();
+      if (!host2 || document.getElementById("settings-about")) return;
+      wbRenderAboutSection(host2, data);
+    }
+
+    if (wbInfoCache) { render(wbInfoCache); return; }
+    fetch("/api/gateway-info", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || data.error) return;
+        wbInfoCache = data;
+        render(data);
+      })
+      .catch(function () {});
+  }
+
+  function wbPinAboutLast() {
+    // 「关于」必须是设置页的最后一段。但各面板的插入顺序取决于 fetch 回来的先后，
+    // 谁先到谁先 append，光靠在 run() 里排调用顺序保证不了。
+    // 因此每次渲染后都把它挪回末尾；已经是最后一个时不做动作，
+    // 否则 appendChild 会触发新的 DOM 变更，被 MutationObserver 接住后无限循环。
+    var about = document.getElementById("settings-about");
+    if (!about) return;
+    var parent = about.parentElement;
+    if (!parent) return;
+    if (parent.lastElementChild !== about) parent.appendChild(about);
+  }
+
   function run() {
     initCollapse();
     sanitizeMacUI();
@@ -1480,6 +1778,8 @@ COLLAPSE_SCRIPT = r"""
     injectAccountPool();
     injectApiAccess();
     injectModelHealth();
+    injectAbout();
+    wbPinAboutLast();
   }
 
   const observer = new MutationObserver(() => run());
@@ -1837,14 +2137,19 @@ async def account_models_api():
 
     # 模型级禁用策略：由网关（18091）持有并落盘，这里读一份用于渲染禁用态。
     # 读不到就当空策略 —— UI 显示「全部可用」，绝不因为策略读取失败而让整卡消失。
+    # policySources 让卡片能区分「手动禁用」与「巡检禁用」，两者恢复方式不同。
     disabled_by_account = {}
+    disabled_sources_by_account = {}
     try:
         async with _internal_client(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-models/config")
             if r.status_code == 200:
-                disabled_by_account = (r.json() or {}).get("policy") or {}
+                body = r.json() or {}
+                disabled_by_account = body.get("policy") or {}
+                disabled_sources_by_account = body.get("policySources") or {}
     except Exception:
         disabled_by_account = {}
+        disabled_sources_by_account = {}
 
     agg = {}
 
@@ -1927,8 +2232,10 @@ async def account_models_api():
             "used": used,
             "usage": entry.get("usage") or {},
             "gatewayCalls": entry.get("gatewayCalls", 0),
-            # 该账号被用户手工禁用的模型（模型级禁用），供卡片渲染灰化删除线状态
+            # 该账号被禁用的模型（模型级禁用），供卡片渲染灰化删除线状态
             "disabled": disabled_by_account.get(str(aid)) or [],
+            # 每个禁用项的来源："manual"（人手禁的）/ "auto"（巡检禁的）
+            "disabledSources": disabled_sources_by_account.get(str(aid)) or {},
         }
     result["discovered"] = sorted(all_used)
     result["disabledTotal"] = sum(len(v) for v in disabled_by_account.values())

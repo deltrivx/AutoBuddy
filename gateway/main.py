@@ -32,6 +32,12 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """容器内的账号轮询与模型巡检随应用启停（替代已弃用的 on_event）。"""
+    # 回填上一轮巡检摘要：运行状态只在内存里，进程一重启界面就会退化成
+    # 「还没有执行过巡检」，而巡检间隔动辄以小时计 —— 用户看到的会是个空白面板。
+    last = model_health.load_last_run()
+    if last:
+        _HEALTH_RUNTIME["lastResult"] = last
+        _HEALTH_RUNTIME["lastRunAt"] = last.get("checkedAt")
     task = asyncio.create_task(account_rotate_loop())
     health_task = asyncio.create_task(model_health_loop())
     try:
@@ -41,7 +47,7 @@ async def lifespan(_app: FastAPI):
         health_task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.6.0", lifespan=lifespan)
+app = FastAPI(title="WorkBuddy OpenAI Gateway", version="1.7.0", lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
@@ -456,7 +462,7 @@ def account_pool_status():
         "lastSelectedAccountId": _ACCOUNT_POOL_RUNTIME.get("last_selected_id"),
         "lastSelectedSource": _ACCOUNT_POOL_RUNTIME.get("last_selected_source"),
         "selectionCounts": stats["counts"],
-        "modelPolicy": _load_model_policy(),
+        "modelPolicy": model_policy.as_model_lists(_load_model_policy()),
         "accounts": [
             {
                 "id": _account_id(a),
@@ -525,18 +531,26 @@ def update_account_pool(config: Dict[str, Any]):
 
 @app.get("/account-models/config")
 def account_models_config():
-    """返回模型禁用策略，供账号卡片渲染标签的禁用态。"""
+    """返回模型禁用策略，供账号卡片渲染标签的禁用态。
+
+    同时给出两种视图：
+      - ``policy``：``{账号: [模型]}``，只管模型名，保持既有线格式不变；
+      - ``policySources``：``{账号: {模型: "manual"|"auto"}}``，让卡片能区分
+        「人手禁的」和「巡检禁的」—— 两者的恢复方式与含义并不相同。
+    """
     policy = _load_model_policy()
     return {
         "ok": True,
-        "policy": policy,
-        "disabledTotal": sum(len(v) for v in policy.values()),
+        "policy": model_policy.as_model_lists(policy),
+        "policySources": model_policy.as_source_map(policy),
+        "disabledTotal": model_policy.disabled_total(policy),
+        "disabledBySource": model_policy.count_by_source(policy),
     }
 
 
 @app.put("/account-models/config")
 def update_account_models_config(payload: Dict[str, Any]):
-    """切换某账号某个模型的禁用状态。
+    """切换某账号某个模型的禁用状态。**这里的写入一律标记为手动（manual）。**
 
     入参两种写法，都支持：
       - 精确式：``{"accountId": "...", "model": "hy3", "disabled": true}``
@@ -544,6 +558,9 @@ def update_account_models_config(payload: Dict[str, Any]):
 
     ``disabled=False`` 且该模型不在列表里时是无副作用的空操作，直接返回成功，
     避免前端连点造成 4xx。
+
+    写入时打上 ``manual`` 标记，从而使该条目免受巡检「自动启用」的放开 ——
+    人点出来的禁用代表明确意图（常见于「能跑但太贵」），不该被自愈抹掉。
     """
     account_id = payload.get("accountId")
     if not account_id:
@@ -560,32 +577,25 @@ def update_account_models_config(payload: Dict[str, Any]):
         models = payload.get("models")
         if not isinstance(models, list):
             raise HTTPException(status_code=400, detail="models must be an array")
-        current = sorted({str(m) for m in models if m})
+        current = model_policy.replace_account_models(
+            policy, account_id, [str(m) for m in models if m],
+            source=model_policy.SOURCE_MANUAL)
     else:
         model = payload.get("model")
         if not model:
             raise HTTPException(status_code=400, detail="model is required")
-        model = str(model)
-        disabled = bool(payload.get("disabled"))
-        current = set(policy.get(account_id) or [])
-        if disabled:
-            current.add(model)
-        else:
-            current.discard(model)
-        current = sorted(current)
+        current = model_policy.set_model_disabled(
+            policy, account_id, str(model), bool(payload.get("disabled")),
+            source=model_policy.SOURCE_MANUAL)
 
-    if current:
-        policy[account_id] = current
-    else:
-        # 该账号已无任何禁用模型，直接删掉这个键，让配置文件保持干净。
-        policy.pop(account_id, None)
     _save_model_policy(policy)
 
     return {
         "ok": True,
         "accountId": account_id,
         "disabledModels": current,
-        "disabledTotal": sum(len(v) for v in policy.values()),
+        "disabledSources": model_policy.as_source_map(policy).get(account_id, {}),
+        "disabledTotal": model_policy.disabled_total(policy),
     }
 
 
@@ -595,7 +605,14 @@ def update_account_models_config(payload: Dict[str, Any]):
 # Authorization: Bearer <key> 或 x-api-key: <key>。
 # ---------------------------------------------------------------------------
 
-GATEWAY_VERSION = "1.6.0"
+GATEWAY_VERSION = "1.7.0"
+
+# 项目元信息。设置页的「关于」面板由此渲染 —— 放在环境变量里而不是写死在前端，
+# 一是保持单一出处，二是 fork 出去的人可以改成自己的仓库与镜像名，
+# 不会把使用者引回上游作者的项目。
+GATEWAY_IMAGE = os.getenv("WB_IMAGE", "ghcr.io/deltrivx/workbuddy-switch")
+PROJECT_URL = os.getenv("WB_PROJECT_URL", "https://github.com/deltrivx/workbuddy-switch")
+PROJECT_NAME = os.getenv("WB_PROJECT_NAME", "WorkBuddy Switch")
 
 # 容器内的 WebUI 代理与网关同容器，靠 loopback 访问。容器外的请求经 docker NAT
 # 进来源地址是网桥地址而非 127.0.0.1，所以放行 loopback 不会把外部请求放进来。
@@ -640,6 +657,16 @@ def _gateway_info() -> Dict[str, Any]:
     return {
         "version": GATEWAY_VERSION,
         "basePath": "/v1",
+        "project": {
+            "name": PROJECT_NAME,
+            "url": PROJECT_URL,
+            "image": GATEWAY_IMAGE,
+            "releases": f"{PROJECT_URL}/releases",
+            "changelog": f"{PROJECT_URL}/blob/main/CHANGELOG.md",
+            "issues": f"{PROJECT_URL}/issues",
+        },
+        "dataDir": str(DATA_DIR),
+        "ports": {"gateway": 18091, "console": 18090},
         "endpoints": {
             "chatCompletions": "/v1/chat/completions",
             "models": "/v1/models",
@@ -656,8 +683,9 @@ def _gateway_info() -> Dict[str, Any]:
             "count": len(catalog),
             "autoDiscovered": len(catalog) - len(BASE_MODELS),
             "sample": [m["id"] for m in catalog[:12]],
-            "disabledCombos": sum(len(v) for v in _load_model_policy().values()),
+            "disabledCombos": model_policy.disabled_total(),
         },
+        "disabledBySource": model_policy.count_by_source(),
         "accounts": {
             "total": len(accounts),
             "usable": len([a for a in accounts if _account_is_usable(a, now_ms)]),
@@ -1165,10 +1193,14 @@ def rotate_run():
 # 实现要点：
 # - 巡检读写的就是 model_policy.json —— 与手动禁用是同一份策略，
 #   所以「关掉巡检后手动禁用照常有效」，自动写入的禁用项也不会凭空消失。
+# - 禁用项带来源标记（manual / auto）：自动启用**只放开自己写的 auto 项**，
+#   人手禁的模型不受影响 —— 否则自愈会把「能跑但太贵」这类控成本配置一并放开。
 # - 探测会真实发起一次极小的上游请求，因此**默认关闭**，且默认只探测
 #   「该账号调用过的模型 + 内置基础清单」，避免一上来就把上游打爆。
-# - 限流（429）与网络异常计为 transient，**不参与自动禁用** ——
-#   否则高峰期巡检会把好模型全禁掉。
+# - 探测请求体必须与网关转发上游的形态一致（流式 + 首条为 system），
+#   否则会被上游整体拒绝，表现为「所有模型都不可用」并成批误禁。
+# - 限流（429）与网络异常计为 transient，**不参与自动禁用**；
+#   整轮无一个可用时判定为探测异常，整轮作废不写策略。
 # ---------------------------------------------------------------------------
 
 _HEALTH_RUNTIME: Dict[str, Any] = {
@@ -1242,6 +1274,10 @@ def health_config_snapshot() -> Dict[str, Any]:
         "activeAccounts": len(selected),
         "intervalMinutes": cfg.get("intervalMinutes"),
         "minIntervalMinutes": model_health.MIN_INTERVAL_MINUTES,
+        # 让界面能显示「手动禁用 N 项 / 巡检禁用 M 项」：
+        # 两者含义不同（人为决定 vs 自动探测），恢复方式也不同。
+        "disabledBySource": model_policy.count_by_source(),
+        "autoEnableProtectsManual": True,
         "runtime": dict(_HEALTH_RUNTIME),
     }
 
@@ -1266,6 +1302,7 @@ def model_health_status():
         "config": model_health.load_config(),
         "runtime": dict(_HEALTH_RUNTIME),
         "disabledTotal": model_policy.disabled_total(),
+        "disabledBySource": model_policy.count_by_source(),
     }
 
 
@@ -1308,10 +1345,19 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
                 base_models=_base_model_ids(),
             )
             summary = model_health.summarize(raw)
+            # 逐账号明细只在这种「手动触发」的响应里返回，便于排查；
+            # 定时轮次不返回（没人看，只是白白撑大内存里的状态）。
             summary["reports"] = raw.get("reports", [])
             _HEALTH_RUNTIME["lastRunAt"] = summary.get("checkedAt")
             _HEALTH_RUNTIME["lastResult"] = model_health.summarize(raw)
-            _HEALTH_RUNTIME["lastError"] = None
+            # 整轮作废时把原因挂到 lastError 上，界面才会把它当异常显示出来，
+            # 而不是伪装成一次「什么都没变」的正常巡检。
+            _HEALTH_RUNTIME["lastError"] = summary.get("reason") if summary.get("aborted") else None
+            print(f"[health] round done: combos={summary.get('combos')} "
+                  f"available={summary['counts'].get('available')} "
+                  f"unavailable={summary['counts'].get('unavailable')} "
+                  f"transient={summary['counts'].get('transient')} "
+                  f"aborted={summary.get('aborted')}", flush=True)
             return summary
         except Exception as e:
             _HEALTH_RUNTIME["lastError"] = f"{type(e).__name__}: {e}"
@@ -1335,12 +1381,8 @@ async def model_health_loop() -> None:
             cfg = model_health.load_config()
             interval = int(cfg.get("intervalMinutes") or model_health.DEFAULT_INTERVAL_MINUTES)
             if cfg.get("enabled"):
-                result = await asyncio.to_thread(run_model_health_check)
-                counts = (result or {}).get("counts") or {}
-                print(f"[health] round done: combos={(result or {}).get('combos')} "
-                      f"available={counts.get('available')} "
-                      f"unavailable={counts.get('unavailable')} "
-                      f"transient={counts.get('transient')}", flush=True)
+                # 结果日志由 run_model_health_check 统一打印（手动 / 定时共用一条口径）
+                await asyncio.to_thread(run_model_health_check)
             # 关闭状态也要按间隔轮询配置变更，否则改完开关要等整整一个周期才生效。
             await asyncio.sleep(interval * 60)
         except asyncio.CancelledError:

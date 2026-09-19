@@ -9,6 +9,8 @@
   4. 策略文件损坏时回退空策略、不抛异常
   5. 文件落盘无 .tmp 残留
   6. 清空后不留空键
+  7. **v1 数组格式兼容**：旧文件一律读作手动禁用
+  8. **来源标记**：manual / auto 的写入、读取与统计
 """
 import json
 import os
@@ -75,10 +77,6 @@ for mod_name, attrs in {
         setattr(m, k, v)
     sys.modules.setdefault(mod_name, m)
 
-for sibling in ("api_keys", "token_tracker"):
-    if (Path(__file__).parent / "gateway" / f"{sibling}.py").exists():
-        continue
-
 print("== 模型级禁用策略单测 ==")
 
 # 直接以文本方式加载所需函数，绕开 FastAPI 装饰器与 import 链
@@ -128,10 +126,13 @@ _model_is_disabled = fn_ns["_model_is_disabled"]
 # ---- 1. 空策略 ----
 check("空策略返回 {}", _load_model_policy() == {})
 
-# ---- 2. 写入与读回 ----
+# ---- 2. 写入与读回（main.py 的包装函数按 manual 记来源）----
 _save_model_policy({"acc1": ["hy3", "kimi-k3"]})
 pol = _load_model_policy()
-check("读回禁用列表", pol == {"acc1": ["hy3", "kimi-k3"]}, str(pol))
+check("读回禁用列表（带来源）",
+      pol == {"acc1": {"hy3": "manual", "kimi-k3": "manual"}}, str(pol))
+check("包装层写入一律标记为手动",
+      _mp.source_of(pol, "acc1", "hy3") == "manual")
 
 # ---- 3. 别名归一：禁用 hy4 应让 HY4 的目标模型 hy3 也挡住 ----
 fn_ns["MODEL_ALIAS_MAP"] = {"hy4": "hy3", "kimi": "kimi-k3"}
@@ -161,15 +162,56 @@ _save_model_policy({"acc9": ["gpt-5.5"]})
 check("无 .tmp 残留", not (tmpdir / "model_policy.json.tmp").exists())
 
 # ---- 9. 空列表语义 ----
-# _save_model_policy 是「原样落盘」的底层写入，删空键的归一化在接口层做
-# （见 update_account_models_config 的 policy.pop(account_id, None)）。
-# 这里验证底层不会把空列表变成脏数据即可。
+# 空列表等价于「没有禁用项」，落盘时应直接丢掉该账号键，不留脏数据。
 _save_model_policy({"accX": []})
-check("底层原样保留空列表", _load_model_policy().get("accX") == [])
+check("空列表不产生空键", "accX" not in _load_model_policy())
 
 # ---- 10. 去重与排序 ----
 _save_model_policy({"accY": ["b", "a", "b"]})
-check("去重排序", _load_model_policy()["accY"] == ["a", "b"])
+check("去重排序", sorted(_load_model_policy()["accY"]) == ["a", "b"])
+
+# ---- 11. v1 数组格式兼容 ----
+# v0.4.2 之前策略文件是 {"账号": ["模型", ...]}，那时没有巡检，
+# 条目全部来自人手点击 —— 读取时必须一律标记为 manual，
+# 否则升级后巡检的自动启用会把这些「人为取舍」当成自己的产物放开放开。
+MODEL_POLICY_FILE.write_text(json.dumps({"a1": ["hy3", "hy4"], "a2": []}), encoding="utf-8")
+legacy = _load_model_policy()
+check("v1 数组读作 v2 结构",
+      legacy == {"a1": {"hy3": "manual", "hy4": "manual"}}, str(legacy))
+check("v1 条目来源为手动", _mp.source_of(legacy, "a1", "hy3") == "manual")
+check("v1 空数组不产生空键", "a2" not in legacy)
+check("v1 读入后禁用判定仍然有效", _model_is_disabled("a1", "hy3", legacy))
+
+# ---- 12. 来源标记：写入与统计 ----
+pol = {}
+_mp.set_model_disabled(pol, "z1", "hy3", True, source="auto")
+_mp.set_model_disabled(pol, "z1", "kimi-k3", True, source="manual")
+check("auto 项来源正确", _mp.source_of(pol, "z1", "hy3") == "auto")
+check("manual 项来源正确", _mp.source_of(pol, "z1", "kimi-k3") == "manual")
+check("按来源统计", _mp.count_by_source(pol) == {"manual": 1, "auto": 1},
+      str(_mp.count_by_source(pol)))
+
+# 自动启用只放开 auto 项
+_mp.auto_enable(pol, "z1", "hy3")
+_mp.auto_enable(pol, "z1", "kimi-k3")
+check("自动启用只放开 auto 项",
+      list((pol.get("z1") or {}).keys()) == ["kimi-k3"], str(pol.get("z1")))
+
+# 自动禁用不覆盖已有的手动标记
+_mp.auto_disable(pol, "z1", "kimi-k3")
+check("自动禁用不把 manual 降级为 auto", _mp.source_of(pol, "z1", "kimi-k3") == "manual")
+check("自动禁用对未禁用项写入 auto", _mp.auto_disable(pol, "z1", "glm-5.3") is True)
+check("自动禁用对已禁用项报告无变更", _mp.auto_disable(pol, "z1", "glm-5.3") is False)
+
+# 非法来源回退为 manual
+_mp.set_model_disabled(pol, "z2", "m", True, source="bogus")
+check("非法来源回退为手动", _mp.source_of(pol, "z2", "m") == "manual")
+
+# ---- 13. 对外线格式仍是「模型名数组」 ----
+_save_model_policy({"accL": ["hy3", "kimi-k3"]})
+check("列表视图保持既有线格式",
+      _mp.as_model_lists(_load_model_policy()) == {"accL": ["hy3", "kimi-k3"]},
+      str(_mp.as_model_lists(_load_model_policy())))
 
 print(f"\n结果：{PASS} 项通过，{FAIL} 项失败")
 sys.exit(1 if FAIL else 0)
