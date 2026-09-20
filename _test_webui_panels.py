@@ -152,7 +152,10 @@ ACCOUNT_MODELS = {
 ACCOUNT_PROBE = {
     "ok": True, "accountId": "acc-1", "accountName": "账号甲",
     "verdict": "available", "state": "valid", "message": "凭据有效",
-    "evidence": "凭据有效（上游以「模型不存在」应答，说明已认下凭据）",
+    # 正常账号的提示里**不该**出现「模型不存在」这类会被读成故障的措辞，
+    # 依据走独立的 method 字段说清探测手段。
+    "method": "用一个不存在的模型名试；上游如实回应「该模型不存在」，说明它已认下这张凭据",
+    "evidence": None,
     "action": "", "code": 11102, "semantic": "model_missing",
     "elapsedMs": 258, "error": None,
 }
@@ -538,6 +541,7 @@ setTimeout(async () => {
   let probeFetch = null;
   let probeAfterCount = 0;
   let probeToast = null;
+  let probeToastClasses = "";
   try {
     const bar = (ACCOUNT_CARDS[0].sec.children || [])
       .find((k) => (k.className || "").split(/\s+/).indexOf("wb-pool-bar") >= 0);
@@ -557,6 +561,10 @@ setTimeout(async () => {
           .filter((t) => t.indexOf("账号甲") >= 0 && t.indexOf("凭据") >= 0);
         probeToast = hit.length ? hit[hit.length - 1] : null;
       }
+      // toast 的语义档位要从 class 上读：过去 restricted（账号受限，凭据其实是好的）
+      // 与 invalid（凭据真坏了）共用红色，用户会把受限读成「凭据坏了」。
+      probeToastClasses = (document.body.children || [])
+        .map((e) => String(e.className || "")).join(" ");
     }
   } catch (e) {
     errors.push("点击「检测账号」抛异常：" + ((e && e.message) || String(e)));
@@ -782,16 +790,26 @@ def main() -> int:
     check("探测请求带上 accountId",
           probe is not None and "accountId" in str(probe.get("body") or ""), f"got {probe}")
 
-    # 结论提示要带上判定依据。探测刻意用一个不存在的模型名，上游回「模型不存在」
-    # 正说明它认下了凭据 —— 只写「凭据有效」而把依据藏起来，用户去翻日志看见 400
-    # 会以为检测坏了（这正是线上实测暴露的困惑点）。
+    # 正常账号的提示要让人看懂「为什么是有效的」，但不能出现会被读成故障的措辞。
+    # 探测手段（发一个不存在的模型名看上游怎么回）必须讲清楚 ——
+    # 只写「凭据有效」而藏起依据，用户去翻日志看见 400 会以为检测坏了；
+    # 但把「模型不存在」这种字眼直接摆在结论旁边，又会被读成「账号有问题」。
+    # 所以依据要说得像一句解释，而不是甩一个错误名给用户。
     toast = result.get("probeToast")
-    check("检测结论提示里带上判定依据", bool(toast) and "模型不存在" in toast,
+    check("检测结论提示带上判定依据", bool(toast) and "不存在" in toast,
           f"got {toast}")
+    check("提示把探测手段解释成人话（不是甩错误名）",
+          bool(toast) and "试" in toast and "认下" in toast, f"got {toast}")
     # 界面必须按 state 判定，而不是拿 verdict 或状态码自己解释 ——
     # 那正是「同一个账号在不同页面结论不同」的来源。
-    check("检测提示读的是 state 而不是 verdict",
+    check("检测提示读的是 state（结论文案来自 message）",
           bool(toast) and "凭据有效" in toast, f"got {toast}")
+    # 正常账号绝不能被标成异常样式：过去 restricted 与 invalid 共用红色，
+    # 正常账号也会被这种「一律醒目」的写法波及。
+    check("正常账号用 ok 档样式而非错误档",
+          "wb-api-toast-ok" in (result.get("probeToastClasses") or "")
+          or "wb-api-toast-warn" not in (result.get("probeToastClasses") or ""),
+          str(result.get("probeToastClasses")))
 
     print("\n[9] 巡检面板：一致性自检入口与结果渲染")
     af = result.get("auditFetch")

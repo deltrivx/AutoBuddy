@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.11"
+VERSION_DEFAULT = "0.4.12"
 GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -656,7 +656,16 @@ def probe_account_credentials(payload: Dict[str, Any]):
     state = model_health.credential_state(result)
     # 判定依据：优先用语义表里针对**具体错误码**的解释（如 11140 → 内容审查），
     # 语义识别不出时才退回按 verdict 的通用说明。
-    evidence = model_health.SEMANTIC_LABELS.get(semantic or "") or state.get("detail")
+    #
+    # 但**「有效」这一档不给 evidence**：那一档的语义解释就是「凭据有效」，
+    # 与 message 同文，拼上去只会得到「凭据有效（凭据有效）」这种绕口令
+    # （线上实测踩到过）。有效档改用 method 说明探测手段，措辞也只讲
+    # 「用一个不存在的模型名试，上游认下了凭据即有效」，不出现听起来像
+    # 故障的「模型不存在」字样。
+    evidence = None
+    if state.get("state") != "valid":
+        evidence = (model_health.SEMANTIC_LABELS.get(semantic or "")
+                    or state.get("detail"))
     return {
         "ok": True,
         "accountId": str(acc_id),
@@ -668,6 +677,9 @@ def probe_account_credentials(payload: Dict[str, Any]):
         "state": state.get("state"),
         "message": state.get("label") or "未识别的探测结论",
         "evidence": evidence,
+        # 探测手段说明（仅「有效」档有值）。与 evidence 分开：结论与
+        # 「怎么测出来的」是两件事，混在一起会让结论文案变长变糊。
+        "method": state.get("method"),
         # 行动建议只从 credential_state 取 —— 这份文案连同 state/label/detail
         # 都在同一个函数里生成，接口不再自己拼一套。
         # 以前就是这么散的：界面一处、接口一处、巡检一处，改一处漏两处，

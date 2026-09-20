@@ -112,55 +112,6 @@ COLLAPSE_SCRIPT = r"""
     color: #1d4ed8;
     font-weight: 600;
   }
-  /* 巡检自动停用：「不是我点的」要一眼看出来，所以用琥珀色而不是灰底。
-     灰底会和「被账号池白名单排除」那种状态混淆，用户会以为自己误操作过。 */
-  .wb-audit-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 4px 10px;
-    padding: 7px 0;
-    border-bottom: 1px dashed var(--border, rgba(120, 120, 120, 0.22));
-    min-width: 0;
-  }
-  .wb-audit-row:last-of-type { border-bottom: 0; }
-  .wb-audit-state {
-    flex: 0 0 auto;
-    padding: 1px 7px;
-    border-radius: 99px;
-    font-size: 11px;
-    font-weight: 600;
-    border: 1px solid transparent;
-  }
-  .wb-audit-ok {
-    background: rgba(16, 185, 129, 0.14);
-    color: #047857;
-    border-color: rgba(16, 185, 129, 0.4);
-  }
-  .wb-audit-warn {
-    background: rgba(217, 119, 6, 0.14);
-    color: #b45309;
-    border-color: rgba(217, 119, 6, 0.4);
-  }
-  .wb-audit-bad {
-    background: rgba(239, 68, 68, 0.14);
-    color: #b91c1c;
-    border-color: rgba(239, 68, 68, 0.4);
-  }
-  .wb-audit-name { font-weight: 600; min-width: 0; }
-  .wb-audit-consistency { opacity: 0.85; }
-  .wb-audit-detail {
-    flex: 1 1 100%;
-    font-size: 11px;
-    opacity: 0.72;
-    padding-left: 2px;
-  }
-  .wb-audit-advice {
-    flex: 1 1 100%;
-    font-size: 11px;
-    padding-left: 2px;
-  }
-  .wb-audit-criteria { opacity: 0.6; font-size: 11px; }
   .wb-pool-btn-auto {
     border-color: rgba(217, 119, 6, 0.55);
     background: rgba(217, 119, 6, 0.14);
@@ -192,6 +143,13 @@ COLLAPSE_SCRIPT = r"""
   .wb-audit-bad { color: #b91c1c; border-color: rgba(185, 28, 28, 0.5); background: rgba(185, 28, 28, 0.1); }
   .wb-audit-name { flex: 0 0 auto; font-weight: 600; min-width: 0; }
   .wb-audit-consistency { flex: 0 0 auto; font-size: 12px; }
+  .wb-audit-detail {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 11px;
+    opacity: 0.72;
+    line-height: 1.5;
+  }
   .wb-audit-advice {
     flex: 1 1 240px;
     min-width: 0;
@@ -480,18 +438,51 @@ COLLAPSE_SCRIPT = r"""
     z-index: 9999;
     transform: translateX(-50%);
     padding: 8px 16px;
-    border-radius: 999px;
+    /* 圆角不再用 999px：结论文案是多行的（账号名 + 结论 + 依据 + 建议），
+       胶囊形在多行下两端会被拉出怪异的弧形，移动端尤其明显。 */
+    border-radius: 10px;
     font-size: 12.5px;
     line-height: 1.6;
-    color: #ffffff;
-    background: rgba(15, 23, 42, 0.92);
+    /* 必须限制宽度并允许换行。此前只有 padding 没有上限，
+       长文案会把 toast 撑得比视口还宽，两端被裁掉、整块像贴歪的色带。 */
+    max-width: min(560px, calc(100vw - 32px));
+    box-sizing: border-box;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: left;
+    /* 默认档（纯告知）跟随主题前景/背景，而不是写死深色 ——
+       写死深色在浅色主题下就是一块突兀的黑条。 */
+    color: var(--background, #ffffff);
+    background: color-mix(in srgb, var(--foreground, #0f172a) 92%, transparent);
     box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.2s ease, transform 0.2s ease;
   }
   .wb-api-toast-show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
-  .wb-api-toast-err { background: rgba(185, 28, 28, 0.94); }
+  /* 三档语义配色。此前只有「普通 / 红色错误」两档，「账号受限」被并进红色档，
+     在语义上错误地暗示了「凭据坏了」—— 而它的凭据其实是好的。
+     颜色只用于区分**该不该动手**，不用于表达严重程度：绿=无需处理，
+     琥珀=需要关注但重登没用，红=需要你介入（重新登录）。 */
+  .wb-api-toast-ok {
+    color: #ffffff;
+    background: rgba(4, 120, 87, 0.95);
+  }
+  .wb-api-toast-warn {
+    color: #ffffff;
+    background: rgba(180, 83, 9, 0.95);
+  }
+  .wb-api-toast-err { background: rgba(185, 28, 28, 0.95); }
+  @media (max-width: 560px) {
+    .wb-api-toast {
+      bottom: 16px;
+      padding: 9px 13px;
+      font-size: 12px;
+      /* 窄屏再收一点边距，避免贴边；圆角同步收小更好看。 */
+      max-width: calc(100vw - 20px);
+      border-radius: 9px;
+    }
+  }
   /* ---------------- 设置页：关于面板 ----------------
      这一块是设置页的最后一段：容器是自建项目，用户需要知道它是什么、
      跑的是哪个镜像、出问题去哪里看，否则只能靠翻文档回忆。 */
@@ -1136,23 +1127,40 @@ COLLAPSE_SCRIPT = r"""
             .then(function (r) { return r.json(); })
             .then(function (res) {
               if (!res || res.error) {
-                wbToast("检测失败：" + ((res && res.error) || "无法访问接口"), true);
+                wbToast("检测失败：" + ((res && res.error) || "无法访问接口"), "error");
                 return;
               }
               // 结论一律以 state 为准（valid / invalid / restricted / unknown）。
               // 不再自行解释 verdict 或状态码 —— 那正是过去同一个账号
               // 在这里显示有效、在巡检里显示失效的来源。
-              // 只有「确实有问题」的两种状态用醒目样式，其余是轻提示。
+              //
+              // 配色也要跟着状态走，而不是「非 valid 就一律红」：
+              // 受限账号（restricted）的凭据其实是好的，用红色会让用户以为
+              // 凭据坏了、跑去重新登录 —— 而重登对这种情况毫无帮助。
+              // 三档语义：valid=绿、restricted/unknown=琥珀、invalid=红。
               var state = res.state || "";
+              var tone = state === "valid" ? "ok"
+                       : (state === "invalid" ? "error" : "warn");
               var msg = (res.accountName || "账号") + "：" + (res.message || res.verdict);
-              // 判定依据（如「上游以模型不存在应答，说明已认下凭据」）。
-              // 探测刻意用一个不存在的模型名，上游非 2xx 是预期内的 ——
-              // 不写出依据，用户去翻日志看见 400 会以为检测坏了。
-              if (res.evidence) { msg += "（" + res.evidence + "）"; }
+              // 依据分两种，别混着拼：
+              //
+              // - `evidence`：**问题**的依据，形如「凭据有效，但请求被上游拦截」。
+              //   只在与结论不同时附上，否则会出现「凭据有效（凭据有效）」的绕口令。
+              // - `method`：正常账号的**探测手段**说明，形如「用一个不存在的模型名试；
+              //   上游如实回应『该模型不存在』，说明它已认下这张凭据」。
+              //
+              // 后者必须讲成人话：直接甩「上游以模型不存在应答」给用户，
+              // 会被读成「这个账号的模型有问题」—— 而结论恰恰是「一切正常」。
+              // 说清「这是我们的探测办法」，用户才明白为什么结论是好的。
+              if (state === "valid" && res.method) {
+                msg += "（" + res.method + "）";
+              } else if (res.evidence && res.evidence !== res.message) {
+                msg += "（" + res.evidence + "）";
+              }
               if (res.action) { msg += " " + res.action; }
-              wbToast(msg, state === "invalid" || state === "restricted");
+              wbToast(msg, tone);
             })
-            .catch(function (e) { wbToast("检测请求失败：" + e, true); })
+            .catch(function (e) { wbToast("检测请求失败：" + e, "error"); })
             .then(function () {
               probe.disabled = false;
               probe.textContent = "检测账号";
@@ -1239,16 +1247,24 @@ COLLAPSE_SCRIPT = r"""
 
   var WB_API_BASE_LS = "wb_api_base_url";
 
-  function wbToast(message, isError) {
+  // tone: "info"（默认，纯告知）| "ok" | "warn" | "error"
+  //
+  // 仍然接受**布尔**作为第二个参数（true = error），旧调用点不必全改；
+  // 但新代码请传字符串档位 —— 二档不够用：「账号受限」既不是成功也不是
+  // 需要你重登的错误，用红色会把人引向错误的排查方向。
+  function wbToast(message, tone) {
+    var t = typeof tone === "string" ? tone : (tone ? "error" : "info");
     var el = document.createElement("div");
-    el.className = "wb-api-toast" + (isError ? " wb-api-toast-err" : "");
+    el.className = "wb-api-toast" + (t === "info" ? "" : " wb-api-toast-" + t);
     el.textContent = message;
     document.body.appendChild(el);
     requestAnimationFrame(function () { el.classList.add("wb-api-toast-show"); });
+    // 文案越长停留越久：结论 + 依据 + 建议三行挤在一起一闪而过，等于没提示。
+    var hold = 1800 + Math.max(0, String(message || "").length - 24) * 45;
     setTimeout(function () {
       el.classList.remove("wb-api-toast-show");
       setTimeout(function () { el.remove(); }, 260);
-    }, 1800);
+    }, Math.min(hold, 7000));
   }
 
   function wbCopy(text, okMessage) {

@@ -5,7 +5,7 @@
 本页是 **WorkBuddy Switch 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.4.11](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.11)
+**当前稳定版：** [v0.4.12](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.12)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.4.12](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.12) | 2026-09-20 | 修正「检测账号」提示的配色与措辞，正常结论不再读作故障 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.12.md) |
 | [v0.4.11](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.11) | 2026-09-20 | 统一账号有效性判定标准，修正内容审查被误判为凭据失效 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.11.md) |
 | [v0.4.10](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.10) | 2026-09-20 | 修正「检测账号」的结论表述，说明凭据有效的判定依据 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.10.md) |
 | [v0.4.9](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.9) | 2026-09-20 | 新增账号级停用与凭据检测；修复手机等窄屏下侧边栏与设置项被挤压 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.9.md) |
@@ -54,7 +55,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/workbuddy-switch:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.11    # 锁定版本
+docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.12    # 锁定版本
 ```
 
 ## 部署产物

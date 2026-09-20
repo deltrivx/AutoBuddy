@@ -17,6 +17,26 @@
 
 ---
 
+## [v0.4.12] - 2026-09-20
+
+<!-- summary: 修正「检测账号」提示的配色与措辞，正常结论不再读作故障 -->
+
+### 修复
+
+- **提示配色与结论一一对应**：提示条的配色此前只有「默认」与「红色错误」两档，
+  账号被上游内容审查拦截时也落入红色错误档，与「凭据已失效」看起来毫无区别。
+  现在按结论分三档：正常为绿色、受限为琥珀色、失效为红色，颜色即结论。
+
+- **提示条在移动端不再溢出**：提示条此前未限制宽度、不换行，长结论在窄屏上
+  被拉成一条超出屏幕的横条，背景随之被裁切。现在限制宽度并允许换行，
+  圆角也改为常规提示条的样式。
+
+- **「凭据有效」不再附带读作故障的说明**：正常账号此前提示「凭据有效，但上游以
+  未知模型拒绝」—— 后者本意是说明判定依据（探测刻意用一个不存在的模型名），
+  措辞却让人以为上游在报错。现在改为直接说明探测方式，不再出现「拒绝」「失败」一类字眼。
+
+---
+
 ## [v0.4.11] - 2026-09-20
 
 <!-- summary: 统一账号有效性判定标准，修正内容审查被误判为凭据失效 -->
@@ -773,7 +793,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.11...HEAD
+[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.12...HEAD
+[v0.4.12]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.11...v0.4.12
 [v0.4.11]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.10...v0.4.11
 [v0.4.10]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.9...v0.4.10
 [v0.4.9]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.8...v0.4.9
