@@ -5,7 +5,7 @@
 本页是 **WorkBuddy Switch 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.4.9](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.9)
+**当前稳定版：** [v0.4.10](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.10)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.4.10](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.10) | 2026-09-20 | 修正「检测账号」的结论表述，说明凭据有效的判定依据 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.10.md) |
 | [v0.4.9](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.9) | 2026-09-20 | 新增账号级停用与凭据检测；修复手机等窄屏下侧边栏与设置项被挤压 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.9.md) |
 | [v0.4.8](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.8) | 2026-09-20 | 巡检落盘改为只叠加本轮判定，巡检期间点下的手动禁用不再被覆盖 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.8.md) |
 | [v0.4.7](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.7) | 2026-09-20 | 账号卡片把「手动禁用」与「巡检禁用」分开计数，巡检也不再探测手动禁用的模型 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.7.md) |
@@ -52,7 +53,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/workbuddy-switch:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.9    # 锁定版本
+docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.10    # 锁定版本
 ```
 
 ## 部署产物

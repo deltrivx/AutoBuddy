@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.9"
+VERSION_DEFAULT = "0.4.10"
 GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -655,13 +655,21 @@ def probe_account_credentials(payload: Dict[str, Any]):
         "auth_failed": "凭据已失效，请重新登录该账号",
         "transient": "暂时没拿到结论（网络或上游异常），可稍后再试",
     }
+    # 不给调用方看原始状态码：探测刻意用一个不存在的模型名，上游回 400/404 正是
+    # 「认下了这个 token」的证据。把 400 原样透出去，会被读成「探测失败了」，
+    # 与同一响应里的「凭据有效」自相矛盾。改为透出**判定依据**，说明结论是怎么来的。
+    evidence = {
+        "available": "上游已接受该凭据（以模型不存在拒绝）",
+        "auth_failed": "上游以鉴权类错误拒绝",
+        "transient": "上游未给出可判定的响应",
+    }
     return {
         "ok": True,
         "accountId": str(acc_id),
         "accountName": _account_label(acc),
         "verdict": verdict,
         "message": messages.get(verdict, "未识别的探测结论"),
-        "status": result.get("status"),
+        "evidence": evidence.get(verdict),
         "elapsedMs": result.get("elapsedMs"),
         "error": result.get("error"),
     }

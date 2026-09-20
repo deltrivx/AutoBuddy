@@ -976,6 +976,16 @@ check("5xx 不下结论",
 check("网络异常不下结论",
       model_health.classify_account_probe(None, "ConnectTimeout") == "transient")
 
+# 场景四点五：探测接口对外只给**结论**，不给原始状态码。
+# 探测刻意用一个不存在的模型名，上游回 400/404 正是「认下了 token」的证据；
+# 把 400 原样透给界面，会被读成「探测失败了」，与同一条响应里的「凭据有效」自相矛盾。
+_probe_fn = main_src[main_src.index("def probe_account_credentials"):
+                     main_src.index("@app.post", main_src.index("def probe_account_credentials"))]
+check("探测接口不下发原始状态码",
+      '"status":' not in _probe_fn and "result.get(\"status\")" not in _probe_fn)
+check("探测接口给出判定依据",
+      '"evidence"' in _probe_fn)
+
 # 场景五：手动停用不受巡检影响（阳性对照）。
 account_policy.save_policy({})
 pol5 = account_policy.load_policy()

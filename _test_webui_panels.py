@@ -145,8 +145,16 @@ ACCOUNT_MODELS = {
     "disabledBySource": {"manual": 1, "auto": 1},
 }
 
-ACCOUNT_POOL = {
-    "mode": "rotate", "enabledAccountIds": ["acc-1"], "preferredAccountId": None,
+# 「检测账号」的响应夹具。刻意**不带** status 字段：接口已改为只下发判定结论
+# 与依据，夹具跟着同构才有意义 —— 否则前端偷偷回去读 status 也验不出来。
+ACCOUNT_PROBE = {
+    "ok": True, "accountId": "acc-1", "accountName": "账号甲",
+    "verdict": "available", "message": "凭据有效",
+    "evidence": "上游已接受该凭据（以模型不存在拒绝）",
+    "elapsedMs": 258, "error": None,
+}
+
+ACCOUNT_POOL = {    "mode": "rotate", "enabledAccountIds": ["acc-1"], "preferredAccountId": None,
     # mode 用 auto 而不是 rotate：网关实际下发的是 auto/manual 两种，
     # 夹具写错模式会让「首选账号」那类断言在错误的前提下通过。
     "allEnabledByDefault": False,
@@ -365,9 +373,14 @@ function payloadFor(url) {
   if (u.indexOf("/api/account-models") >= 0) return PAYLOADS.accountModels;
   if (u.indexOf("/api/account-pool") >= 0) return PAYLOADS.accountPool;
   if (u.indexOf("/api/token-stats") >= 0) return PAYLOADS.tokenStats;
+  if (u.indexOf("/api/account-health/probe") >= 0) return PAYLOADS.accountProbe;
   return {};
 }
 
+// wbToast 会调 requestAnimationFrame 加进场类名，Node 里没有这个 API。
+// 不补桩的话，点一次「检测账号」就会抛出一个未处理的拒绝，
+// 冒烟断言会把它读成「渲染过程抛异常」而误报。
+const requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
 const navigator = { userAgent: "node-test", clipboard: undefined };
 const localStorage = {
   getItem: (k) => (k in store ? store[k] : null),
@@ -406,7 +419,7 @@ let runError = null;
 try { WB.run(); } catch (e) { runError = "run() 抛异常：" + (e && e.message); }
 
 // 让所有 fetch 的 Promise 链跑完
-setTimeout(() => {
+setTimeout(async () => {
   // ---- 结构断言 ----
   function walk(node, out) {
     if (!node) return out;
@@ -490,6 +503,7 @@ setTimeout(() => {
   // 真接上了才有效（面板消失那类事故就是这么来的）。
   let probeFetch = null;
   let probeAfterCount = 0;
+  let probeToast = null;
   try {
     const bar = (ACCOUNT_CARDS[0].sec.children || [])
       .find((k) => (k.className || "").split(/\s+/).indexOf("wb-pool-bar") >= 0);
@@ -500,6 +514,15 @@ setTimeout(() => {
       probeBtn.onclick();
       probeAfterCount = fetchLog.length - before;
       probeFetch = fetchLog[fetchLog.length - 1] || null;
+      // toast 是直接挂到 body 上的（不是我们注入的节点），且要等 fetch 链跑完。
+      // 轮询读而不是 sleep 定长：fetch 桩是同步 resolve，通常一拍就有。
+      for (let i = 0; i < 40 && !probeToast; i += 1) {
+        await new Promise((r) => setTimeout(r, 10));
+        const hit = (document.body.children || [])
+          .map((e) => String(e.textContent || ""))
+          .filter((t) => t.indexOf("账号甲") >= 0 && t.indexOf("凭据") >= 0);
+        probeToast = hit.length ? hit[hit.length - 1] : null;
+      }
     }
   } catch (e) {
     errors.push("点击「检测账号」抛异常：" + ((e && e.message) || String(e)));
@@ -530,6 +553,7 @@ setTimeout(() => {
     cardPoolButtons,
     probeFetch,
     probeAfterCount,
+    probeToast,
   };
   process.stdout.write("__RESULT__" + JSON.stringify(result) + "\n");
 }, 60);
@@ -557,7 +581,8 @@ def main() -> int:
                .replace("__PAYLOADS__", json.dumps({
                    "gatewayInfo": GATEWAY_INFO, "keysStatus": KEYS_STATUS,
                    "health": HEALTH, "accountModels": ACCOUNT_MODELS,
-                   "accountPool": ACCOUNT_POOL, "tokenStats": {}},
+                   "accountPool": ACCOUNT_POOL, "tokenStats": {},
+                   "accountProbe": ACCOUNT_PROBE},
                    ensure_ascii=False))
                .replace("__SCRIPT__", stripped))
 
@@ -675,6 +700,13 @@ def main() -> int:
           probe is not None and probe.get("method") == "POST", f"got {probe}")
     check("探测请求带上 accountId",
           probe is not None and "accountId" in str(probe.get("body") or ""), f"got {probe}")
+
+    # 结论提示要带上判定依据。探测刻意用一个不存在的模型名，上游回「模型不存在」
+    # 正说明它认下了凭据 —— 只写「凭据有效」而把依据藏起来，用户去翻日志看见 400
+    # 会以为检测坏了（这正是线上实测暴露的困惑点）。
+    toast = result.get("probeToast")
+    check("检测结论提示里带上判定依据", bool(toast) and "上游已接受该凭据" in toast,
+          f"got {toast}")
 
     print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
     return 1 if _fail else 0

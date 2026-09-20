@@ -17,6 +17,18 @@
 
 ---
 
+## [v0.4.10] - 2026-09-20
+
+<!-- summary: 修正「检测账号」的结论表述，说明凭据有效的判定依据 -->
+
+### 修复
+
+- **「检测账号」的结果更易于理解**：结论提示现在会说明判定依据
+  （如「上游已接受该凭据」），不再单独暴露原始响应码。此前该接口会带上 400，
+  与同一响应里的「凭据有效」自相矛盾，容易被误读成检测失败。
+
+---
+
 ## [v0.4.9] - 2026-09-20
 
 <!-- summary: 新增账号级停用与凭据检测；修复手机等窄屏下侧边栏与设置项被挤压 -->
@@ -725,7 +737,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.9...HEAD
+[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.10...HEAD
+[v0.4.10]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.9...v0.4.10
 [v0.4.9]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.8...v0.4.9
 [v0.4.8]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.7...v0.4.8
 [v0.4.7]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.6...v0.4.7

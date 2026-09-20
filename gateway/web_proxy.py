@@ -995,8 +995,14 @@ COLLAPSE_SCRIPT = r"""
                 return;
               }
               // 异常结论用 toast 说清楚结论与建议，正常结论给个轻提示即可。
-              wbToast((res.accountName || "账号") + "：" + (res.message || res.verdict),
-                      res.verdict !== "available");
+              var msg = (res.accountName || "账号") + "：" + (res.message || res.verdict);
+              // 有效结论附上判定依据。探测刻意用一个不存在的模型名，
+              // 上游回「模型不存在」正说明它认下了凭据 —— 不写出来，
+              // 用户去翻日志看见 400 会以为检测坏了。
+              if (res.verdict === "available" && res.evidence) {
+                msg += "（" + res.evidence + "）";
+              }
+              wbToast(msg, res.verdict !== "available");
             })
             .catch(function (e) { wbToast("检测请求失败：" + e, true); })
             .then(function () {
