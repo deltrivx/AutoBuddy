@@ -1067,12 +1067,15 @@ check("5xx 不下结论",
 check("网络异常不下结论",
       model_health.classify_account_probe(None, "ConnectTimeout") == "transient")
 
-# 场景五：行动建议。每个状态都要给出「下一步做什么」——
-# restricted 与 invalid 都是 403，长得像但处理方式完全相反：
-# 一个要重登，一个重登多少次都没用。这里把两者的建议钉死。
-check("凭据失效建议重新登录",
+# 场景五：行动建议。restricted 与 invalid 都是 403，长得像但处理方式完全相反：
+# 一个要重登，一个重登多少次都没用。这里把两者的区别钉死。
+check("凭据失效的提示已含「请重新登录」",
       "重新登录" in (model_health.credential_state(
-          {"verdict": "auth_failed"}) or {}).get("action", ""),
+          {"verdict": "auth_failed"}) or {}).get("userMessage", ""),
+      str(model_health.credential_state({"verdict": "auth_failed"})))
+check("凭据失效不再另给一句重复的建议",
+      not (model_health.credential_state(
+          {"verdict": "auth_failed"}) or {}).get("action"),
       str(model_health.credential_state({"verdict": "auth_failed"})))
 _r_action = (model_health.credential_state(
     {"verdict": "restricted", "semantic": "restricted"}) or {}).get("action", "")
@@ -1314,12 +1317,24 @@ for _verdict, _sem, _want in (
     check(f"实测·{_verdict} 的用户提示不含探测细节",
           not any(w in _um for w in ("不存在", "模型名", "凭据", "状态码", "上游以")),
           _um)
+    # 提示要短。界面把 userMessage 单独显示，不再拼 evidence / action ——
+    # 但那两个字段本身也不该写成一段话：它们会出现在自检面板与悬停说明里。
+    check(f"实测·{_verdict} 的用户提示够短（≤ 20 字）", len(_um) <= 20, f"{len(_um)} 字：{_um}")
+    _act = _st.get("action") or ""
+    check(f"实测·{_verdict} 的建议够短（≤ 20 字）", len(_act) <= 20, f"{len(_act)} 字：{_act}")
+    check(f"实测·{_verdict} 的建议不含分号（不是把多句拼起来）",
+          "；" not in _act, _act)
 
 check("实测·正常账号的提示是肯定句（可以放心使用）",
       "可以放心使用" in (model_health.credential_state(
           {"verdict": "available", "semantic": "model_missing"}).get("userMessage") or ""),
       model_health.credential_state(
           {"verdict": "available", "semantic": "model_missing"}).get("userMessage"))
+check("实测·正常账号不附带建议（无事需处理）",
+      model_health.credential_state(
+          {"verdict": "available", "semantic": "model_missing"}).get("action") is None,
+      model_health.credential_state(
+          {"verdict": "available", "semantic": "model_missing"}).get("action"))
 check("实测·风控提示明说重登无效",
       "重新登录没用" in (model_health.credential_state(
           {"verdict": "restricted", "semantic": "restricted"}).get("action") or ""),

@@ -750,15 +750,18 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "probe_defect": SEMANTIC_LABELS["probe_defect"],
         "transient": SEMANTIC_LABELS["transient"],
     }.get(verdict, "未得出结论")
-    # 每种状态都给出**下一步该做什么**。只报结论不给行动，用户就只能猜 ——
-    # 尤其 restricted 与 invalid 长得很像（都是 403），但处理方式完全相反：
-    # 一个要重登，一个重登多少次都没用。
+    # 每档一句**可执行**的建议，措辞尽量短 —— 它会被放在提示里给人看，
+    # 长篇解释没人读完。只保留「该做什么」，不再复述结论
+    #（结论已经由 userMessage 说过，重复一遍等于让人读两遍同一件事）。
     action = {
         "valid": None,
-        "invalid": "请重新登录该账号",
-        "restricted": "该账号被上游风控拦下，重新登录没用；"
-                      "请检查账号状态或联系上游，也可先停用该账号避免占用轮询",
-        "unknown": "稍后重试；若持续如此请检查网络与上游状态",
+        # userMessage 已经说了「请重新登录」，这里不再重复一遍。
+        "invalid": None,
+        # 风控的关键信息只有一个：重新登录没用。
+        # 过去这一句后面还跟着「请检查账号状态或联系上游，也可先停用该账号避免
+        # 占用轮询」，把一件小事写成了一段话 —— 而其中「先停用」巡检已经自动做了。
+        "restricted": "重新登录没用，需要确认账号状态",
+        "unknown": "稍后重试",
     }.get(state)
     # 面向用户的整句提示。给界面直接显示用，**不暴露任何探测细节**。
     #

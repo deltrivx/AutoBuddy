@@ -1146,26 +1146,21 @@ COLLAPSE_SCRIPT = r"""
               var state = res.state || "";
               var tone = state === "valid" ? "ok"
                        : (state === "invalid" ? "error" : "warn");
-              // 提示只讲两件事：**账号现在能不能用**，以及**为什么**。
+              // 提示只讲一件事：**账号现在能不能用**，外加一句该怎么办。
               //
-              // 措辞一律用后端下发的 userMessage（一句人话），不再在这里
-              // 拼 evidence / method —— 那两个字段是排查用的实现细节。
-              // 曾经把探测手段拼在结论后面，正常账号的提示成了
-              // 「凭据有效（用一个不存在的模型名试…）」：用户读到的重点是
-              // 「不存在的模型名」，像在报故障，而结论恰恰是「一切正常」。
+              // 全文案来自后端下发的 userMessage（一句人话），**不再拼
+              // evidence / action**。它们说的是同一件事的另外两个说法：
               //
-              // 风控就说风控：「账号被上游风控拦截」比「凭据有效，但请求被上游
-              // 拦截」更贴近用户的理解 —— 前者直接指出该找谁、该怎么办。
+              //   userMessage  账号被上游风控拦截，暂时用不了
+              //   evidence     账号被上游风控拦截              ← 同义重复
+              //   action       该账号被上游风控拦下，重新登录没用；请检查账号
+              //                状态或联系上游，也可先停用该账号避免占用轮询
+              //
+              // 三句拼起来是一段要读三遍的话，而用户只需要知道
+              //「能不能用、要不要动手」。完整成因仍在接口里，排查时看得到。
+              // 正常档连建议都没有：多一句话反而让人以为还有别的事要处理。
               var name = res.accountName || "账号";
               var msg = name + "：" + (res.userMessage || res.message || res.verdict);
-              // 原因与建议只在**出问题时**附上；正常账号不需要，
-              // 多一句话反而让人以为还有别的事要处理。
-              if (state !== "valid") {
-                if (res.evidence && res.evidence !== res.message) {
-                  msg += "（" + res.evidence + "）";
-                }
-                if (res.action) { msg += " " + res.action; }
-              }
               wbToast(msg, tone);
             })
             .catch(function (e) { wbToast("检测请求失败：" + e, "error"); })

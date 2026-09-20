@@ -17,6 +17,25 @@
 
 ---
 
+## [v0.4.14] - 2026-09-20
+
+<!-- summary: 异常账号的提示收成一句，详情从提示里移出 -->
+
+### 修复
+
+- **异常账号的提示不再冗长**：出错时的提示此前会把三句意思相同的话依次拼上 ——
+  结论文案、判定依据、处理建议，读起来要读三遍才知道发生了什么。现在提示只保留
+  一句结论，判定依据与完整成因移到悬浮说明与接口里，需要排查时仍可查。
+
+- **建议不再复述结论**：风控账号的建议由「重新登录没用，需要确认账号状态」保留，
+  凭据失效档去掉了与结论重复的「重新登录即可恢复」—— 结论已经说了要重新登录，
+  再说一遍只是让提示变长。
+
+- **术语统一为「账号被风控」**：自检面板与接口说明里的「账号受限」统一改成
+  「账号被风控」，与提示口径一致。
+
+---
+
 ## [v0.4.13] - 2026-09-20
 
 <!-- summary: 提示改说人话，风控账号纳入自动停用，恢复正常才自动放回 -->
@@ -831,7 +850,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.13...HEAD
+[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.14...HEAD
+[v0.4.14]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.13...v0.4.14
 [v0.4.13]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.12...v0.4.13
 [v0.4.12]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.11...v0.4.12
 [v0.4.11]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.10...v0.4.11

@@ -814,6 +814,13 @@ def main() -> int:
     # 那正是「同一个账号在不同页面结论不同」的来源。
     check("检测提示读的是 state（结论文案来自 userMessage）",
           bool(toast) and "账号正常" in toast, f"got {toast}")
+    # 提示只能有一句。曾经把 userMessage + evidence + action 三段拼在一起，
+    # 三者说的是同一件事，读起来像一段话 —— 用户反馈「异常账号提示冗长」。
+    # 这里按「账号名：一句结论」的形状断言，多于一句就说明又拼了东西。
+    check("提示只含一句结论（不拼接 evidence / action）",
+          bool(toast) and toast.count("：") == 1
+          and len(toast) < 40 and "；" not in toast,
+          f"len={len(toast or '')} got {toast}")
     # 正常账号绝不能被标成异常样式：过去 restricted 与 invalid 共用红色，
     # 正常账号也会被这种「一律醒目」的写法波及。
     check("正常账号用 ok 档样式而非错误档",

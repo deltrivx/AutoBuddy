@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.13"
+VERSION_DEFAULT = "0.4.14"
 GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -770,9 +770,9 @@ def audit_account_health():
                 consistency = "凭据失效"
                 advice = "先重新登录该账号；凭据修好之前，它名下模型的探测结果都不代表模型好坏。"
             elif cred["state"] == "restricted":
-                consistency = "账号受限"
-                advice = ("凭据有效，但请求被上游策略拦截（内容审查 / 风控）。"
-                          "这不是登录问题 —— 重新登录没用，需要向上游确认账号状态。")
+                consistency = "账号被风控"
+                advice = ("登录是好的，但请求被上游风控拦下。重新登录没用，"
+                          "需要确认账号状态；巡检会自动停用它。")
             elif cred["state"] == "unknown":
                 consistency = "凭据未判定"
                 advice = "凭据探测未得到结论，模型侧的结论仅供参考。"
@@ -780,8 +780,8 @@ def audit_account_health():
                 consistency = "一致：均正常"
                 advice = "凭据与模型两侧都正常，无需处理。"
             elif "restricted" in verdicts:
-                consistency = "账号受限"
-                advice = "凭据有效，但模型请求被上游拦截，同「账号受限」处理。"
+                consistency = "账号被风控"
+                advice = "登录是好的，但模型请求被上游风控拦下，同「账号被风控」处理。"
             elif model_rows and "unavailable" in verdicts:
                 consistency = "凭据有效，部分模型不可用"
                 advice = "凭据没问题，是这些模型本身对该账号不可用（无权限 / 不存在），可单独禁用它们。"
@@ -817,8 +817,8 @@ def audit_account_health():
         "accounts": len(rows),
         "summary": summary,
         "criteria": {
-            "credential": "由不存在的模型名探测裁定：上游回「模型不存在」= 凭据有效；"
-                          "回鉴权类错误 = 凭据失效；回内容审查 = 账号受限（凭据有效）。",
+            "credential": "用一个不存在的模型名探测：上游回「模型不存在」= 登录正常；"
+                          "回鉴权类错误 = 登录过期；回风控 = 被风控（登录是好的）。",
             "model": "用真实模型名探测：只依据上游错误码判定，"
                      "内容审查与参数错误不会被算作模型不可用。",
             "note": "凭据有效性只由账号级探测裁定，不从模型探测结果反推。",
