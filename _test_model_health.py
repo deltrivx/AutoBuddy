@@ -1207,5 +1207,124 @@ for _v, _expect in (("restricted", False), ("probe_defect", False),
     check(f"实测·{_v} → {'写禁用' if _expect else '不写禁用'}",
           bool(_rep["disabled"]) == _expect, str(_rep["disabled"]))
 
+# ---------------------------------------------------------------------------
+# 账号被风控时，模型级自动启用必须被拦住
+#
+# 场景：账号整体被风控（账号探测 restricted），但某个模型这一轮偶然探测通过。
+# 旧行为只看模型维度，于是把它放回轮询 —— 下一轮又失败，来回抖动。
+# 风控是**账号级**状态，个别模型偶然通过不代表能用。
+# ---------------------------------------------------------------------------
+_blocked = model_health.apply_verdicts(
+    {"acc-b": {"hy3": "auto"}}, "acc-b",
+    [{"model": "hy3", "verdict": "available"}],
+    auto_enable=True, account_blocked=True)
+check("实测·账号风控时模型不被自动启用",
+      "hy3" not in _blocked["enabled"], str(_blocked["enabled"]))
+check("实测·账号风控时模型仍留在禁用策略里",
+      "hy3" in _blocked["disabledAfter"], str(_blocked["disabledAfter"]))
+# 对照：账号正常时同样输入应当被放回 —— 证明「不启用」确实由 account_blocked 引起，
+# 而不是别的什么原因恰好让它没启用。
+_free = model_health.apply_verdicts(
+    {"acc-b": {"hy3": "auto"}}, "acc-b",
+    [{"model": "hy3", "verdict": "available"}],
+    auto_enable=True, account_blocked=False)
+check("实测·账号正常时同输入会被自动启用（对照）",
+      _free["enabled"] == ["hy3"], str(_free["enabled"]))
+
+# ---------------------------------------------------------------------------
+# 账号级：风控也自动停用；只有「正常」才自动放回
+#
+# 账号 id 用待测账号自己的（accounts[0]），不要另编一个 —— 探测结果按真实 id 归集，
+# 写错 id 会让断言读到空列表，看起来像「逻辑没生效」。
+# ---------------------------------------------------------------------------
+_AID = str(accounts[0].get("id") or "")
+# FakeClient 按 **token** 索引映射与账号级预设，账号 id 是另一回事 ——
+# 混用会让所有预设都落空，断言读到空列表而误判成「逻辑没生效」。
+_TOK = str(accounts[0].get("access_token") or "")
+model_policy.save_policy({})
+account_policy.save_policy({})
+_rc_round = model_health.run_round(
+    accounts=[accounts[0]],
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient(
+        {(_TOK, "hy3"): 403, (_TOK, "kimi-k3"): 403},
+        account_codes={_TOK: 403},
+        account_bodies={_TOK: '{"code":11140,"msg":"request illegal"}'},
+        bodies={(_TOK, "hy3"): '{"code":11140,"msg":"request illegal"}',
+                (_TOK, "kimi-k3"): '{"code":11140,"msg":"request illegal"}'},
+    ),
+    base_url_for=lambda variant="ai": "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("实测·账号被风控 → 该账号被自动停用",
+      _AID in (_rc_round.get("accountsDisabled") or []),
+      f"got {_rc_round.get('accountsDisabled')}")
+check("实测·被停用的风控账号计入 restricted 列表",
+      any(r.get("id") == _AID for r in (_rc_round.get("restricted") or [])),
+      f"got {_rc_round.get('restricted')}")
+check("实测·风控停用写的是 auto 来源（可被自愈放回）",
+      account_policy.load_policy().get(_AID) == "auto",
+      f"got {account_policy.load_policy()}")
+
+# 已被停用的账号，下一轮探测恢复正常 → 自动放回轮询
+account_policy.save_policy({_AID: "auto"})
+_ok_round = model_health.run_round(
+    accounts=[accounts[0]],
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient({(_TOK, "hy3"): 200, (_TOK, "kimi-k3"): 200}),
+    base_url_for=lambda variant="ai": "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("实测·账号恢复正常 → 被自动放回轮询",
+      _AID in (_ok_round.get("accountsEnabled") or []),
+      f"got {_ok_round.get('accountsEnabled')}")
+check("实测·放回后策略里不再有该账号",
+      _AID not in account_policy.load_policy(),
+      f"got {account_policy.load_policy()}")
+
+# 人工停用的账号，巡检无权替人放开
+account_policy.save_policy({_AID: "manual"})
+_man_round = model_health.run_round(
+    accounts=[accounts[0]],
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient({(_TOK, "hy3"): 200, (_TOK, "kimi-k3"): 200}),
+    base_url_for=lambda variant="ai": "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("实测·人工停用的账号不被巡检自动放回",
+      _AID not in (_man_round.get("accountsEnabled") or [])
+      and account_policy.load_policy().get(_AID) == "manual",
+      f"enabled={_man_round.get('accountsEnabled')} policy={account_policy.load_policy()}")
+
+# ---------------------------------------------------------------------------
+# 面向用户的文案：只讲「能不能用」，不讲探测细节
+# ---------------------------------------------------------------------------
+for _verdict, _sem, _want in (
+        ("available", "model_missing", "账号正常"),
+        ("auth_failed", "auth", "重新登录"),
+        ("restricted", "restricted", "风控"),
+        ("transient", "transient", "重试"),
+):
+    _st = model_health.credential_state({"verdict": _verdict, "semantic": _sem})
+    _um = _st.get("userMessage") or ""
+    check(f"实测·{_verdict} 的用户提示含「{_want}」", _want in _um, _um)
+    check(f"实测·{_verdict} 的用户提示不含探测细节",
+          not any(w in _um for w in ("不存在", "模型名", "凭据", "状态码", "上游以")),
+          _um)
+
+check("实测·正常账号的提示是肯定句（可以放心使用）",
+      "可以放心使用" in (model_health.credential_state(
+          {"verdict": "available", "semantic": "model_missing"}).get("userMessage") or ""),
+      model_health.credential_state(
+          {"verdict": "available", "semantic": "model_missing"}).get("userMessage"))
+check("实测·风控提示明说重登无效",
+      "重新登录没用" in (model_health.credential_state(
+          {"verdict": "restricted", "semantic": "restricted"}).get("action") or ""),
+      model_health.credential_state(
+          {"verdict": "restricted", "semantic": "restricted"}).get("action"))
+
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

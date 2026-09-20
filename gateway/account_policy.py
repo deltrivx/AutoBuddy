@@ -128,6 +128,22 @@ def set_disabled(policy: Dict[str, str], account_id: str, disabled: bool,
     return True
 
 
+def auto_enable(policy: Dict[str, str], account_id: str) -> bool:
+    """巡检判定账号恢复正常时，把它放回轮询。返回是否发生变更。
+
+    只放得开**巡检自己停的**（``auto``）。人工停用的账号属于人的决定，
+    巡检无权替人放开 —— 否则「我手动停了这个账号」会被下一轮巡检悄悄推翻。
+
+    调用方必须已确认账号探测结论为**正常**；受限（风控 / 内容审查）与
+    未得出结论都不该走到这里。风控是账号级状态，凭据有效不等于能用。
+    """
+    acc_key = str(account_id)
+    if policy.get(acc_key) != SOURCE_AUTO:
+        return False
+    policy.pop(acc_key, None)
+    return True
+
+
 def disabled_ids(policy: Optional[Any] = None) -> Set[str]:
     """当前被停用的账号 id 集合（不区分来源）。路由据此跳过这些账号。"""
     data = load_policy() if policy is None else normalize_policy(policy)

@@ -1071,7 +1071,7 @@ COLLAPSE_SCRIPT = r"""
           toggle.className = "wb-pool-btn" + (autoOff ? " wb-pool-btn-auto" : "");
           toggle.textContent = autoOff ? "已停用（巡检）· 点击启用" : "已停用 · 点击启用";
           toggle.title = autoOff
-            ? "可用性巡检发现这个账号的凭据已失效，自动停用了它。重新登录后点这里恢复。"
+            ? "可用性巡检发现这个账号登录已过期或被上游风控，自动停用了它。\n恢复后巡检会自己放回来，也可以点这里立即启用。"
             : "你手动停用了这个账号。点击恢复参与调用。";
         } else if (!inPool) {
           toggle.className = "wb-pool-btn";
@@ -1146,23 +1146,26 @@ COLLAPSE_SCRIPT = r"""
               var state = res.state || "";
               var tone = state === "valid" ? "ok"
                        : (state === "invalid" ? "error" : "warn");
-              var msg = (res.accountName || "账号") + "：" + (res.message || res.verdict);
-              // 依据分两种，别混着拼：
+              // 提示只讲两件事：**账号现在能不能用**，以及**为什么**。
               //
-              // - `evidence`：**问题**的依据，形如「凭据有效，但请求被上游拦截」。
-              //   只在与结论不同时附上，否则会出现「凭据有效（凭据有效）」的绕口令。
-              // - `method`：正常账号的**探测手段**说明，形如「用一个不存在的模型名试；
-              //   上游如实回应『该模型不存在』，说明它已认下这张凭据」。
+              // 措辞一律用后端下发的 userMessage（一句人话），不再在这里
+              // 拼 evidence / method —— 那两个字段是排查用的实现细节。
+              // 曾经把探测手段拼在结论后面，正常账号的提示成了
+              // 「凭据有效（用一个不存在的模型名试…）」：用户读到的重点是
+              // 「不存在的模型名」，像在报故障，而结论恰恰是「一切正常」。
               //
-              // 后者必须讲成人话：直接甩「上游以模型不存在应答」给用户，
-              // 会被读成「这个账号的模型有问题」—— 而结论恰恰是「一切正常」。
-              // 说清「这是我们的探测办法」，用户才明白为什么结论是好的。
-              if (state === "valid" && res.method) {
-                msg += "（" + res.method + "）";
-              } else if (res.evidence && res.evidence !== res.message) {
-                msg += "（" + res.evidence + "）";
+              // 风控就说风控：「账号被上游风控拦截」比「凭据有效，但请求被上游
+              // 拦截」更贴近用户的理解 —— 前者直接指出该找谁、该怎么办。
+              var name = res.accountName || "账号";
+              var msg = name + "：" + (res.userMessage || res.message || res.verdict);
+              // 原因与建议只在**出问题时**附上；正常账号不需要，
+              // 多一句话反而让人以为还有别的事要处理。
+              if (state !== "valid") {
+                if (res.evidence && res.evidence !== res.message) {
+                  msg += "（" + res.evidence + "）";
+                }
+                if (res.action) { msg += " " + res.action; }
               }
-              if (res.action) { msg += " " + res.action; }
               wbToast(msg, tone);
             })
             .catch(function (e) { wbToast("检测请求失败：" + e, "error"); })
@@ -1900,7 +1903,7 @@ COLLAPSE_SCRIPT = r"""
       // 账号被上游拦截：与「不可用」分开显示。它既不是模型坏，也不是凭据失效，
       // 混进「不可用」会让用户点开一堆账号去找原因。
       if (c.restricted) {
-        runDesc.textContent += " / 账号受限 " + c.restricted;
+        runDesc.textContent += " / 账号被风控 " + c.restricted;
       }
       // 手动禁用的模型这一轮整个没探测。不说出来的话，用户只会看到组合数
       // 比「账号 × 模型」总数少，却不知道差在哪。
@@ -1944,7 +1947,7 @@ COLLAPSE_SCRIPT = r"""
             + " / 不可用 " + (cc.unavailable || 0)
             + " / 跳过 " + (cc.transient || 0);
           if (cc.probe_defect) msg += " / 探测被拒 " + cc.probe_defect;
-          if (cc.restricted) msg += " / 账号受限 " + cc.restricted;
+          if (cc.restricted) msg += " / 账号被风控 " + cc.restricted;
           if ((out.disabled || []).length) msg += " · 新禁用 " + out.disabled.length + " 项";
           if ((out.enabled || []).length) msg += " · 新启用 " + out.enabled.length + " 项";
           if ((out.protected || []).length) msg += " · 手动禁用已跳过 " + out.protected.length + " 项";
@@ -2018,12 +2021,12 @@ COLLAPSE_SCRIPT = r"""
     if (last && (last.restricted || []).length) {
       var rsRow = wbEl("div", "wb-api-row wb-api-row-stack");
       var rsMain = wbEl("div", "wb-api-main");
-      rsMain.appendChild(wbEl("div", "wb-api-label", "被上游拦截的账号（凭据有效）"));
+      rsMain.appendChild(wbEl("div", "wb-api-label", "被上游风控的账号"));
       rsMain.appendChild(wbEl("div", "wb-api-desc",
         (last.restricted || []).map(function (a) { return a.name || a.id; }).join("、")
-        + " —— 这些账号的凭据是有效的，但请求被上游内容安全审查 / 风控拦下"
-        + "（错误码 11140 request illegal）。重新登录解决不了，"
-        + "需要向上游确认账号状态；本轮没有为它们写入任何禁用项。"));
+        + " —— 登录是好的，但它发出的请求被上游风控拦下，所以暂时用不了。"
+        + "重新登录解决不了，需要确认账号状态。\n"
+        + "巡检已把它们停用，避免继续占用轮询；账号恢复正常后会自动放回来。"));
       rsRow.appendChild(rsMain);
       card.appendChild(rsRow);
     }

@@ -95,23 +95,26 @@ _CODE_SEMANTICS: Dict[int, str] = {
 # 语义类别 → 人话解释。界面据此说明结论是怎么得出来的，
 # 而不是只丢一个「凭据有效」让人对着日志里的 403 发懵。
 SEMANTIC_LABELS: Dict[str, str] = {
-    "auth": "凭据已失效，需要重新登录",
-    "restricted": "凭据有效，但请求被上游拦截",
-    "quota": "凭据有效，但该账号对此模型无权限或额度不足",
+    "auth": "登录已过期，需要重新登录",
+    # 风控就说「风控」。这是用户能对上号的词 —— 它直接指向
+    # 「账号被平台限制了」，而不是让人以为工具或网络出了问题。
+    "restricted": "账号被上游风控拦截",
+    "quota": "该账号对这个模型没有权限或额度不足",
     # 探测刻意用一个**不存在的模型名**：上游回「模型不存在」正是它已认下凭据的证据。
     # 旧文案直接写「上游以『模型不存在』应答」，用户看到「不存在」三个字就读成故障，
     # 明明是正常账号却像出了问题。这里只说明结论与理由，不再复述上游的措辞。
-    "model_missing": "凭据有效",
-    "probe_defect": "探测请求的形态不被上游接受，未能得出结论",
+    "model_missing": "账号正常",
+    "probe_defect": "这次探测没被上游接受，没能得出结论",
     "invalid_model_name": "探测用了不合法的模型名，未能得出结论",
     "ok": "调用链路正常",
-    "transient": "网络或上游临时异常，未得出结论",
+    "transient": "网络或上游临时异常，没能得出结论",
 }
 
 # 探测**手段**的说明。上面那些标签只讲结论，这里补上「怎么测出来的」，
-# 供界面在需要解释时使用 —— 分开存放是为了让结论文案保持干净：
-# 正常账号的提示里不该冒出「模型不存在」这种听起来像故障的表述。
-PROBE_METHOD_NOTE = "探测用一个不存在的模型名试，上游认下了凭据即判为有效"
+# 供排查时参考 —— 分开存放是为了让结论文案保持干净。
+# **界面默认不展示这一句**：正常账号的提示里不该出现探测细节，
+# 「用一个不存在的模型名试」听起来就像故障，会把好结论读坏。
+PROBE_METHOD_NOTE = "用官方的鉴权方式试了一次，上游认下了这张凭据"
 
 # 响应体里出现这些片段时的兜底归类（错误码取不到或不在表里时用）。
 # 典型来源：给上游传了超出取值范围的可选参数（如 max_tokens 低于最小值）。
@@ -631,7 +634,7 @@ def classify_account_probe(status_code: Optional[int], error: Optional[str],
 # ---------------------------------------------------------------------------
 
 def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[str, Any]],
-                   auto_enable: bool = True) -> Dict[str, Any]:
+                   auto_enable: bool = True, account_blocked: bool = False) -> Dict[str, Any]:
     """把一轮探测结果写回策略。
 
     - ``unavailable`` 且当前未禁用 → 标记为 ``auto`` 禁用
@@ -643,7 +646,10 @@ def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[s
     ``restricted``（账号被内容审查 / 风控拦截）必须保持原样：它说明请求没被放行，
     而不是模型坏了。据它禁用模型，等于让一次风控拦截把账号名下模型成批标坏。
 
-    返回变更明细，供界面展示与排查。
+    ``account_blocked``：账号级探测判定为「受限」（风控 / 内容审查）时为 True。
+    此时**禁止一切自动启用** —— 账号整体被拦的情况下，个别模型偶然探测通过
+    不代表它能用，把它放回轮询只会继续失败。风控是账号级状态，
+    必须等账号级探测重新判定为正常，才谈得上放开模型。
     """
     acc_key = str(account_id)
     entry = dict(model_policy._coerce_entry(policy.get(acc_key)) or {})
@@ -677,13 +683,13 @@ def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[s
             elif source == model_policy.SOURCE_MANUAL:
                 protected.append(model)
                 unchanged.append(model)
-            elif auto_enable:
+            elif auto_enable and not account_blocked:
                 entry.pop(model, None)
                 enabled_now.append(model)
             else:
                 unchanged.append(model)
         else:
-            # transient / probe_defect：没拿到有效结论，一律保持原样。
+            # transient / probe_defect / restricted：没拿到有效结论，一律保持原样。
             unchanged.append(model)
 
     if entry:
@@ -730,10 +736,10 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "transient": "unknown",
     }.get(verdict, "unknown")
     label = {
-        "valid": "凭据有效",
-        "invalid": "凭据已失效",
-        "restricted": "账号受限",
-        "unknown": "未得出结论",
+        "valid": "账号正常",
+        "invalid": "登录已过期",
+        "restricted": "账号被风控",
+        "unknown": "没测出结果",
     }[state]
     # 说明文案优先用语义表里的解释（它带上了判定依据），
     # 语义识别不出来时退回 verdict 的通用说明。
@@ -750,18 +756,34 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     action = {
         "valid": None,
         "invalid": "请重新登录该账号",
-        "restricted": "该账号被上游内容安全策略拦下，重新登录没用；"
+        "restricted": "该账号被上游风控拦下，重新登录没用；"
                       "请检查账号状态或联系上游，也可先停用该账号避免占用轮询",
         "unknown": "稍后重试；若持续如此请检查网络与上游状态",
     }.get(state)
+    # 面向用户的整句提示。给界面直接显示用，**不暴露任何探测细节**。
+    #
+    # 为什么单独一个字段：界面此前把 `method`（探测手段）拼在结论后面，
+    # 于是正常账号的提示成了「凭据有效（用一个不存在的模型名试…）」——
+    # 用户读到的重点变成「不存在的模型名」，像在报故障，而结论其实是好的。
+    # 探测怎么做的属于实现细节，用户只关心「我的账号能不能用」。
+    user_message = {
+        "valid": "账号正常，可以放心使用",
+        "invalid": "登录已过期，请重新登录",
+        # 风控要说成风控：用户看到「风控」立刻明白是自己账号的状态问题，
+        # 而不是以为工具坏了。这也是唯一能让人做出正确处置的说法。
+        "restricted": "账号被上游风控拦截，暂时用不了",
+        "unknown": "这次没测出结果，请稍后重试",
+    }.get(state, "未得出结论")
     return {
         "state": state,
         "label": label,
         "detail": detail,
+        # 界面优先显示这个字段：一句人话，无技术细节。
+        "userMessage": user_message,
         # 探测手段的说明只对「有效」这一档给出：其余几档的 detail 本身
         # 就在讲哪里不对，再补一句「怎么测的」只会更长。
         # 分开一个字段，是为了让界面能选择要不要展示 —— 结论文案保持干净，
-        # 需要解释时再用这一句。
+        # 需要解释时再用这一句。**界面默认不展示它**。
         "method": PROBE_METHOD_NOTE if state == "valid" else None,
         "action": action,
         "semantic": semantic,
@@ -904,7 +926,8 @@ def run_round(accounts: List[Dict[str, Any]],
             # 所以：模型级失败一律按模型维度处理（该禁则禁），
             # 账号健康状态看上面账号级探测的结论。
             report = apply_verdicts(policy, acc_id, results,
-                                    auto_enable=bool(config.get("autoEnable", True)))
+                                    auto_enable=bool(config.get("autoEnable", True)),
+                                    account_blocked=(acc_probe or {}).get("verdict") == "restricted")
             report["accountName"] = acc.get("nickname") or acc.get("email") or acc_id
             report["accountProbe"] = acc_probe
             report["results"] = results
@@ -932,6 +955,7 @@ def run_round(accounts: List[Dict[str, Any]],
     applied_enabled: List[str] = []
     # 自动停用的账号 id（来自凭据探测）。整轮作废时同样不写。
     applied_accounts_disabled: List[str] = []
+    applied_accounts_enabled: List[str] = []
     if aborted:
         # 逐账号明细里的变更声明要一并清空：策略没有落盘，
         # 留着会让人以为「这些已经被禁了」，而实际什么都没写。
@@ -988,21 +1012,46 @@ def run_round(accounts: List[Dict[str, Any]],
         model_policy.save_policy(fresh)
 
         # 账号级停用走**独立的文件与独立的开关**。
-        # 只有「凭据确定失效」才自动停用 —— 凭据失效是确定性的、可复现的，
-        # 而 transient（网络抖动、上游 5xx）不下手。这条比模型级更保守：
-        # 停掉一个账号等于停掉它名下全部模型，误停的代价更大。
+        #
+        # 两类账号要被自动停掉：
+        #   - ``auth_failed``：凭据确实失效。确定、可复现，重新登录才会好。
+        #   - ``restricted``：账号被上游风控 / 内容安全拦下。凭据虽然有效，
+        #     但它发出的请求一律被拦 —— 留在轮询里只会持续失败，
+        #     还会把该账号名下的模型探测结果污染成一片失败。
+        #     过去只停 auth_failed，风控账号照常参与轮询，这正是
+        #     「巡检都测出风控了，却还在用」的来源。
+        #
+        # 而 ``transient``（网络抖动、上游 5xx）不下手：那是一次性的，
+        # 停掉一个账号等于停掉它名下全部模型，误停的代价太大。
         if check_accounts and bool(config.get("autoDisableAccounts", True)):
             acc_policy = account_policy.load_policy()
             changed = False
             for acc_id, verdict in account_probes.items():
-                # 只处理明确失效的那一种；transient / available 都不动。
-                # 也不自动**启用**：账号失效往往要重新登录才会好，
-                # 自动放回轮询只会让它继续失败，不如让人在界面上确认后再放开。
-                if verdict != "auth_failed":
+                if verdict not in ("auth_failed", "restricted"):
                     continue
                 if account_policy.set_disabled(acc_policy, acc_id, True,
                                                account_policy.SOURCE_AUTO):
                     applied_accounts_disabled.append(acc_id)
+                    changed = True
+            if changed:
+                account_policy.backup_policy(BACKUP_SUFFIX)
+                account_policy.save_policy(acc_policy)
+
+        # 账号级**自动启用**：只有账号探测明确判定为正常（valid）才放回轮询。
+        #
+        # 这一条同样重要，且方向与上面相反 —— 少了它，被风控停掉的账号
+        # 即使已经恢复也没人把它放回来，只能人工干预。
+        # 但判据必须是**账号级结论**，不能是「名下某个模型探测通过了」：
+        # 账号整体被风控时，个别模型偶然通过不代表它能用。
+        # 也只放得开 auto 来源，人工停用的账号巡检无权替人放开。
+        if check_accounts and bool(config.get("autoEnableAccounts", True)):
+            acc_policy = account_policy.load_policy()
+            changed = False
+            for acc_id, verdict in account_probes.items():
+                if verdict != "available":
+                    continue
+                if account_policy.auto_enable(acc_policy, acc_id):
+                    applied_accounts_enabled.append(acc_id)
                     changed = True
             if changed:
                 account_policy.backup_policy(BACKUP_SUFFIX)
@@ -1035,8 +1084,12 @@ def run_round(accounts: List[Dict[str, Any]],
             for r in account_reports
             if (r.get("credential") or {}).get("state") == "restricted"
         ],
-        # 本轮被自动停用的账号（凭据确认失效）。界面据此说明账号为什么不再参与调用。
+        # 本轮被自动停用的账号（凭据确认失效 / 账号被风控）。界面据此说明账号为什么不再参与调用。
         "accountsDisabled": sorted(set(applied_accounts_disabled)),
+        # 本轮被自动放回轮询的账号（账号级探测判定恢复正常）。
+        # 独立列出的意义：用户需要知道「某个账号为什么又回来了」，
+        # 而不是某天发现它悄悄参与了调用。
+        "accountsEnabled": sorted(set(applied_accounts_enabled)),
         # 账号级探测结果，界面用来区分「凭据坏了」还是「模型坏了」。
         "accountProbes": account_probes,
         # 账号健康状况汇总：{valid / invalid / restricted / unknown: 账号数}。

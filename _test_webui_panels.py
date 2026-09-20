@@ -151,10 +151,12 @@ ACCOUNT_MODELS = {
 # 不再自行解释 verdict 或状态码。
 ACCOUNT_PROBE = {
     "ok": True, "accountId": "acc-1", "accountName": "账号甲",
-    "verdict": "available", "state": "valid", "message": "凭据有效",
-    # 正常账号的提示里**不该**出现「模型不存在」这类会被读成故障的措辞，
-    # 依据走独立的 method 字段说清探测手段。
-    "method": "用一个不存在的模型名试；上游如实回应「该模型不存在」，说明它已认下这张凭据",
+    "verdict": "available", "state": "valid", "message": "账号正常",
+    # 界面显示的整句提示。只有这一句面向用户 —— 探测细节（method / evidence）
+    # 都留在接口里供排查，**不进提示**，否则「用一个不存在的模型名试」
+    # 会把「账号正常」的好结论读成故障。
+    "userMessage": "账号正常，可以放心使用",
+    "method": "用官方的鉴权方式试了一次，上游认下了这张凭据",
     "evidence": None,
     "action": "", "code": 11102, "semantic": "model_missing",
     "elapsedMs": 258, "error": None,
@@ -554,11 +556,13 @@ setTimeout(async () => {
       probeFetch = fetchLog[fetchLog.length - 1] || null;
       // toast 是直接挂到 body 上的（不是我们注入的节点），且要等 fetch 链跑完。
       // 轮询读而不是 sleep 定长：fetch 桩是同步 resolve，通常一拍就有。
+      // 匹配只按账号名 —— 不要顺带匹配结论里的词（如「凭据」），
+      // 那会把测试和某版文案绑死，改文案就假失败。
       for (let i = 0; i < 40 && !probeToast; i += 1) {
         await new Promise((r) => setTimeout(r, 10));
         const hit = (document.body.children || [])
           .map((e) => String(e.textContent || ""))
-          .filter((t) => t.indexOf("账号甲") >= 0 && t.indexOf("凭据") >= 0);
+          .filter((t) => t.indexOf("账号甲") >= 0 && t.length > "账号甲".length);
         probeToast = hit.length ? hit[hit.length - 1] : null;
       }
       // toast 的语义档位要从 class 上读：过去 restricted（账号受限，凭据其实是好的）
@@ -796,14 +800,20 @@ def main() -> int:
     # 但把「模型不存在」这种字眼直接摆在结论旁边，又会被读成「账号有问题」。
     # 所以依据要说得像一句解释，而不是甩一个错误名给用户。
     toast = result.get("probeToast")
-    check("检测结论提示带上判定依据", bool(toast) and "不存在" in toast,
+    # 正常账号的提示必须**只讲用户关心的事**：账号能不能用。
+    # 探测怎么做的（用了什么模型名、上游回了什么）属于实现细节，
+    # 摆到提示里会把好结论读成故障 —— 用户反馈过这一点。
+    check("正常账号的提示是一句人话（账号正常，可以放心使用）",
+          bool(toast) and "账号正常" in toast and "可以放心使用" in toast,
           f"got {toast}")
-    check("提示把探测手段解释成人话（不是甩错误名）",
-          bool(toast) and "试" in toast and "认下" in toast, f"got {toast}")
+    check("正常账号的提示不含探测细节（不出现「不存在/模型名/试」）",
+          bool(toast) and not any(w in toast for w in
+                                  ("不存在", "模型名", "试", "拒绝", "失败", "异常")),
+          f"got {toast}")
     # 界面必须按 state 判定，而不是拿 verdict 或状态码自己解释 ——
     # 那正是「同一个账号在不同页面结论不同」的来源。
-    check("检测提示读的是 state（结论文案来自 message）",
-          bool(toast) and "凭据有效" in toast, f"got {toast}")
+    check("检测提示读的是 state（结论文案来自 userMessage）",
+          bool(toast) and "账号正常" in toast, f"got {toast}")
     # 正常账号绝不能被标成异常样式：过去 restricted 与 invalid 共用红色，
     # 正常账号也会被这种「一律醒目」的写法波及。
     check("正常账号用 ok 档样式而非错误档",
