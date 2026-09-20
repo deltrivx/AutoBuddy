@@ -213,5 +213,22 @@ check("列表视图保持既有线格式",
       _mp.as_model_lists(_load_model_policy()) == {"accL": ["hy3", "kimi-k3"]},
       str(_mp.as_model_lists(_load_model_policy())))
 
+# ---- 14. 巡检的探测范围：只跳过 manual 项 ----
+# 手动禁用是人的明确决定，探测它得不到有用的结论，只会白花额度，
+# 并让「手动禁用的 N 项」与「巡检禁用的 M 项」在界面上混在一起。
+# auto 项**必须**继续探测：自愈正是靠这轮探测发现模型恢复可用。
+mixed = {"z9": {"hy3": "manual", "kimi-k3": "auto", "glm-5.3": "manual"}}
+check("只列出 manual 项", _mp.manual_disabled_for("z9", mixed) == {"hy3", "glm-5.3"},
+      str(_mp.manual_disabled_for("z9", mixed)))
+check("auto 项不在跳过名单里", "kimi-k3" not in _mp.manual_disabled_for("z9", mixed))
+check("未知账号返回空集", _mp.manual_disabled_for("nope", mixed) == set())
+check("空账号名返回空集", _mp.manual_disabled_for(None, mixed) == set())
+# 别名同样要归一：用户禁的是 hy4，调用方拿 hy3 也必须被挡在探测之外。
+check("手动禁用别名 hy4 -> 跳过名单也含目标 hy3",
+      _mp.manual_disabled_for("z9", {"z9": {"hy4": "manual"}}) == {"hy4", "hy3"},
+      str(_mp.manual_disabled_for("z9", {"z9": {"hy4": "manual"}})))
+# 兼容 v1 数组形状：旧文件一律读作 manual，因此也在跳过之列。
+check("v1 数组形状一律算手动", _mp.manual_disabled_for("z9", {"z9": ["hy3"]}) == {"hy3"})
+
 print(f"\n结果：{PASS} 项通过，{FAIL} 项失败")
 sys.exit(1 if FAIL else 0)

@@ -189,6 +189,26 @@ def disabled_models_for(account_id: Optional[str],
     return targets | models
 
 
+def manual_disabled_for(account_id: Optional[str],
+                        policy: Optional[Any] = None) -> Set[str]:
+    """返回某账号被**手动**禁用的模型集合（同样做别名归一）。
+
+    用途只有一个：让可用性巡检把这些组合整个跳过。手动禁用是人的明确决定
+    （常见于「能跑但太贵」），探测它既拿不到任何可用的结论，又白白消耗上游额度，
+    还会让界面上「手动禁用的 N 项」与「巡检禁用的 M 项」互相掺杂。
+
+    只返回 ``manual`` 项。``auto`` 项必须继续参与探测 —— 自愈正是靠这轮探测
+    发现模型恢复可用、进而把它放开的。
+    """
+    if not account_id:
+        return set()
+    pol = policy if policy is not None else load_policy()
+    entry = _coerce_entry((pol or {}).get(str(account_id))) if isinstance(pol, dict) else None
+    models = {m for m, source in (entry or {}).items() if source == SOURCE_MANUAL}
+    targets = {MODEL_ALIAS_MAP.get(m, m) for m in models}
+    return targets | models
+
+
 def model_is_disabled(account_id: Optional[str], model: Optional[str],
                       policy: Optional[Any] = None) -> bool:
     """判断某账号的某模型是否被禁用（别名两侧都算命中）。"""

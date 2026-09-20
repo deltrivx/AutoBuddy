@@ -62,6 +62,15 @@ if released:
 check(f"CHANGELOG 里存在 [{version}] 段", version in released, f"got {released[:5]}")
 check("CHANGELOG 保留 [未发布] 段", "## [未发布]" in changelog)
 
+# 文末链接区由人维护，漏一行不会有任何报错 —— 只是 GitHub 上「对比上一版」的链接失效。
+# v0.4.6 就漏过：链接区从 v0.4.5 直接跳到 HEAD，中间那一版无法对比。
+links = set(re.findall(r"^\[v(\d+\.\d+\.\d+)\]:", changelog, re.M))
+missing_links = [v for v in released if v not in links]
+check("每个已发布版本都有 compare 链接", not missing_links, f"缺少 {missing_links}")
+check("[未发布] 段的对比基准是最新发布版本",
+      bool(re.search(rf"^\[未发布\]:.*compare/v{re.escape(version)}\.\.\.HEAD", changelog, re.M)),
+      f"基准应指向 v{version}")
+
 print("\n[3] 与发布说明文件对齐")
 notes = ROOT / "docs" / "release-notes" / f"RELEASE_NOTES_v{version}.md"
 check(f"docs/release-notes/RELEASE_NOTES_v{version}.md 存在", notes.exists())

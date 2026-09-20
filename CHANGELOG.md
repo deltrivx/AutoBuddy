@@ -17,6 +17,31 @@
 
 ---
 
+## [v0.4.7] - 2026-09-20
+
+<!-- summary: 账号卡片把「手动禁用」与「巡检禁用」分开计数，巡检也不再探测手动禁用的模型 -->
+
+### 修复
+
+- 修复**账号卡片的「已禁用」把巡检禁用也算进去**：巡检自动禁用一个模型，「已禁用」也跟着 +1，
+  与旁边的「巡检」指向同一批模型，看不出哪些是自己关的。现在两个计数互不重叠。
+
+  | 徽标 | 修复前 | 修复后 |
+  | :--- | :--- | :--- |
+  | 已禁用 N | 手动禁用 + 巡检禁用 | 只数手动禁用的 |
+  | 巡检 M | 其中有多少是巡检写的 | 只数巡检写的 |
+
+- 修复**巡检结果重启后丢提示**：「凭据失效、本轮已跳过的账号」与被上游拒绝的探测错误码
+  只在当轮存在、重跑补不回来，此前没有被存进那份供重启回显的摘要，于是重启后不再出现。
+
+### 变更
+
+- 巡检**不再探测手动禁用的模型**：这类组合整个不进入探测清单，省掉真实的上游请求与额度消耗。
+  少掉的这部分会在巡检结果里单独说明（「手动禁用 N 项未探测」），而不是混进探测计数里。
+  巡检自己写入的禁用项照常参与探测，模型恢复可用时仍会自动放开。
+
+---
+
 ## [v0.4.6] - 2026-09-20
 
 <!-- summary: 账号卡片里注入的两块固定收尾，「积分明细」不再一会儿在上一会儿在下 -->
@@ -649,7 +674,9 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.5...HEAD
+[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.7...HEAD
+[v0.4.7]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.6...v0.4.7
+[v0.4.6]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.5...v0.4.6
 [v0.4.5]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.4...v0.4.5
 [v0.4.4]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.3...v0.4.4
 [v0.4.3]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.2...v0.4.3

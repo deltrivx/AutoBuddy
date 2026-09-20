@@ -487,16 +487,35 @@ def run_round(accounts: List[Dict[str, Any]],
     写入策略前有三道闸门，全部服务于「宁漏禁，不误禁」：
     探测被上游参数校验拒绝（``probe_defect``）不写；账号凭据整体失效不写；
     整轮一个可用都没有时整轮作废。
+
+    另外**手动禁用的组合压根不探测**：那是人的明确决定，探测它得不到任何有用的
+    结论，只会白花上游额度，并让「人禁用的」和「巡检禁用的」在界面上混成一锅。
+    与之相对，``auto`` 项必须继续探测 —— 自愈正是靠这轮探测发现模型恢复可用。
     """
     now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    policy = model_policy.load_policy()
     combos = select_targets(accounts, config, used_models, base_models)
+
+    skip_manual: Dict[str, Set[str]] = {}
+    kept: List[Dict[str, str]] = []
+    for combo in combos:
+        acc_id = combo["accountId"]
+        if acc_id not in skip_manual:
+            skip_manual[acc_id] = model_policy.manual_disabled_for(acc_id, policy)
+        model = combo["model"]
+        blocked = skip_manual[acc_id]
+        if model in blocked or model_policy.MODEL_ALIAS_MAP.get(model, model) in blocked:
+            continue
+        kept.append(combo)
+    skipped_manual = len(combos) - len(kept)
+    combos = kept
+
     by_id = {}
     for acc in accounts:
         acc_id = acc.get("id") or acc.get("uid")
         if acc_id:
             by_id[str(acc_id)] = acc
 
-    policy = model_policy.load_policy()
     account_reports: List[Dict[str, Any]] = []
     counts = {"available": 0, "unavailable": 0, "transient": 0, "probe_defect": 0}
     auth_failed: List[str] = []
@@ -594,6 +613,9 @@ def run_round(accounts: List[Dict[str, Any]],
         "checkedAt": now_ms,
         "combos": len(combos),
         "accounts": len(grouped),
+        # 因「手动禁用」而整个未探测的组合数。界面据此说明这一轮为什么没覆盖它们，
+        # 否则用户只会看到组合数比模型总数少，却不知道差在哪。
+        "skippedManual": skipped_manual,
         "counts": counts,
         "disabled": sorted({m for r in account_reports for m in r["disabled"]}),
         "enabled": sorted({m for r in account_reports for m in r["enabled"]}),
@@ -617,32 +639,27 @@ def run_round(accounts: List[Dict[str, Any]],
 
 
 def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:
-    """给界面用的精简摘要（不带逐条探测明细，避免响应体过大）。"""
+    """给界面用的精简摘要（不带逐条探测明细，避免响应体过大）。
+
+    这份摘要会**落盘**（``model_health_last.json``），进程重启后界面直接读它回显。
+    因此这里必须把界面上会用到、而重跑一轮也补不回来的字段全部带上：
+    ``authFailed``（凭据失效账号名单）与 ``defectCodes``（探测被拒的错误码）
+    都只在那一轮里存在，漏掉它们，重启后这两个提示就永远不再出现。
+
+    （此前这里有两份同名定义，后一份把 ``authFailed`` / ``defectCodes`` 丢掉了 ——
+    Python 只保留最后一份，于是落盘的摘要长期缺这两个字段。下面只保留一份。）
+    """
     return {
         "checkedAt": round_result.get("checkedAt"),
         "combos": round_result.get("combos", 0),
         "accounts": round_result.get("accounts", 0),
+        "skippedManual": round_result.get("skippedManual", 0),
         "counts": round_result.get("counts", {}),
         "disabled": round_result.get("disabled", []),
         "enabled": round_result.get("enabled", []),
         "protected": round_result.get("protected", []),
         "authFailed": round_result.get("authFailed", []),
         "defectCodes": round_result.get("defectCodes", []),
-        "aborted": bool(round_result.get("aborted")),
-        "reason": round_result.get("reason"),
-    }
-
-
-def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:
-    """给界面用的精简摘要（不带逐条探测明细，避免响应体过大）。"""
-    return {
-        "checkedAt": round_result.get("checkedAt"),
-        "combos": round_result.get("combos", 0),
-        "accounts": round_result.get("accounts", 0),
-        "counts": round_result.get("counts", {}),
-        "disabled": round_result.get("disabled", []),
-        "enabled": round_result.get("enabled", []),
-        "protected": round_result.get("protected", []),
         "aborted": bool(round_result.get("aborted")),
         "reason": round_result.get("reason"),
     }

@@ -198,7 +198,8 @@ COLLAPSE_SCRIPT = r"""
   .wb-am-tag-off:hover {
     box-shadow: inset 0 0 0 1px rgba(120, 120, 120, 0.35);
   }
-  /* 被禁用的模型数：让用户在折叠的卡片上也能感知「这里动过手」 */
+  /* 被**手动**禁用的模型数。只数人点的那些：巡检写的另有 .wb-am-offcount-auto，
+     两个数互不重叠，免得同一批模型被数两遍。 */
   .wb-am-offcount {
     font-size: 10px;
     line-height: 1.7;
@@ -209,9 +210,9 @@ COLLAPSE_SCRIPT = r"""
     margin-left: 6px;
     font-variant-numeric: tabular-nums;
   }
-  /* 巡检自动禁用：与手动禁用一样「已禁用」，但来源不同 ——
+  /* 巡检自动禁用：与手动禁用一样「不参与调用」，但来源不同 ——
      它由可用性巡检写入、模型恢复后会自行解除，所以用琥珀色虚线区分，
-     让用户一眼看出「这不是我关的」。 */
+     让用户一眼看出「这不是我关的」。计数上同样与手动禁用分开。 */
   .wb-am-tag-auto {
     background: rgba(245, 158, 11, 0.14);
     color: #b45309;
@@ -676,28 +677,34 @@ COLLAPSE_SCRIPT = r"""
         titleText.textContent = "可用模型 · " + models.length;
         title.appendChild(titleText);
 
-        var offCount = 0;
+        // 「已禁用」只数**人点的**，「巡检」只数**巡检写的** —— 两个数互不重叠。
+        // 曾经写成「已禁用 = 全部禁用（含巡检）」再单列一个「巡检 N」，
+        // 同一批模型被数了两遍：巡检禁掉一个模型，用户会看到「已禁用」也跟着 +1，
+        // 根本分不清哪个是自己点的、哪个是巡检写的。
+        var manualCount = 0;
         var autoCount = 0;
         models.forEach(function (m) {
           if (!accountId) return;
           var src = wbModelSource(accountId, m);
           if (!src) return;
-          offCount += 1;
-          if (src === "auto") autoCount += 1;
+          if (src === "auto") autoCount += 1; else manualCount += 1;
         });
-        if (offCount) {
+        if (manualCount) {
           var badge = document.createElement("span");
           badge.className = "wb-am-offcount";
-          badge.textContent = "已禁用 " + offCount;
+          badge.textContent = "已禁用 " + manualCount;
+          badge.title = "你手动禁用的模型 " + manualCount
+            + " 个 —— 巡检不会自动放开，只有你点它才恢复";
           title.appendChild(badge);
         }
         if (autoCount) {
-          // 单独标出「巡检关的」：它与手动禁用同属禁用，但会自行解除，
+          // 巡检关的单独标出：它与手动禁用一样「不参与调用」，但会自行解除，
           // 用户需要能分辨，否则会以为是自己误操作。
           var autoBadge = document.createElement("span");
           autoBadge.className = "wb-am-offcount wb-am-offcount-auto";
           autoBadge.textContent = "巡检 " + autoCount;
-          autoBadge.title = "其中 " + autoCount + " 个是可用性巡检自动禁用的，模型恢复后会自动启用";
+          autoBadge.title = "可用性巡检自动禁用的模型 " + autoCount
+            + " 个（探测到调用不通），模型恢复后会自动放开";
           title.appendChild(autoBadge);
         }
 
@@ -1574,6 +1581,11 @@ COLLAPSE_SCRIPT = r"""
       // 探测被上游参数校验拒绝：只在真的发生过时才显示，避免日常噪音。
       if (c.probe_defect) {
         runDesc.textContent += " / 探测被拒 " + c.probe_defect;
+      }
+      // 手动禁用的模型这一轮整个没探测。不说出来的话，用户只会看到组合数
+      // 比「账号 × 模型」总数少，却不知道差在哪。
+      if (last.skippedManual) {
+        runDesc.textContent += " · 手动禁用 " + last.skippedManual + " 项未探测";
       }
       if ((last.disabled || []).length) {
         runDesc.textContent += " · 新禁用 " + last.disabled.length + " 项";

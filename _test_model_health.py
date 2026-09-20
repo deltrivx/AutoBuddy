@@ -446,6 +446,55 @@ summary = model_health.summarize(result)
 check("摘要不含逐条明细", "reports" not in summary and summary["combos"] == 4)
 check("摘要带 aborted 标记", summary["aborted"] is False)
 
+# 摘要会**落盘**，进程重启后界面直接读它回显。凭据失效名单与被拒错误码只存在于
+# 那一轮里，重跑补不回来 —— 曾经这里有两份同名 summarize，后一份把这两个字段丢掉，
+# Python 只保留最后一份，于是落盘的摘要长期缺字段、重启后提示不再出现。
+_summary = model_health.summarize({
+    "checkedAt": 1, "combos": 3, "accounts": 1, "skippedManual": 2,
+    "counts": {"probe_defect": 1}, "aborted": False,
+    "authFailed": [{"id": "a1", "name": "acc-1"}], "defectCodes": [11133],
+})
+check("摘要只保留一份定义（字段不再被同名函数覆盖丢失）",
+      model_health.summarize.__code__.co_argcount == 1,
+      f"got {model_health.summarize.__code__.co_argcount}")
+check("摘要保留凭据失效名单",
+      _summary.get("authFailed") == [{"id": "a1", "name": "acc-1"}], f"got {_summary}")
+check("摘要保留被拒错误码", _summary.get("defectCodes") == [11133], f"got {_summary}")
+check("摘要带手动禁用跳过数", _summary.get("skippedManual") == 2, f"got {_summary}")
+
+# ---------------------------------------------------------------------------
+# 16b. 手动禁用的组合不参与探测
+#
+# 手动禁用是人的明确决定，探测它得不到任何有用的结论，只会白花上游额度，
+# 并让「手动禁用的 N 项」与「巡检禁用的 M 项」在界面上混成一锅。
+# auto 项**必须**继续探测 —— 自愈正是靠这轮探测发现模型恢复可用。
+# ---------------------------------------------------------------------------
+print("\n[16b] 手动禁用不参与探测")
+model_policy.save_policy({"a1": {"hy3": "manual"}, "a2": {"kimi-k3": "auto"}})
+skip_client = FakeClient({("t1", "hy3"): 404, ("t2", "kimi-k3"): 200})
+skip_round = model_health.run_round(
+    accounts=accounts,
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: skip_client,
+    base_url_for=lambda variant: "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+probed = set(skip_client.calls)
+check("手动禁用的组合根本没被探测", ("t1", "hy3") not in probed, f"got {sorted(probed)}")
+check("auto 项照常探测（自愈靠它）", ("t2", "kimi-k3") in probed, f"got {sorted(probed)}")
+check("报告里说明跳过了多少组合", skip_round.get("skippedManual") == 1,
+      f"got {skip_round.get('skippedManual')}")
+check("跳过的手动项来源与状态都不动",
+      model_policy.source_of(model_policy.load_policy(), "a1", "hy3") == "manual",
+      f"got {model_policy.load_policy()}")
+check("auto 项照常按探测结果自愈",
+      "kimi-k3" not in (model_policy.load_policy().get("a2") or {}),
+      f"got {model_policy.load_policy()}")
+check("跳过数不计入任何探测计数",
+      sum(int(v) for v in skip_round["counts"].values()) == skip_round["combos"],
+      f"got {skip_round['counts']} combos={skip_round['combos']}")
+
 # ---------------------------------------------------------------------------
 # 17. 整轮误判保护
 #
@@ -475,8 +524,10 @@ check("作废时不写入任何禁用", model_policy.load_policy() == before,
 check("作废时报告不谎报变更",
       all(not r["disabled"] and not r["enabled"] for r in aborted["reports"]))
 
-# 边界：只要有 1 个可用就不算作废
-mixed = FakeClient({("t1", "hy3"): 200}, default=400)
+# 边界：只要有 1 个可用就不算作废。
+# 注意可用的那个必须是**真的会被探测**的组合：a1/hy3 上面被设成了手动禁用，
+# 巡检根本不会探测它，拿它当「可用样本」是测不到东西的。
+mixed = FakeClient({("t2", "hy3"): 200}, default=400)
 notaborted = model_health.run_round(
     accounts=accounts,
     config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
@@ -487,6 +538,9 @@ notaborted = model_health.run_round(
 )
 check("有一个可用即正常落盘", notaborted["aborted"] is False
       and notaborted["counts"]["available"] == 1, f"got {notaborted['counts']}")
+check("手动禁用的组合被排除在探测之外（组合数 = 总数 - 手动项）",
+      notaborted["combos"] == 5 and notaborted["skippedManual"] == 1,
+      f"got combos={notaborted['combos']} skipped={notaborted.get('skippedManual')}")
 
 # ---------------------------------------------------------------------------
 # 17b. 探测被上游参数校验拒绝（probe_defect）

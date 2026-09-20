@@ -129,14 +129,20 @@ HEALTH = {
 
 ACCOUNT_MODELS = {
     "catalog": ["m-a", "m-b", "m-c"],
-    "accounts": [{"id": "acc-1", "name": "账号甲", "variant": "ai",
-                  "models": ["m-a", "m-b"], "disabledModels": ["m-b"],
-                  "disabledSources": {"m-b": "manual"}, "disabledTotal": 1,
-                  "usable": True, "expired": False}],
-    "policy": {"acc-1": ["m-b"]},
-    "policySources": {"acc-1": {"m-b": "manual"}},
-    "disabledTotal": 1,
-    "disabledBySource": {"manual": 1, "auto": 0},
+    # 故意让同一张卡片同时有「手动禁用」和「巡检禁用」各一个 —— 这正是曾经
+    # 被数了两遍的场景：巡检禁掉一个，用户会看到「已禁用」也跟着 +1。
+    # 形状与真实接口一致：`accounts` 是**以账号 id 为键的对象**（不是数组）——
+    # 注入脚本就是按这个键把来源表落到 accountId 上的。
+    "accounts": {"acc-1": {"id": "acc-1", "name": "账号甲", "variant": "ai",
+                           "models": ["m-a", "m-b", "m-c"],
+                           "disabledModels": ["m-b", "m-c"],
+                           "disabledSources": {"m-b": "manual", "m-c": "auto"},
+                           "disabledTotal": 2,
+                           "usable": True, "expired": False}},
+    "policy": {"acc-1": ["m-b", "m-c"]},
+    "policySources": {"acc-1": {"m-b": "manual", "m-c": "auto"}},
+    "disabledTotal": 2,
+    "disabledBySource": {"manual": 1, "auto": 1},
 }
 
 ACCOUNT_POOL = {
@@ -429,6 +435,23 @@ setTimeout(() => {
     return iLate < iPool ? "above" : "below";
   });
 
+  // ---- 账号卡片：禁用计数的口径 -----------------------------------------
+  // 取每张卡片「可用模型」标题行里的徽标。曾经把巡检写的禁用也算进「已禁用」，
+  // 再单列一个「巡检 N」，同一批模型被数了两遍：巡检禁掉一个模型，
+  // 用户会看到「已禁用」也跟着 +1。
+  const cardBadges = ACCOUNT_CARDS.map((c) => {
+    const box = (c.sec.children || [])
+      .find((k) => (k.className || "").split(/\s+/).indexOf("wb-am-box") >= 0);
+    if (!box) return null;
+    const title = (box.children || [])[0] || {};
+    return (title.children || [])
+      .filter((k) => (k.className || "").split(/\s+/).indexOf("wb-am-offcount") >= 0)
+      .map((k) => ({
+        auto: (k.className || "").split(/\s+/).indexOf("wb-am-offcount-auto") >= 0,
+        text: String(k.textContent || ""),
+      }));
+  });
+
   const result = {
     errors: errors.concat([runError, secondRunError, thirdRunError].filter(Boolean)),
     fetchCalls,
@@ -449,6 +472,7 @@ setTimeout(() => {
     tailsAfterLateRaw,
     tailsAfterLate,
     lateStaysAbove,
+    cardBadges,
   };
   process.stdout.write("__RESULT__" + JSON.stringify(result) + "\n");
 }, 60);
@@ -545,6 +569,26 @@ def main() -> int:
     check("晚到的官方明细块留在我们两块之前（不再掉到卡片最底）",
           result["lateStaysAbove"] == ["above", "no-ours"],
           f"got {result['lateStaysAbove']}")
+
+    print("\n[7] 账号卡片：禁用计数口径（手动 / 巡检 互不重叠）")
+    badges = result["cardBadges"]
+    first = badges[0] or []
+    manual = next((b for b in first if not b["auto"]), None)
+    auto = next((b for b in first if b["auto"]), None)
+    check("手动禁用的模型计入「已禁用」",
+          manual is not None and manual["text"] == "已禁用 1", f"got {first}")
+    check("巡检禁用的模型单独计「巡检」，不再落进「已禁用」",
+          auto is not None and auto["text"] == "巡检 1", f"got {first}")
+
+    def _num(badge):
+        try:
+            return int(str(badge["text"]).split()[-1])
+        except (AttributeError, IndexError, ValueError):
+            return -1
+
+    check("两个计数互不重叠（本卡片手动 1 + 巡检 1 = 禁用总数 2）",
+          _num(manual) + _num(auto) == 2, f"got {first}")
+    check("没有 h3 的卡片依旧不被注入模型区", badges[1] is None, f"got {badges[1]}")
 
     print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
     return 1 if _fail else 0
