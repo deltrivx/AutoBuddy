@@ -811,6 +811,28 @@ def main() -> int:
           or "wb-api-toast-warn" not in (result.get("probeToastClasses") or ""),
           str(result.get("probeToastClasses")))
 
+    # 类名必须和样式表对得上。曾出现：调用点生成 `wb-api-toast-error`，
+    # 样式表只定义 `.wb-api-toast-err` —— 红色档从未命中，失效账号的提示
+    # 落到默认档，看起来和普通提示一样。这类「两边各写一个名字」的错
+    # 不会报错、只会静默降级，必须由测试盯住。
+    import re as _re
+    # 从源码文件读样式（stripped 只是 JS 部分，不含 <style>）
+    _raw = WEB_PROXY.read_text(encoding="utf-8")
+    _css = "\n".join(_re.findall(r"<style>(.*?)</style>", _raw, _re.S))
+    for _tier in ("ok", "warn", "err"):
+        check(f"样式表定义了 {_tier} 档（.wb-api-toast-{_tier}）",
+              f".wb-api-toast-{_tier}" in _css, _tier)
+    check("样式表同时兼容 -error 写法（调用点历史混用）",
+          ".wb-api-toast-error" in _css, "缺 .wb-api-toast-error")
+    # 反向：wbToast 不能生成样式表里没有的档位。
+    # `-show` 是交互状态类（与 tier 正交），单独排除。
+    _js = strip_bootstrap(script)
+    for _cls in sorted(set(_re.findall(r'wb-api-toast-([a-z]+)', _js))):
+        if _cls in ("show",):
+            continue
+        check(f"wbToast 引用的档位 {_cls} 在样式表里有定义",
+              f".wb-api-toast-{_cls}" in _css, _cls)
+
     print("\n[9] 巡检面板：一致性自检入口与结果渲染")
     af = result.get("auditFetch")
     check("点了「一致性自检」发出请求",

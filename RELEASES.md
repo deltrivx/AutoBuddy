@@ -13,7 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v0.4.12](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.12) | 2026-09-20 | 修正「检测账号」提示的配色与措辞，正常结论不再读作故障 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.12.md) |
+| [v0.4.12](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.12) | 2026-09-20 | 修正检测提示的配色与措辞：错误档改对类名、三档配色生效、窄屏不再溢出 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.12.md) |
 | [v0.4.11](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.11) | 2026-09-20 | 统一账号有效性判定标准，修正内容审查被误判为凭据失效 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.11.md) |
 | [v0.4.10](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.10) | 2026-09-20 | 修正「检测账号」的结论表述，说明凭据有效的判定依据 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.10.md) |
 | [v0.4.9](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.9) | 2026-09-20 | 新增账号级停用与凭据检测；修复手机等窄屏下侧边栏与设置项被挤压 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.9.md) |

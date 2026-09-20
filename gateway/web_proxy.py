@@ -463,7 +463,11 @@ COLLAPSE_SCRIPT = r"""
   /* 三档语义配色。此前只有「普通 / 红色错误」两档，「账号受限」被并进红色档，
      在语义上错误地暗示了「凭据坏了」—— 而它的凭据其实是好的。
      颜色只用于区分**该不该动手**，不用于表达严重程度：绿=无需处理，
-     琥珀=需要关注但重登没用，红=需要你介入（重新登录）。 */
+     琥珀=需要关注但重登没用，红=需要你介入（重新登录）。
+
+     选择器同时列 err 与 error 两种写法：调用方历史上混用过
+     （`wbToast(msg, "error")` 与 `wb-api-toast-err`），只写一个会让另一个
+     静默落到默认档 —— 红色提示看起来像普通提示，正是「背景很奇怪」的来源。 */
   .wb-api-toast-ok {
     color: #ffffff;
     background: rgba(4, 120, 87, 0.95);
@@ -472,7 +476,8 @@ COLLAPSE_SCRIPT = r"""
     color: #ffffff;
     background: rgba(180, 83, 9, 0.95);
   }
-  .wb-api-toast-err { background: rgba(185, 28, 28, 0.95); }
+  .wb-api-toast-err,
+  .wb-api-toast-error { background: rgba(185, 28, 28, 0.95); }
   @media (max-width: 560px) {
     .wb-api-toast {
       bottom: 16px;
@@ -1253,9 +1258,21 @@ COLLAPSE_SCRIPT = r"""
   // 但新代码请传字符串档位 —— 二档不够用：「账号受限」既不是成功也不是
   // 需要你重登的错误，用红色会把人引向错误的排查方向。
   function wbToast(message, tone) {
-    var t = typeof tone === "string" ? tone : (tone ? "error" : "info");
+    // tone 兼容三种输入，避免调用点写错就静默变默认档：
+    //   字符串 "ok" / "info"  -> 绿（或默认告知档）
+    //   字符串 "warn"         -> 琥珀
+    //   字符串 "err" / "error" -> 红
+    //   true                  -> 红（旧布尔签名）
+    //   false / 未传           -> 默认
+    var t;
+    if (tone === true) t = "err";
+    else if (tone === false || tone == null) t = "info";
+    else if (tone === "error") t = "err";
+    else t = String(tone);
+    var cls = "wb-api-toast";
+    if (t === "ok" || t === "warn" || t === "err") { cls += " wb-api-toast-" + t; }
     var el = document.createElement("div");
-    el.className = "wb-api-toast" + (t === "info" ? "" : " wb-api-toast-" + t);
+    el.className = cls;
     el.textContent = message;
     document.body.appendChild(el);
     requestAnimationFrame(function () { el.classList.add("wb-api-toast-show"); });
