@@ -69,6 +69,9 @@
   但**多个并发请求会分摊到不同账号**。
 - **参与调用开关**：每个账号可单独停用或启用。
 - **手动首选**：可固定只用某一个账号，再点一次回到自动分配。
+- **按账号停用**：一键让某个账号退出自动轮询，再点一次恢复；
+  显式指定它的请求仍可用（停用针对轮询，不是禁止调用）。
+- **检测账号**：卡片上一键发轻量鉴权请求，回报凭据是否有效，不改配置、不耗额度。
 - **单次覆盖**：请求可临时指定账号，不影响全局配置。
 - **可观测**：每张卡显示 `已调用 N 次`，并提供接口查询各账号命中次数。
 
@@ -89,6 +92,8 @@
 - **只认「上游明确说不可用」才写禁用** —— `429` 限流、超时、网络异常一律跳过不改配置。
 - **禁用项分来源**：自动启用只放开巡检自己写进去的，不会抹掉你的手动禁用。
 - **不碰你的手动禁用**：手动禁用的模型整个不参与探测，省掉无谓的上游请求；跳过的项数会单独标出。
+- **先验凭据再探模型**：凭据失效的账号不再逐个探测其模型、也不写模型禁用（坏的是凭据不是模型）；
+  确认失效时可自动停用该账号（可关），拿不到结论时不停用。
 - **整轮误判保护**：整轮都没有可用信号时判定为探测机制本身出了问题，整轮作废、不写配置。
 - **不拖慢网关**：探测在独立线程执行，且同一时刻只允许一轮。
 
@@ -293,6 +298,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 | `GET /gateway/info` | 连接信息 |
 | `GET /rotate/status` · `POST /rotate/run` | 账号健康巡检状态与手动触发 |
 | `GET /account-pool/status` · `PUT /account-pool/config` | 账号池状态与配置 |
+| `POST /account-pool/toggle` · `POST /account-health/probe` | 按账号停用 / 启用、检测账号凭据 |
 | `GET /account-pool/selections` · `POST /account-pool/selections/reset` | 并发分摊观测与清零 |
 | `GET /account-models/config` · `PUT /account-models/config` | 模型级禁用策略 |
 | `GET /model-health/config` · `PUT /model-health/config` · `GET /model-health/status` · `POST /model-health/run` | 模型可用性巡检：配置、状态与手动触发 |
@@ -330,6 +336,23 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 ```
 
 **只记禁用项** —— 未列出的模型一律视为可用，因此官方上新模型时天然是可用态，不需要迁移配置。
+
+账号级停用策略存放在 `/data/.wb-switch/account_policy.json`，同样**与账号池配置互不覆盖**：
+
+```json
+{
+  "version": 1,
+  "disabled": {
+    "a1b2c3d4": "manual"
+  }
+}
+```
+
+- 只记被停用的账号，未列出的一律参与轮询。
+- 值表示来源：`manual` = 你在界面上点的，`auto` = 巡检发现凭据失效后写的。
+  自动启用的逻辑只放开 `auto` 项，不会动 `manual` 项 —— 与模型禁用是同一套来源保护。
+- 这份策略与账号池的 `enabledAccountIds` 是两件事：前者是「临时停用」，
+  后者是「配置里的白名单」，巡检只改前者。
 
 ### 验证并发分摊
 

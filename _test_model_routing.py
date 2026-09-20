@@ -49,10 +49,14 @@ ns = {
     "Counter": __import__("collections").Counter,
 }
 # main.py 已把策略读写抽到 model_policy 模块（巡检与手动禁用共用），
-# 切片执行常量区时会引用到 model_policy，必须注入命名空间。
+# 账号级停用又抽到 account_policy（账号池合成启用集合时会读它）。
+# 切片执行时这两处都是顶层引用，必须一并注入命名空间 ——
+# 少注一个的表现是 NameError，且只在跑到那条分支时才炸。
 import model_policy as _mp  # noqa: E402
+import account_policy as _ap  # noqa: E402
 
 ns["model_policy"] = _mp
+ns["account_policy"] = _ap
 ns["ACCOUNT_POOL_FILE"] = tmp / "account_pool_config.json"
 ns["SELECTION_LOG_FILE"] = tmp / "selection_logs.json"
 ns["MODEL_POLICY_FILE"] = tmp / "model_policy.json"
@@ -124,6 +128,38 @@ check("不传 model 时不过滤", seen == {"a1", "a2", "a3"}, str(seen))
 # 7. 指定账号但该账号禁用了该模型 -> 返回 None（走 409 提示）
 ns["_load_model_policy"] = lambda: {"a2": ["hy3"]}
 check("显式指定被禁用的组合返回 None", select_account("a2", model="hy3") is None)
+
+# 8. 账号级停用：被停用的账号不参与自动轮询。
+# 这条最容易被漏 —— 账号策略读的是独立文件，模型策略被 monkeypatch 掉了，
+# 如果 _enabled_accounts 忘了接账号策略，上面的用例全都会照常通过。
+_ap.save_policy({})
+pol = _ap.load_policy()
+_ap.set_disabled(pol, "a2", True, _ap.SOURCE_MANUAL)
+_ap.save_policy(pol)
+seen = set()
+for _ in range(12):
+    seen.add(select_account()["id"])
+check("账号级停用后不参与自动轮询", "a2" not in seen, str(seen))
+
+# 9. 被停用的账号仍可被显式指定（人工兜底场景：就想用这个账号）。
+#    停用是「轮询时不选它」，不是「禁止调用」。
+acc = select_account("a2")
+check("显式指定的账号不受停用影响", acc is not None and acc["id"] == "a2", str(acc))
+
+# 10. 全部账号都被停用时回退，不返回 None
+for _id in ("a1", "a2", "a3"):
+    p = _ap.load_policy()
+    _ap.set_disabled(p, _id, True, _ap.SOURCE_MANUAL)
+    _ap.save_policy(p)
+acc = select_account()
+check("全部停用时回退而非 None", acc is not None, str(acc))
+
+# 11. 清空策略后恢复可轮询（停用是双向的）
+_ap.save_policy({})
+seen = set()
+for _ in range(12):
+    seen.add(select_account()["id"])
+check("解除停用后重新参与轮询", "a2" in seen, str(seen))
 
 print(f"\n结果：{PASS} 项通过，{FAIL} 项失败")
 sys.exit(1 if FAIL else 0)

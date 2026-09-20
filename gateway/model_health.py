@@ -37,6 +37,11 @@ try:
 except ImportError:
     import model_policy
 
+try:
+    from gateway import account_policy
+except ImportError:
+    import account_policy
+
 
 # 巡检配置落盘位置（与 model_policy.json、account_pool_config.json 并列，互不覆盖）
 DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
@@ -110,6 +115,13 @@ def default_config() -> Dict[str, Any]:
         # 自动启用：探测通过时，是否自动移除禁用项。只会移除巡检自己写入的项，
         # 手动禁用的模型受来源标记保护，不受此开关影响。
         "autoEnable": True,
+        # 是否在探模型之前先探一次账号凭据。开启可省掉「凭据失效账号」下
+        # 那几十次注定失败的模型探测，也能把「token 过期」与「模型坏了」区分开。
+        "checkAccounts": True,
+        # 凭据确认失效时，是否自动停用整个账号。默认开启 —— 一个凭据失效的账号
+        # 每次被轮询到都必然失败，让它继续留在轮询里只会拖慢请求。
+        # 注意这只在「确认失效」（401/403）时触发，网络抖动不算。
+        "autoDisableAccounts": True,
         # 是否把每轮结果落盘，供重启后界面回显
         "logResults": True,
     }
@@ -128,6 +140,10 @@ def _coerce_config(raw: Any) -> Dict[str, Any]:
         cfg["onlyUsedModels"] = bool(raw.get("onlyUsedModels"))
     if "logResults" in raw:
         cfg["logResults"] = bool(raw.get("logResults"))
+    if "checkAccounts" in raw:
+        cfg["checkAccounts"] = bool(raw.get("checkAccounts"))
+    if "autoDisableAccounts" in raw:
+        cfg["autoDisableAccounts"] = bool(raw.get("autoDisableAccounts"))
 
     try:
         interval = int(raw.get("intervalMinutes", DEFAULT_INTERVAL_MINUTES))
@@ -171,7 +187,8 @@ def merge_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     current = load_config()
     if isinstance(payload, dict):
         for key in ("enabled", "intervalMinutes", "accountIds",
-                    "onlyUsedModels", "autoEnable", "logResults"):
+                    "onlyUsedModels", "autoEnable", "logResults",
+                    "checkAccounts", "autoDisableAccounts"):
             if key in payload:
                 current[key] = payload[key]
     return save_config(current)
@@ -394,6 +411,79 @@ def probe_once(client: Any, base_url: str, token: str, model: str,
     }
 
 
+def probe_account(client: Any, base_url: str, token: str,
+                  timeout: float = 30.0) -> Dict[str, Any]:
+    """只探「这个账号的凭据还有效吗」，不碰任何模型。
+
+    发一个刻意不成立的请求（不存在的模型名），只看上游怎么回：
+    - 落到鉴权类错误（401/403）→ 凭据已失效，这个账号现在无论如何都调不通；
+    - 落到「模型不存在」类错误（400/404）→ **鉴权已经过了**，凭据有效；
+    - 连不上 / 超时 / 5xx → 探测没得到有效结论，不据此下判断。
+
+    这样做的价值在于：一个凭据失效的账号，它名下**所有**模型都会失败。
+    先花一次请求确认凭据，就能省掉后面几十次注定失败的探测，
+    也避免把「凭据过期」误读成「这些模型全都坏了」而批量误禁。
+    """
+    started = time.time()
+    # 用不可能存在的模型名，确保请求不会真的产生一次生成；同时请求体只放必需字段。
+    body: Dict[str, Any] = {
+        "model": "__wb_probe_nonexistent__",
+        "messages": [{"role": "user", "content": PROBE_USER_CONTENT}],
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    status_code: Optional[int] = None
+    error: Optional[str] = None
+    snippet = ""
+    try:
+        status_code, snippet = _send_probe(client, f"{base_url}/chat/completions",
+                                           body, headers, timeout)
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+
+    code = _extract_error_code(snippet)
+    verdict = classify_account_probe(status_code, error, snippet)
+    return {
+        "status": status_code,
+        "verdict": verdict,          # available / auth_failed / transient
+        "code": code,
+        "error": error,
+        "elapsedMs": int((time.time() - started) * 1000),
+    }
+
+
+def classify_account_probe(status_code: Optional[int], error: Optional[str],
+                           snippet: str = "") -> str:
+    """把账号探测的响应归为 available / auth_failed / transient。
+
+    注意与模型探测的**语义差别**：这里 400/404 是好消息 ——
+    上游能说出「这个模型不存在」，说明它已经认下了这个 token。
+    """
+    if error:
+        return "transient"
+    if status_code is None:
+        return "transient"
+    if status_code in AUTH_STATUS:
+        return "auth_failed"
+    if status_code in TRANSIENT_STATUS:
+        return "transient"
+    if 200 <= status_code < 300:
+        # 探测用的模型名不存在，正常上游不会返回 2xx。
+        # 真返回了说明上游对未知模型很宽容 —— 凭据至少是通的，按有效处理。
+        return "available"
+    # 一旦带上「认得出这个 token」的证据，就算凭据有效。
+    lowered = (snippet or "").lower()
+    if status_code in (400, 404, 422):
+        return "available"
+    if any(h in lowered for h in ("invalid model", "model not found", "unknown model",
+                                  "unsupported model", "model_not_found")):
+        return "available"
+    if status_code in UNAVAILABLE_STATUS:
+        # 5xx 之类：分不清是上游整体故障还是这个账号的问题，不下结论。
+        return "transient"
+    return "transient"
+
+
 # ---------------------------------------------------------------------------
 # 结果落地到禁用策略
 # ---------------------------------------------------------------------------
@@ -520,6 +610,11 @@ def run_round(accounts: List[Dict[str, Any]],
     counts = {"available": 0, "unavailable": 0, "transient": 0, "probe_defect": 0}
     auth_failed: List[str] = []
     defect_codes: Set[int] = set()
+    # 账号级探测结果：``{account_id: verdict}``。
+    # 与模型级 counts 分开记 —— 账号级探的是凭据，混进模型计数会让
+    # 「本轮多少组合可用」这个数字失去意义。
+    account_probes: Dict[str, str] = {}
+    check_accounts = bool(config.get("checkAccounts", True))
 
     # 按账号分组探测，这样一个账号只建一次 HTTP 连接。
     grouped: Dict[str, List[str]] = {}
@@ -536,6 +631,35 @@ def run_round(accounts: List[Dict[str, Any]],
             variant = acc.get("variant", "ai")
             base_url = base_url_for(variant)
 
+            # 先花一次请求确认凭据。凭据已失效的账号，名下所有模型都会失败 ——
+            # 先探一次就能省掉后面几十次注定失败的请求，也避免把
+            # 「token 过期」误读成「这些模型全坏了」而批量误禁。
+            # 探测没得到结论（transient）时照常往下探模型，不因一次探测失败就跳过。
+            if check_accounts and len(models) > 1:
+                acc_probe = probe_account(client, base_url, token)
+                account_probes[acc_id] = acc_probe["verdict"]
+                if acc_probe["verdict"] == "auth_failed":
+                    auth_failed.append(acc_id)
+                    existing = sorted(model_policy._coerce_entry(policy.get(acc_id)) or {})
+                    account_reports.append({
+                        "accountId": acc_id,
+                        "accountName": acc.get("nickname") or acc.get("email") or acc_id,
+                        "disabled": [],
+                        "enabled": [],
+                        "protected": [],
+                        "unchanged": sorted(models),
+                        "disabledBefore": existing,
+                        "disabledAfter": existing,
+                        "changed": False,
+                        "authFailed": True,
+                        # 没能探到模型级结论：跳过的原因必须在面板上说得清，
+                        # 否则用户只会看到「组合数比模型总数少」却不知道差在哪。
+                        "skippedReason": "凭据已失效，未再逐个探测其模型",
+                        "accountProbe": acc_probe,
+                        "results": [],
+                    })
+                    continue
+
             results = []
             for model in models:
                 item = probe_once(client, base_url, token, model)
@@ -551,7 +675,8 @@ def run_round(accounts: List[Dict[str, Any]],
             # 否则一次 token 过期就会自动禁掉整个账号的模型清单。
             if (len(results) >= AUTH_GUARD_MIN_MODELS
                     and statuses and statuses <= AUTH_STATUS):
-                auth_failed.append(acc_id)
+                if acc_id not in auth_failed:
+                    auth_failed.append(acc_id)
                 report = {
                     "accountId": acc_id,
                     "disabled": [],
@@ -584,6 +709,8 @@ def run_round(accounts: List[Dict[str, Any]],
     # 「实际落盘的变更」——整轮作废时不写策略，两者都保持为空。
     applied_disabled: List[str] = []
     applied_enabled: List[str] = []
+    # 自动停用的账号 id（来自凭据探测）。整轮作废时同样不写。
+    applied_accounts_disabled: List[str] = []
     if aborted:
         # 逐账号明细里的变更声明要一并清空：策略没有落盘，
         # 留着会让人以为「这些已经被禁了」，而实际什么都没写。
@@ -633,6 +760,27 @@ def run_round(accounts: List[Dict[str, Any]],
             model_policy.backup_policy(BACKUP_SUFFIX)
         model_policy.save_policy(fresh)
 
+        # 账号级停用走**独立的文件与独立的开关**。
+        # 只有「凭据确定失效」才自动停用 —— 凭据失效是确定性的、可复现的，
+        # 而 transient（网络抖动、上游 5xx）不下手。这条比模型级更保守：
+        # 停掉一个账号等于停掉它名下全部模型，误停的代价更大。
+        if check_accounts and bool(config.get("autoDisableAccounts", True)):
+            acc_policy = account_policy.load_policy()
+            changed = False
+            for acc_id, verdict in account_probes.items():
+                # 只处理明确失效的那一种；transient / available 都不动。
+                # 也不自动**启用**：账号失效往往要重新登录才会好，
+                # 自动放回轮询只会让它继续失败，不如让人在界面上确认后再放开。
+                if verdict != "auth_failed":
+                    continue
+                if account_policy.set_disabled(acc_policy, acc_id, True,
+                                               account_policy.SOURCE_AUTO):
+                    applied_accounts_disabled.append(acc_id)
+                    changed = True
+            if changed:
+                account_policy.backup_policy(BACKUP_SUFFIX)
+                account_policy.save_policy(acc_policy)
+
     result = {
         "checkedAt": now_ms,
         "combos": len(combos),
@@ -652,6 +800,10 @@ def run_round(accounts: List[Dict[str, Any]],
             {"id": r["accountId"], "name": r.get("accountName")}
             for r in account_reports if r.get("authFailed")
         ],
+        # 本轮被自动停用的账号（凭据确认失效）。界面据此说明账号为什么不再参与调用。
+        "accountsDisabled": sorted(set(applied_accounts_disabled)),
+        # 账号级探测结果，界面用来区分「凭据坏了」还是「模型坏了」。
+        "accountProbes": account_probes,
         # 探测被上游参数校验拒绝时命中的错误码，用于排查探测形态问题。
         "defectCodes": sorted(defect_codes),
         "reports": account_reports,
@@ -685,6 +837,7 @@ def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": round_result.get("enabled", []),
         "protected": round_result.get("protected", []),
         "authFailed": round_result.get("authFailed", []),
+        "accountsDisabled": round_result.get("accountsDisabled", []),
         "defectCodes": round_result.get("defectCodes", []),
         "aborted": bool(round_result.get("aborted")),
         "reason": round_result.get("reason"),

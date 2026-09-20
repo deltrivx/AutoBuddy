@@ -147,8 +147,16 @@ ACCOUNT_MODELS = {
 
 ACCOUNT_POOL = {
     "mode": "rotate", "enabledAccountIds": ["acc-1"], "preferredAccountId": None,
-    "accounts": [{"id": "acc-1", "name": "账号甲", "inPool": True, "usable": True}],
-    "total": 1, "usable": 1,
+    # mode 用 auto 而不是 rotate：网关实际下发的是 auto/manual 两种，
+    # 夹具写错模式会让「首选账号」那类断言在错误的前提下通过。
+    "allEnabledByDefault": False,
+    "accountDisabled": {"acc-1": "auto"},
+    "accounts": [{
+        "id": "acc-1", "name": "账号甲", "variant": "ai",
+        "enabled": True, "usable": True, "active": False,
+        "disabled": True, "disabledSource": "auto",
+    }],
+    "selectionCounts": [],
 }
 
 HARNESS_JS = r"""
@@ -360,15 +368,6 @@ function payloadFor(url) {
   return {};
 }
 
-function fetch(url) {
-  return Promise.resolve({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve(payloadFor(url)),
-    text: () => Promise.resolve(""),
-  });
-}
-
 const navigator = { userAgent: "node-test", clipboard: undefined };
 const localStorage = {
   getItem: (k) => (k in store ? store[k] : null),
@@ -377,11 +376,31 @@ const localStorage = {
 };
 const sessionStorage = localStorage;
 
-const WB = __SCRIPT__
-
+// fetch 桩：既数数量，也记录每次请求的 url / method。
+// 只数数量不够 —— 断言「点了检测按钮真的打到了账号探测接口」需要看请求本身，
+// 否则按钮接了但没连对接口（或压根没接）都会被数字掩盖过去。
+//
+// 必须挂在 globalThis 上，而且**不能**在模块作用域另写一个 `function fetch`：
+// 那样脚本 IIFE 里的自由变量 `fetch` 会解析到那个裸函数，计数桩被整体绕过，
+// 所有「打了没打接口」的断言都会失真（表现为计数恒为 0 却仍能通过宽松断言）。
 let fetchCalls = 0;
-const rawFetch = fetch;
-globalThis.fetch = (u) => { fetchCalls += 1; return rawFetch(u); };
+const fetchLog = [];
+globalThis.fetch = (u, opts) => {
+  fetchCalls += 1;
+  fetchLog.push({
+    url: String(u),
+    method: String((opts && opts.method) || "GET").toUpperCase(),
+    body: (opts && opts.body) || null,
+  });
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(payloadFor(String(u))),
+    text: () => Promise.resolve(""),
+  });
+};
+
+const WB = __SCRIPT__
 
 let runError = null;
 try { WB.run(); } catch (e) { runError = "run() 抛异常：" + (e && e.message); }
@@ -452,9 +471,44 @@ setTimeout(() => {
       }));
   });
 
+  // ---- 账号卡片：控制条的按钮（账号检测 + 停用来源）----------------------
+  // 停用来源要能从按钮上读出来：manual 灰底、auto 琥珀色（.wb-pool-btn-auto），
+  // 文案也要说清是谁停的。否则「已停用」会被读成自己误操作过。
+  const cardPoolButtons = ACCOUNT_CARDS.map((c) => {
+    const bar = (c.sec.children || [])
+      .find((k) => (k.className || "").split(/\s+/).indexOf("wb-pool-bar") >= 0);
+    if (!bar) return null;
+    return (bar.children || []).map((b) => ({
+      cls: String(b.className || ""),
+      text: String(b.textContent || ""),
+      clickable: typeof b.onclick === "function",
+    }));
+  });
+
+  // ---- 账号卡片：手动检测入口可点、且打的是账号探测接口 -------------------
+  // 点一下「检测账号」，断言它发出的请求路径正确 —— 光有按钮不算数，
+  // 真接上了才有效（面板消失那类事故就是这么来的）。
+  let probeFetch = null;
+  let probeAfterCount = 0;
+  try {
+    const bar = (ACCOUNT_CARDS[0].sec.children || [])
+      .find((k) => (k.className || "").split(/\s+/).indexOf("wb-pool-bar") >= 0);
+    const probeBtn = bar && (bar.children || [])
+      .find((b) => String(b.textContent || "").indexOf("检测账号") >= 0);
+    if (probeBtn && typeof probeBtn.onclick === "function") {
+      const before = fetchLog.length;
+      probeBtn.onclick();
+      probeAfterCount = fetchLog.length - before;
+      probeFetch = fetchLog[fetchLog.length - 1] || null;
+    }
+  } catch (e) {
+    errors.push("点击「检测账号」抛异常：" + ((e && e.message) || String(e)));
+  }
+
   const result = {
     errors: errors.concat([runError, secondRunError, thirdRunError].filter(Boolean)),
     fetchCalls,
+    fetchLog: fetchLog.slice(-12),
     hostFound: !!WB.findHost(),
     nodes: all.length,
     // 必须**真的挂上去了**：渲染函数是先给 section 设 id、最后才 appendChild，
@@ -473,6 +527,9 @@ setTimeout(() => {
     tailsAfterLate,
     lateStaysAbove,
     cardBadges,
+    cardPoolButtons,
+    probeFetch,
+    probeAfterCount,
   };
   process.stdout.write("__RESULT__" + JSON.stringify(result) + "\n");
 }, 60);
@@ -589,6 +646,35 @@ def main() -> int:
     check("两个计数互不重叠（本卡片手动 1 + 巡检 1 = 禁用总数 2）",
           _num(manual) + _num(auto) == 2, f"got {first}")
     check("没有 h3 的卡片依旧不被注入模型区", badges[1] is None, f"got {badges[1]}")
+
+    print("\n[8] 账号卡片：控制条（检测账号 + 停用来源）")
+    btns = result["cardPoolButtons"]
+    first_bar = btns[0] if btns else None
+    texts = " | ".join(b["text"] for b in (first_bar or []))
+    check("控制条挂在卡片上", first_bar is not None, str(btns))
+    check("有「检测账号」入口", "检测账号" in texts, texts)
+    probe_btn = next((b for b in (first_bar or []) if "检测账号" in b["text"]), None)
+    check("检测按钮可点击（绑了 onclick）",
+          probe_btn is not None and probe_btn["clickable"], str(probe_btn))
+    # 停用来源要看得见：夹具里 acc-1 是巡检（auto）停用的，
+    # 按钮文案必须说「巡检」，样式必须是琥珀色 —— 否则用户会以为是自己点的。
+    check("停用按钮区分来源（巡检停用）", "巡检" in texts, texts)
+    check("巡检停用使用琥珀色样式（.wb-pool-btn-auto）",
+          any("wb-pool-btn-auto" in b["cls"] for b in (first_bar or [])), texts)
+
+    # 点一下，断言真的打到了账号探测接口。这条是这组断言里最关键的：
+    # 按钮存在只说明画出来了，「接对了接口」才算真的能用。
+    probe = result.get("probeFetch")
+    check("点「检测账号」发出了账号探测请求",
+          result.get("probeAfterCount", 0) == 1 and probe is not None,
+          f"got {probe} afterCount={result.get('probeAfterCount')}")
+    check("探测请求打到 /api/account-health/probe",
+          probe is not None and "/api/account-health/probe" in probe.get("url", ""),
+          f"got {probe}")
+    check("探测请求是 POST",
+          probe is not None and probe.get("method") == "POST", f"got {probe}")
+    check("探测请求带上 accountId",
+          probe is not None and "accountId" in str(probe.get("body") or ""), f"got {probe}")
 
     print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
     return 1 if _fail else 0

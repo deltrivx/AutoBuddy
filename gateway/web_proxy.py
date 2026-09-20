@@ -112,6 +112,13 @@ COLLAPSE_SCRIPT = r"""
     color: #1d4ed8;
     font-weight: 600;
   }
+  /* 巡检自动停用：「不是我点的」要一眼看出来，所以用琥珀色而不是灰底。
+     灰底会和「被账号池白名单排除」那种状态混淆，用户会以为自己误操作过。 */
+  .wb-pool-btn-auto {
+    border-color: rgba(217, 119, 6, 0.55);
+    background: rgba(217, 119, 6, 0.14);
+    color: #b45309;
+  }
   .wb-pool-hint {
     font-size: 11px;
     color: var(--muted-foreground, #6b7280);
@@ -251,6 +258,16 @@ COLLAPSE_SCRIPT = r"""
   @media (min-width: 640px) { .wb-api-row { margin: 0 20px; } }
   .wb-api-row:last-child { border-bottom: 0; }
   .wb-api-row-stack { flex-direction: column; align-items: stretch; }
+  /* 窄屏下横排会把左边的说明文字压成一条竖线（实测 13px 宽），
+     因为右侧的按钮/代码块不肯让位。改成纵向堆叠，各自吃满整行。 */
+  @media (max-width: 560px) {
+    .wb-api-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .wb-api-row > * { max-width: 100%; }
+  }
   .wb-api-main { min-width: 0; flex: 1 1 auto; }
   .wb-api-label {
     font-size: 13px;
@@ -447,6 +464,15 @@ COLLAPSE_SCRIPT = r"""
     row-gap: 6px;
     margin-top: 4px;
   }
+  /* 窄屏时 `max-content` 的键列会把值列挤得放不下（「数据目录」四个字加路径），
+     改成键值上下堆叠，键小字灰色、值换行显示。 */
+  @media (max-width: 560px) {
+    .wb-about-grid {
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 2px;
+    }
+    .wb-about-k { margin-top: 6px; }
+  }
   .wb-about-k {
     font-size: 11.5px;
     line-height: 1.6;
@@ -520,23 +546,32 @@ COLLAPSE_SCRIPT = r"""
       });
     });
 
+    // 窄屏（手机）上侧边栏不再是「可以收起」，而是**必须**收起：
+    // 它固定占 220px，在 430px 的屏幕上会吃掉一半，正文被挤成一条竖线。
+    // 这里不写进 localStorage —— 那是桌面端的手动偏好，不该被媒体查询改掉。
+    const narrowQuery = window.matchMedia("(max-width: 720px)");
+    const applyCollapsed = (on) => {
+      aside.classList.toggle("wb-collapsed", !!on);
+      const svg = btn.querySelector("svg");
+      if (svg) {
+        svg.innerHTML = on
+          ? `<polyline points="9 18 15 12 9 6"></polyline>`
+          : `<polyline points="15 18 9 12 15 6"></polyline>`;
+      }
+    };
+
     let collapsed = localStorage.getItem("wb_sidebar_collapsed") === "true";
-    if (collapsed) {
-      aside.classList.add("wb-collapsed");
-      btn.querySelector("svg").innerHTML = `<polyline points="9 18 15 12 9 6"></polyline>`;
-    }
+    applyCollapsed(collapsed || narrowQuery.matches);
+
+    narrowQuery.addEventListener("change", (e) => {
+      applyCollapsed(e.matches || collapsed);
+    });
 
     btn.onclick = (e) => {
       e.stopPropagation();
       collapsed = !collapsed;
       localStorage.setItem("wb_sidebar_collapsed", collapsed);
-      if (collapsed) {
-        aside.classList.add("wb-collapsed");
-        btn.querySelector("svg").innerHTML = `<polyline points="9 18 15 12 9 6"></polyline>`;
-      } else {
-        aside.classList.remove("wb-collapsed");
-        btn.querySelector("svg").innerHTML = `<polyline points="15 18 9 12 15 6"></polyline>`;
-      }
+      applyCollapsed(collapsed);
     };
     aside.appendChild(btn);
   }
@@ -605,6 +640,36 @@ COLLAPSE_SCRIPT = r"""
       .catch(function () {
         if (next) { delete wbPolicySet(accountId)[model]; }
         else { wbPolicySet(accountId)[model] = "manual"; }
+        wbToast("请求失败，请刷新页面后重试", true);
+        if (done) done(false);
+      });
+  }
+
+  // 账号级停用（与模型级是两回事：这条管「整个账号参不参与轮询」）。
+  // 与 wbToggleModel 同一套写法：先乐观改本地状态让点按即时，再落盘，
+  // 失败就把乐观改动回滚 —— 否则界面会显示一个并未生效的状态。
+  function wbToggleAccount(accountId, disabled, done) {
+    fetch("/api/account-pool/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: accountId, disabled: !!disabled })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, body: body || {} };
+        });
+      })
+      .then(function (res) {
+        if (!res.ok || res.body.ok === false) {
+          var d = res.body.detail;
+          wbToast(typeof d === "string" && d ? d : "操作失败，请重试", true);
+          if (done) done(false);
+          return;
+        }
+        wbToast(disabled ? "已停用该账号 · 不再参与轮询" : "已恢复该账号参与轮询");
+        if (done) done(true);
+      })
+      .catch(function () {
         wbToast("请求失败，请刷新页面后重试", true);
         if (done) done(false);
       });
@@ -851,10 +916,38 @@ COLLAPSE_SCRIPT = r"""
         var bar = document.createElement("div");
         bar.className = "wb-pool-bar";
 
+        // 两种「不可用」要分开说，否则用户会以为是自己点错了：
+        //   - disabled：被账号级停用策略挡住（可能是人点的，也可能是巡检写的）
+        //   - 池外：不在 enabledAccountIds 白名单里
+        var accDisabled = !!acc.disabled;
+        var inPool = !!acc.enabled;
+
         var toggle = document.createElement("button");
-        toggle.className = "wb-pool-btn" + (acc.enabled ? " wb-pool-btn-on" : "");
-        toggle.textContent = acc.enabled ? "参与调用 · 点击停用" : "已停用 · 点击启用";
+        if (accDisabled) {
+          // 来源不同措辞不同。巡检停用用琥珀色（.wb-pool-btn-auto），
+          // 与手动停用的灰底区分开，让人一眼看出「这不是我点的」。
+          var autoOff = acc.disabledSource === "auto";
+          toggle.className = "wb-pool-btn" + (autoOff ? " wb-pool-btn-auto" : "");
+          toggle.textContent = autoOff ? "已停用（巡检）· 点击启用" : "已停用 · 点击启用";
+          toggle.title = autoOff
+            ? "可用性巡检发现这个账号的凭据已失效，自动停用了它。重新登录后点这里恢复。"
+            : "你手动停用了这个账号。点击恢复参与调用。";
+        } else if (!inPool) {
+          toggle.className = "wb-pool-btn";
+          toggle.textContent = "不在账号池 · 点击启用";
+          toggle.title = "这个账号不在账号池的启用列表里，不参与 API 调用。";
+        } else {
+          toggle.className = "wb-pool-btn wb-pool-btn-on";
+          toggle.textContent = "参与调用 · 点击停用";
+          toggle.title = "点击后这个账号不再参与自动轮询（显式指定它的请求仍可用）。";
+        }
         toggle.onclick = function () {
+          // 账号级停用优先：红/灰状态点一下就恢复。
+          if (accDisabled) {
+            wbToggleAccount(acc.id, false, function () { wbPoolCache = null; refreshPool(); });
+            return;
+          }
+          // 否则走账号池白名单（旧语义，保留不变）。
           var ids = effectiveEnabledIds(data);
           var idx = ids.indexOf(acc.id);
           if (idx >= 0) { ids.splice(idx, 1); } else { ids.push(acc.id); }
@@ -879,6 +972,40 @@ COLLAPSE_SCRIPT = r"""
           );
         };
 
+        // 手动检测：发一次轻量鉴权请求，就地报告这个账号现在能不能用。
+        // 只报告、不改配置 —— 要停用由用户看着结果自己决定（旁边就是停用按钮）。
+        var probe = document.createElement("button");
+        probe.className = "wb-pool-btn";
+        probe.textContent = "检测账号";
+        probe.title = "发一次轻量鉴权请求验证凭据是否有效，不消耗额度";
+        probe.onclick = function () {
+          if (probe.dataset.wbBusy === "1") return;
+          probe.dataset.wbBusy = "1";
+          probe.disabled = true;
+          probe.textContent = "检测中…";
+          fetch("/api/account-health/probe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accountId: acc.id })
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+              if (!res || res.error) {
+                wbToast("检测失败：" + ((res && res.error) || "无法访问接口"), true);
+                return;
+              }
+              // 异常结论用 toast 说清楚结论与建议，正常结论给个轻提示即可。
+              wbToast((res.accountName || "账号") + "：" + (res.message || res.verdict),
+                      res.verdict !== "available");
+            })
+            .catch(function (e) { wbToast("检测请求失败：" + e, true); })
+            .then(function () {
+              probe.disabled = false;
+              probe.textContent = "检测账号";
+              probe.dataset.wbBusy = "0";
+            });
+        };
+
         var count = document.createElement("span");
         var n = counts[acc.id] || 0;
         count.className = "wb-pool-count" + (n > 0 ? " wb-pool-count-hot" : "");
@@ -886,6 +1013,7 @@ COLLAPSE_SCRIPT = r"""
 
         bar.appendChild(toggle);
         bar.appendChild(pin);
+        bar.appendChild(probe);
         bar.appendChild(count);
 
         if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
@@ -2054,6 +2182,42 @@ async def account_pool_selections_reset():
     try:
         async with _internal_client(timeout=5.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-pool/selections/reset")
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.post("/api/account-pool/toggle")
+async def account_pool_toggle(request: Request):
+    """转发账号级停用切换（点击账号卡片上的「停用 / 启用」）。"""
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/account-pool/toggle",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.post("/api/account-health/probe")
+async def account_health_probe(request: Request):
+    """转发「检测账号」：发一次轻量鉴权请求，只回报结论、不改配置。
+
+    超时给到 45s —— 探测本身要等上游回第一个字节，5s 的默认值太紧，
+    会把「上游慢」误报成「检测失败」。
+    """
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=45.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/account-health/probe",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:

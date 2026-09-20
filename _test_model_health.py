@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent / "gateway"))
 
 import model_policy  # noqa: E402
 import model_health  # noqa: E402
+import account_policy  # noqa: E402
 
 print("== 模型可用性巡检单测 ==")
 
@@ -403,11 +404,17 @@ class FakeResponse:
 
 
 class FakeClient:
-    """按 (账号token, 模型) 返回预设状态码，模拟上游。未命中则用 default。"""
+    """按 (账号token, 模型) 返回预设状态码，模拟上游。未命中则用 default。
 
-    def __init__(self, mapping, default=200):
+    ``account_default`` 是**账号级探测**（不带真实模型名的那种）的默认响应。
+    两者必须能分开预设：账号探测故意用一个不存在的模型名，
+    如果混进模型映射里，就分不清「这条是探凭据」还是「探某个真模型」了。
+    """
+
+    def __init__(self, mapping, default=200, account_default=None):
         self.mapping = mapping
         self.default = default
+        self.account_default = account_default
         self.calls = []
 
     def post(self, url, json=None, headers=None, timeout=None):
@@ -856,6 +863,144 @@ check("释放后可再次获取锁", run_check().get("skipped") is None)
 
 check("定时轮次丢到线程执行、不阻塞事件循环",
       "asyncio.to_thread(run_model_health_check)" in main_src)
+
+# ---------------------------------------------------------------------------
+print("\n[22] 账号级探测：凭据失效与模型失效要分开")
+account_policy.save_policy({})
+model_policy.save_policy({})
+
+
+class AccountAwareClient(FakeClient):
+    """账号探测（模型名不存在）与模型探测用**不同的**响应。
+
+    ``account_status`` 控制「探凭据」那一条，``mapping`` 控制其余模型探测。
+    这样才能验证「先探凭据、探到失效就跳过模型」这条优化真的生效
+    （而不是碰巧因为模型探测也失败）。
+    """
+
+    def __init__(self, mapping, default=200, account_status=400):
+        super().__init__(mapping, default=default)
+        self.account_status = account_status
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        token = (headers or {}).get("Authorization", "").replace("Bearer ", "")
+        model = (json or {}).get("model")
+        self.calls.append((token, model))
+        if str(model).startswith("__wb_probe"):
+            status = self.account_status.get(token, 400) \
+                if isinstance(self.account_status, dict) else self.account_status
+            return FakeResponse(status)
+        return FakeResponse(self.mapping.get((token, model), self.default))
+
+
+accounts2 = [
+    {"id": "a1", "nickname": "Acc1", "access_token": "t1", "variant": "ai"},
+    {"id": "a2", "nickname": "Acc2", "access_token": "t2", "variant": "ai"},
+]
+
+# 场景一：a2 凭据失效（401），a1 正常。a2 名下的模型**不该**被探测，
+# 也不该被写进模型策略 —— 坏的是凭据不是模型。
+client2 = AccountAwareClient(
+    {("t1", "hy3"): 200, ("t1", "kimi-k3"): 200, ("t2", "hy3"): 401, ("t2", "kimi-k3"): 401},
+    account_status={"t1": 400, "t2": 401})
+res2 = model_health.run_round(
+    accounts=accounts2,
+    config={**model_health.default_config(), "checkAccounts": True,
+            "autoDisableAccounts": True, "autoEnable": True},
+    client_factory=lambda: client2,
+    base_url_for=lambda v: "https://example.invalid",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("a2 被识别为凭据失效",
+      "a2" in [x["id"] for x in res2["authFailed"]], str(res2["authFailed"]))
+# 关键：a2 的模型一次都没被探 —— 这正是「先探凭据」省下来的成本。
+probed_a2_models = [m for (tk, m) in client2.calls
+                    if tk == "t2" and not str(m).startswith("__wb_probe")]
+check("凭据失效账号的模型不再逐个探测", probed_a2_models == [], str(probed_a2_models))
+# 也没有一条模型级禁用来自 a2（不能把凭据问题写成模型问题）。
+a2_disabled = [m for m in res2["disabled"] if m in ("hy3", "kimi-k3")]
+check("模型策略不因凭据失效而被写入", a2_disabled == [], str(a2_disabled))
+check("a2 被自动停用（账号级）", "a2" in res2["accountsDisabled"], str(res2["accountsDisabled"]))
+check("账号策略里 a2 来源为 auto",
+      account_policy.load_policy().get("a2") == "auto", str(account_policy.load_policy()))
+check("a1 的可用模型正常判定",
+      res2["counts"]["available"] == 2, str(res2["counts"]))
+
+# 场景二：探不到结论（transient，比如上游 5xx）不该停用账号。
+account_policy.save_policy({})
+client3 = AccountAwareClient({("t1", "hy3"): 200, ("t2", "hy3"): 200},
+                             account_status=503)
+res3 = model_health.run_round(
+    accounts=accounts2,
+    config={**model_health.default_config(), "checkAccounts": True,
+            "autoDisableAccounts": True},
+    client_factory=lambda: client3,
+    base_url_for=lambda v: "https://example.invalid",
+    used_models={},
+    base_models=["hy3"],
+)
+check("探测未得结论时不自动停用账号",
+      res3["accountsDisabled"] == [], str(res3["accountsDisabled"]))
+check("探测未得结论时不写账号策略",
+      account_policy.load_policy() == {}, str(account_policy.load_policy()))
+
+# 场景三：checkAccounts 关掉后不再发账号探测请求（给用户一个省流量的开关）。
+account_policy.save_policy({})
+client4 = AccountAwareClient({("t1", "hy3"): 200, ("t2", "hy3"): 200})
+res4 = model_health.run_round(
+    accounts=accounts2,
+    config={**model_health.default_config(), "checkAccounts": False},
+    client_factory=lambda: client4,
+    base_url_for=lambda v: "https://example.invalid",
+    used_models={},
+    base_models=["hy3"],
+)
+probe_calls = [c for c in client4.calls if str(c[1]).startswith("__wb_probe")]
+check("关掉 checkAccounts 后不发账号探测", probe_calls == [], str(probe_calls))
+check("关掉后账号策略不被写", account_policy.load_policy() == {},
+      str(account_policy.load_policy()))
+
+# 场景四：账号级探测的判定函数本身。
+check("401 判为凭据失效",
+      model_health.classify_account_probe(401, None) == "auth_failed")
+check("403 判为凭据失效",
+      model_health.classify_account_probe(403, None) == "auth_failed")
+# 关键：400/404 是好消息 —— 上游能说「这个模型不存在」，说明它认下了这个 token。
+check("400 判为凭据有效（上游认得出 token）",
+      model_health.classify_account_probe(400, None) == "available")
+check("404 判为凭据有效",
+      model_health.classify_account_probe(404, None) == "available")
+check("5xx 不下结论",
+      model_health.classify_account_probe(503, None) == "transient")
+check("网络异常不下结论",
+      model_health.classify_account_probe(None, "ConnectTimeout") == "transient")
+
+# 场景五：手动停用不受巡检影响（阳性对照）。
+account_policy.save_policy({})
+pol5 = account_policy.load_policy()
+account_policy.set_disabled(pol5, "a2", True, account_policy.SOURCE_MANUAL)
+account_policy.save_policy(pol5)
+client5 = AccountAwareClient({("t1", "hy3"): 200, ("t2", "hy3"): 200},
+                             account_status={"t1": 400, "t2": 401})
+model_health.run_round(
+    accounts=accounts2,
+    config={**model_health.default_config(), "checkAccounts": True,
+            "autoDisableAccounts": True},
+    client_factory=lambda: client5,
+    base_url_for=lambda v: "https://example.invalid",
+    used_models={},
+    base_models=["hy3"],
+)
+check("已有的手动停用不被改写成 auto",
+      account_policy.load_policy().get("a2") == "manual",
+      str(account_policy.load_policy()))
+account_policy.save_policy({})
+
+check("checkAccounts 可被配置覆盖",
+      model_health._coerce_config({"checkAccounts": False})["checkAccounts"] is False)
+check("autoDisableAccounts 可被配置覆盖",
+      model_health._coerce_config({"autoDisableAccounts": False})["autoDisableAccounts"] is False)
 
 # ---------------------------------------------------------------------------
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")

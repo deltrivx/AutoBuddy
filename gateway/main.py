@@ -25,10 +25,11 @@ except ImportError:
     import api_keys
 
 try:
-    from gateway import model_policy, model_health
+    from gateway import model_policy, model_health, account_policy
 except ImportError:
     import model_policy
     import model_health
+    import account_policy
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.8"
+VERSION_DEFAULT = "0.4.9"
 GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -307,10 +308,24 @@ def _account_label(acc: Dict[str, Any]) -> str:
     return acc.get("nickname") or acc.get("email") or acc.get("uid") or acc.get("id") or "未命名账号"
 
 
-def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any],
+                      include_disabled: bool = False) -> List[Dict[str, Any]]:
+    """账号池白名单 + 可用性过滤，可选是否叠加「账号级停用」。
+
+    ``include_disabled`` 用于**显式指定**的路径：停用的语义是「不参与自动轮询」，
+    而不是「禁止调用」—— 用户想临时用某个已停用的账号兜底时，
+    不该逼他先去界面把停用解除掉。
+    """
     enabled = {str(x) for x in config.get("enabledAccountIds") or []}
     # 空数组是默认值，语义是全部启用；保存明确列表后才是白名单。
     candidates = accounts if not enabled else [a for a in accounts if str(_account_id(a)) in enabled]
+    # 再叠加账号级停用策略（人点的或巡检写的）。两份配置都只能**减少**参与调用的账号，
+    # 谁都不许把账号偷偷启用回来 —— 于是「关掉巡检之后手动停用依然生效」是天然成立的，
+    # 不需要在两者之间做任何迁移。
+    if not include_disabled:
+        disabled = account_policy.disabled_ids()
+        if disabled:
+            candidates = [a for a in candidates if str(_account_id(a)) not in disabled]
     now_ms = int(time.time() * 1000)
     return [a for a in candidates if _account_is_usable(a, now_ms)]
 
@@ -431,10 +446,19 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
 
     ``model`` 用于叠加**模型级禁用**：该账号若把本请求要用的模型拉黑了，就不再
     参与本次轮询，转而选择下一个账号。这样「某账号某模型不可用」不会让整个请求失败。
+
+    **账号级停用**只影响自动轮询与手动模式，不影响显式指定 ——
+    停用的语义是「轮询时不选它」，而不是「禁止调用」。同理，全部账号都被停用时
+    自动轮询会回退到原始候选集，让上游返回真实错误，而不是在网关层编一个「无账号」。
     """
     accounts = _load_accounts()
     config = _load_pool_config()
     candidates = _enabled_accounts(accounts, config)
+    # 「显式指定」与「手动模式」走**包含停用账号**的候选集：
+    # 停用的语义是不参与自动轮询，而不是禁止调用。人明确点名要用它，
+    # 就该照办 —— 否则用户为了临时兜底还得先去界面解一次停用。
+    explicit_pool = _enabled_accounts(accounts, config, include_disabled=True)
+    explicit_by_id = {str(_account_id(a)): a for a in explicit_pool if _account_id(a)}
 
     if model:
         policy = _load_model_policy()
@@ -447,13 +471,22 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
     by_id = {str(_account_id(a)): a for a in candidates if _account_id(a)}
 
     if requested_id:
-        acc = by_id.get(str(requested_id))
+        # 模型级禁用仍然拦得住显式指定（那是「这个账号这个模型不可用」的硬约束），
+        # 账号级停用拦不住（那只针对自动轮询）。
+        acc = explicit_by_id.get(str(requested_id))
+        if acc and model and _model_is_disabled(_account_id(acc), model, _load_model_policy()):
+            return None
         return _remember_selection(acc, "request") if acc else None
 
     if config.get("mode") == "manual":
-        acc = by_id.get(str(config.get("manualAccountId")))
+        acc = explicit_by_id.get(str(config.get("manualAccountId")))
         return _remember_selection(acc, "manual") if acc else None
 
+    # 全部账号都被账号级停用时，宁可回退到「包含停用账号」的集合也不返回 None：
+    # 让上游去返回真实错误，比在网关层编一个「无账号」更利于排查
+    # （与模型级全禁用的处理保持一致）。
+    if not candidates:
+        candidates = explicit_pool
     if not candidates:
         return None
     # 取号与递增必须在同一把锁内完成，否则并发下会重复命中同一账号。
@@ -471,6 +504,9 @@ def account_pool_status():
     enabled_ids = {str(x) for x in config.get("enabledAccountIds") or []}
     now_ms = int(time.time() * 1000)
     stats = selection_stats(limit=10)
+    # 账号级停用来源表。界面据此区分「谁停的」——人点的与巡检写的文案不同，
+    # 否则「已停用」会被读成用户自己误操作过。
+    account_disabled = account_policy.as_source_map()
     return {
         "mode": config.get("mode"),
         "manualAccountId": config.get("manualAccountId"),
@@ -480,11 +516,15 @@ def account_pool_status():
         "lastSelectedSource": _ACCOUNT_POOL_RUNTIME.get("last_selected_source"),
         "selectionCounts": stats["counts"],
         "modelPolicy": model_policy.as_model_lists(_load_model_policy()),
+        "accountDisabled": account_disabled,
         "accounts": [
             {
                 "id": _account_id(a),
                 "name": _account_label(a),
                 "variant": a.get("variant"),
+                # 账号级停用（独立于账号池白名单），来源单独给出。
+                "disabled": str(_account_id(a)) in account_disabled,
+                "disabledSource": account_disabled.get(str(_account_id(a))),
                 "enabled": not enabled_ids or str(_account_id(a)) in enabled_ids,
                 "usable": _account_is_usable(a, now_ms),
                 "active": _account_id(a) == (_rotate_state_snapshot().get("active_account_id") or ""),
@@ -535,6 +575,96 @@ def update_account_pool(config: Dict[str, Any]):
         "manualAccountId": manual_id,
     })
     return {"ok": True, "config": saved, "status": account_pool_status()}
+
+
+# ---------------------------------------------------------------------------
+# 账号级停用：与「账号池白名单」正交的一份独立策略
+#
+# 为什么不复用账号池的 enabledAccountIds：
+#   - 那份是**用户的配置**（保存整份列表），巡检不该去改它；
+#   - 这里要记「是谁停的」（manual / auto），数组表达不了来源；
+#   - 巡检自动停用需要能自愈，而配置里的白名单若被巡检删项，
+#     用户根本看不出自己的配置被动过。
+# 于是独立成文件，两份都只能**减少**参与调用的账号。
+
+@app.post("/account-pool/toggle")
+def toggle_account_disabled(payload: Dict[str, Any]):
+    """停用 / 启用单个账号（人在界面上点的，来源记 manual）。
+
+    停用的语义是「轮询时不选它」，**不是**禁止调用 ——
+    显式指定这个账号的请求仍然会被接受（见 ``select_account``），
+    这样用户想临时用它兜底时不必先去改配置。
+    """
+    acc_id = payload.get("accountId")
+    if not acc_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+    accounts = _load_accounts()
+    known = {str(_account_id(a)) for a in accounts if _account_id(a)}
+    if str(acc_id) not in known:
+        raise HTTPException(status_code=404, detail="account not found")
+    disabled = bool(payload.get("disabled", True))
+    policy = account_policy.load_policy()
+    changed = account_policy.set_disabled(policy, str(acc_id), disabled,
+                                          account_policy.SOURCE_MANUAL)
+    if changed:
+        account_policy.save_policy(policy)
+    return {
+        "ok": True,
+        "changed": changed,
+        "accountId": str(acc_id),
+        "disabled": disabled,
+        "source": account_policy.SOURCE_MANUAL if disabled else None,
+        "status": account_pool_status(),
+    }
+
+
+@app.post("/account-health/probe")
+def probe_account_credentials(payload: Dict[str, Any]):
+    """就地检测一个账号的凭据是否有效（不消耗额度、不改配置）。
+
+    只报告结论。要停用它由用户看着结果自己决定（旁边就是停用按钮）——
+    探测结果与改配置分开，是为了不让人在「点了检测」之后发现配置被悄悄改了。
+    """
+    acc_id = payload.get("accountId")
+    if not acc_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+    accounts = _load_accounts()
+    by_id = {str(_account_id(a)): a for a in accounts if _account_id(a)}
+    acc = by_id.get(str(acc_id))
+    if not acc:
+        raise HTTPException(status_code=404, detail="account not found")
+
+    # 这是一个同步 HTTP 调用，但**不能**直接写在 def 路由里等它 ——
+    # FastAPI 的 def 路由跑在线程池里，阻塞的是线程不是事件循环，
+    # 所以这里直接同步执行即可（与 run_model_health_check 同一模式）。
+    variant = acc.get("variant", "ai")
+    base_url = _health_base_url(variant)
+    token = acc.get("access_token")
+    client = httpx.Client(timeout=30.0)
+    try:
+        result = model_health.probe_account(client, base_url, token)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    verdict = result.get("verdict")
+    messages = {
+        "available": "凭据有效",
+        "auth_failed": "凭据已失效，请重新登录该账号",
+        "transient": "暂时没拿到结论（网络或上游异常），可稍后再试",
+    }
+    return {
+        "ok": True,
+        "accountId": str(acc_id),
+        "accountName": _account_label(acc),
+        "verdict": verdict,
+        "message": messages.get(verdict, "未识别的探测结论"),
+        "status": result.get("status"),
+        "elapsedMs": result.get("elapsedMs"),
+        "error": result.get("error"),
+    }
 
 
 # ---------------------------------------------------------------------------
