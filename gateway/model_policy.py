@@ -245,9 +245,39 @@ def set_model_disabled(policy: Policy, account_id: str, model: str,
     return sorted(entry.keys())
 
 
+def enable_all_models(policy: Policy, account_id: str,
+                      sources: Optional[List[str]] = None) -> List[str]:
+    """一键恢复：移除某账号的禁用项，返回**被恢复**的模型列表。
+
+    ``sources`` 为空表示**不分来源全部恢复**（手动 + 巡检），这是界面上
+    「全部恢复」按钮的语义 —— 用户的意图是「让这些模型重新参与调用」，
+    至于当初是谁禁的并不重要。
+
+    只传 ``[SOURCE_AUTO]`` 时退化为「清掉巡检禁用」，用于需要保留人工
+    决策的场景。返回值是被移除的模型名，方便界面回显「恢复了哪几个」。
+    """
+    acc_key = str(account_id)
+    entry = _coerce_entry(policy.get(acc_key)) or {}
+    if not entry:
+        return []
+
+    keep: Dict[str, str] = {}
+    restored: List[str] = []
+    for model, src in entry.items():
+        if sources is None or src in sources:
+            restored.append(str(model))
+        else:
+            keep[str(model)] = src
+
+    if keep:
+        policy[acc_key] = keep
+    else:
+        policy.pop(acc_key, None)
+    return sorted(restored)
+
+
 def replace_account_models(policy: Policy, account_id: str, models: List[str],
                            source: str = SOURCE_MANUAL) -> List[str]:
-    """整份替换某账号的禁用列表（覆盖式接口），返回更新后的列表。"""
     if source not in VALID_SOURCES:
         source = SOURCE_MANUAL
     acc_key = str(account_id)

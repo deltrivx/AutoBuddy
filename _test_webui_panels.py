@@ -145,6 +145,15 @@ ACCOUNT_MODELS = {
     "disabledBySource": {"manual": 1, "auto": 1},
 }
 
+# 「一键恢复」的响应夹具。形状按真实接口来：恢复后该账号什么都不剩，
+# 所以 disabledModels / disabledSources 都是空的 —— 界面据此重绘，
+# 若夹具里留着东西，就验不出「恢复后卡片确实清空了」。
+ACCOUNT_RESTORE = {
+    "ok": True, "accountId": "acc-1", "scope": "all",
+    "restored": ["m-b", "m-c"], "restoredCount": 2,
+    "disabledModels": [], "disabledSources": {}, "disabledTotal": 0,
+}
+
 # 「检测账号」的响应夹具。刻意**不带** status 字段：接口已改为只下发判定结论
 # 与依据，夹具跟着同构才有意义 —— 否则前端偷偷回去读 status 也验不出来。
 # 同时带上 state / action：界面已改为只认 state（valid/invalid/restricted/unknown），
@@ -405,6 +414,10 @@ const PAYLOADS = __PAYLOADS__;
 
 function payloadFor(url) {
   const u = String(url);
+  // 更具体的路径必须排在前面：`/api/account-models/restore` 也以
+  // `/api/account-models` 开头，顺序反了会被上面那条截胡，返回模型列表
+  // 而恢复逻辑拿不到 restoredCount，提示里就会出现 undefined。
+  if (u.indexOf("/api/account-models/restore") >= 0) return PAYLOADS.accountRestore;
   if (u.indexOf("/api/gateway-info") >= 0) return PAYLOADS.gatewayInfo;
   if (u.indexOf("/api/api-keys") >= 0) return PAYLOADS.keysStatus;
   if (u.indexOf("/api/model-health") >= 0) return PAYLOADS.health;
@@ -523,6 +536,63 @@ setTimeout(async () => {
       }));
   });
 
+  // ---- 账号卡片：「全部恢复」按钮 ---------------------------------------
+  // 一键恢复必须**只在确实有禁用项时出现**，且要有 onclick —— 只画个按钮
+  // 不接事件，用户点了没反应，等于没做。
+  const cardRestore = ACCOUNT_CARDS.map((c) => {
+    const box = (c.sec.children || [])
+      .find((k) => (k.className || "").split(/\s+/).indexOf("wb-am-box") >= 0);
+    if (!box) return null;
+    const title = (box.children || [])[0] || {};
+    const btn = (title.children || [])
+      .find((k) => (k.className || "").split(/\s+/).indexOf("wb-am-restore") >= 0);
+    if (!btn) return null;
+    return {
+      text: String(btn.textContent || ""),
+      tip: String(btn.title || ""),
+      clickable: typeof btn.onclick === "function",
+    };
+  });
+
+  // ---- 「全部恢复」点一下：请求路径 + 载荷 + 结果提示 -------------------
+  let restoreFetch = null;
+  let restoreToast = null;
+  try {
+    const btn = (() => {
+      for (const c of ACCOUNT_CARDS) {
+        const box = (c.sec.children || [])
+          .find((k) => (k.className || "").split(/\s+/).indexOf("wb-am-box") >= 0);
+        if (!box) continue;
+        const title = (box.children || [])[0] || {};
+        const hit = (title.children || []).find((k) =>
+          (k.className || "").split(/\s+/).indexOf("wb-am-restore") >= 0);
+        if (hit) return hit;
+      }
+      return null;
+    })();
+    if (btn && typeof btn.onclick === "function") {
+      const before = fetchLog.length;
+      btn.onclick();
+      // fetch 桩是异步 resolve 的，提示条要等 Promise 链跑完才出现 ——
+      // 同步读会一律读到 null，把「有提示」误判成「没提示」。
+      for (let i = 0; i < 20 && fetchLog.length === before; i += 1) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      const rec = fetchLog.slice(before)
+        .filter((r) => r.url.indexOf("/account-models/restore") >= 0)[0];
+      if (rec) {
+        restoreFetch = { url: rec.url, method: rec.method, body: String(rec.body || "") };
+      }
+      const toasts = (document.body.children || [])
+        .filter((e) => (e.className || "").indexOf("wb-api-toast") >= 0)
+        .map((e) => String(e.textContent || ""));
+      restoreToast = toasts.length ? toasts[toasts.length - 1] : null;
+    }
+  } catch (e) {
+    restoreToast = "点按抛异常：" + (e && e.message);
+  }
+
   // ---- 账号卡片：控制条的按钮（账号检测 + 停用来源）----------------------
   // 停用来源要能从按钮上读出来：manual 灰底、auto 琥珀色（.wb-pool-btn-auto），
   // 文案也要说清是谁停的。否则「已停用」会被读成自己误操作过。
@@ -639,10 +709,13 @@ setTimeout(async () => {
     tailsAfterLate,
     lateStaysAbove,
     cardBadges,
+    cardRestore,
     cardPoolButtons,
     probeFetch,
     probeAfterCount,
     probeToast,
+    restoreFetch,
+    restoreToast,
     auditFetch,
     auditBoxText,
     auditRows,
@@ -675,6 +748,7 @@ def main() -> int:
                    "gatewayInfo": GATEWAY_INFO, "keysStatus": KEYS_STATUS,
                    "health": HEALTH, "accountModels": ACCOUNT_MODELS,
                    "accountPool": ACCOUNT_POOL, "tokenStats": {},
+                   "accountRestore": ACCOUNT_RESTORE,
                    "accountProbe": ACCOUNT_PROBE, "accountAudit": ACCOUNT_AUDIT},
                    ensure_ascii=False))
                .replace("__SCRIPT__", stripped))
@@ -764,6 +838,38 @@ def main() -> int:
     check("两个计数互不重叠（本卡片手动 1 + 巡检 1 = 禁用总数 2）",
           _num(manual) + _num(auto) == 2, f"got {first}")
     check("没有 h3 的卡片依旧不被注入模型区", badges[1] is None, f"got {badges[1]}")
+
+    print("\n[7b] 账号卡片：一键恢复（全部恢复按钮）")
+    restores = result.get("cardRestore") or []
+    first_restore = restores[0] if restores else None
+    check("有禁用项的卡片出现「全部恢复」按钮", first_restore is not None, str(restores))
+    check("按钮文案带上要恢复的数量（恢复 2）",
+          first_restore is not None and "2" in first_restore["text"],
+          str(first_restore))
+    check("按钮可点击（绑了 onclick）",
+          first_restore is not None and first_restore["clickable"], str(first_restore))
+    # 作用域必须说清是「全部」——含手动禁用。只说「恢复巡检」会让人以为
+    # 手动关掉的不会被碰，那正是 scope=auto 的另一种语义。
+    check("悬浮说明点明含手动禁用",
+          first_restore is not None and "手动" in (first_restore.get("tip") or ""),
+          str(first_restore))
+    check("没有 h3 的第二张卡片不出现恢复按钮",
+          len(restores) > 1 and restores[1] is None, str(restores))
+
+    # 点一下：必须真的打到恢复接口，且载荷指名账号、scope=all。
+    # 光有按钮不算数 —— 按钮画出来了但没接事件，用户点了没反应。
+    rf = result.get("restoreFetch")
+    check("点「全部恢复」发出了恢复请求", rf is not None, str(rf))
+    check("恢复请求打到 /api/account-models/restore",
+          rf is not None and "/account-models/restore" in rf.get("url", ""), str(rf))
+    check("恢复请求是 POST", rf is not None and rf.get("method") == "POST", str(rf))
+    check("载荷指名了目标账号",
+          rf is not None and "acc-1" in rf.get("body", ""), str(rf))
+    check("载荷 scope=all（含手动禁用一起放回）",
+          rf is not None and '"scope":"all"' in rf.get("body", "").replace(" ", ""),
+          str(rf))
+    rt = result.get("restoreToast")
+    check("恢复后给出结果提示", bool(rt) and "恢复" in str(rt), str(rt))
 
     print("\n[8] 账号卡片：控制条（检测账号 + 停用来源）")
     btns = result["cardPoolButtons"]

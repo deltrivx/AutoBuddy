@@ -197,6 +197,12 @@ COLLAPSE_SCRIPT = r"""
     line-height: 1.6;
     color: var(--muted-foreground, #6b7280);
     margin-bottom: 6px;
+    /* flex + wrap：徽标与「全部恢复」按钮同排，按钮靠 margin-left:auto 右对齐。
+       窄屏放不下时整行折行，不会把按钮挤出卡片。 */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 0;
   }
   .wb-am-list {
     display: flex;
@@ -273,6 +279,27 @@ COLLAPSE_SCRIPT = r"""
     border-color: rgba(245, 158, 11, 0.5);
     color: #b45309;
   }
+  /* 一键恢复：把该账号被禁用的模型全部放回轮询。
+     做成文字按钮而非图标 —— 它改变的是路由行为，值得让人先看清「恢复几个」。
+     与左侧两个徽标同一行右对齐，作用域天然读作「这张卡片」。 */
+  .wb-am-restore {
+    margin-left: auto;
+    font: inherit;
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 2px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--primary, #1d4ed8);
+    background: transparent;
+    border: 1px solid rgba(29, 78, 216, 0.35);
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .wb-am-restore:hover:not(:disabled) {
+    background: rgba(29, 78, 216, 0.08);
+    border-color: rgba(29, 78, 216, 0.6);
+  }
+  .wb-am-restore:disabled { opacity: .6; cursor: default; }
   /* ---------------- 设置页：API 接入面板 ---------------- */
   .wb-api-card {
     display: flex;
@@ -914,6 +941,59 @@ COLLAPSE_SCRIPT = r"""
           title.appendChild(autoBadge);
         }
 
+        // 「全部恢复」：一次把这张卡片下所有被禁用的模型放回轮询。
+        //
+        // 只在**确实有禁用项**时出现，否则按钮点了也不知道在恢复什么。
+        // 覆盖手动与巡检两种来源 —— 所以文案不写「恢复巡检禁用」，
+        // 那是另一件事（scope=auto 只在需要保留人工决策时用）。
+        // 巡检误禁一批、或手动调完想一次性放开时，逐个点标签太碎。
+        if (accountId && (manualCount + autoCount) > 0) {
+          var restore = document.createElement("button");
+          restore.className = "wb-am-restore";
+          restore.textContent = "全部恢复 " + (manualCount + autoCount);
+          restore.title = "把该账号被禁用的 " + (manualCount + autoCount)
+            + " 个模型全部放回轮询（含手动禁用）";
+          restore.onclick = function () {
+            if (restore.dataset.wbBusy === "1") return;
+            restore.dataset.wbBusy = "1";
+            restore.disabled = true;
+            var before = restore.textContent;
+            restore.textContent = "恢复中…";
+            fetch("/api/account-models/restore", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ accountId: accountId, scope: "all" })
+            })
+              .then(function (r) {
+                return r.json().catch(function () { return {}; })
+                  .then(function (b) { return { ok: r.ok, body: b || {} }; });
+              })
+              .then(function (res) {
+                if (!res.ok || res.body.ok === false) {
+                  var d = res.body.detail;
+                  wbToast(typeof d === "string" && d ? d : "恢复失败，请重试", "error");
+                  restore.textContent = before;
+                  restore.disabled = false;
+                  delete restore.dataset.wbBusy;
+                  return;
+                }
+                // 策略变了：清掉缓存 + 直接重绘模型区，反馈即时。
+                wbModelPolicy[accountId] = {};
+                wbModelsCache = null;
+                wbToast("已恢复 " + (res.body.restoredCount || 0) + " 个模型");
+                box.remove();
+                injectAccountModels();
+              })
+              .catch(function () {
+                wbToast("请求失败，请刷新页面后重试", "error");
+                restore.textContent = before;
+                restore.disabled = false;
+                delete restore.dataset.wbBusy;
+              });
+          };
+          title.appendChild(restore);
+        }
+
         var usage = entry.usage || {};
         var list = document.createElement("div");
         list.className = "wb-am-list";
@@ -1105,10 +1185,20 @@ COLLAPSE_SCRIPT = r"""
         pin.className = "wb-pool-btn" + (pinned ? " wb-pool-btn-primary" : "");
         pin.textContent = pinned ? "首选账号 · 点击改回自动分配" : "设为首选";
         pin.onclick = function () {
+          // 必须**连 enabledAccountIds 一起提交**。
+          //
+          // 早先这里只发 {mode, manualAccountId}，后端又把「缺字段」读成空数组，
+          // 于是一次「设为首选」就把用户勾选的白名单整份清掉 —— 而空数组在
+          // 业务上等于「全部启用」，界面上看不出异常，只在排查时表现为
+          //「首选账号设置没生效」。后端现已改成保留式更新（不传的字段不动），
+          // 这里再显式带上，两层都不再依赖「缺省即重置」这种危险语义。
+          var ids = (data.allEnabledByDefault
+            ? (data.accounts || []).map(function (a) { return a.id; })
+            : (data.enabledAccountIds || [])).slice();
           savePool(
             pinned
-              ? { mode: "auto", manualAccountId: null }
-              : { mode: "manual", manualAccountId: acc.id },
+              ? { mode: "auto", manualAccountId: null, enabledAccountIds: ids }
+              : { mode: "manual", manualAccountId: acc.id, enabledAccountIds: ids },
             function () { wbPoolCache = null; refreshPool(); }
           );
         };
@@ -2408,6 +2498,26 @@ async def account_models_put(request: Request):
             r = await client.put(GATEWAY_BASE_URL + "/account-models/config",
                                  content=body,
                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.post("/api/account-models/restore")
+async def account_models_restore(request: Request):
+    """转发「一键恢复」请求（把某账号被禁用的模型放回）。
+
+    ``scope`` 由前端给：``all`` 全放回、``auto`` 只放回巡检禁的。
+    同样纯转发，不做业务判断 —— 判定「哪些该恢复」是网关侧策略模块的职责。
+    """
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/account-models/restore",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:

@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.14"
+VERSION_DEFAULT = "0.4.15"
 GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -555,23 +555,57 @@ def reset_account_pool_selections():
 
 @app.put("/account-pool/config")
 def update_account_pool(config: Dict[str, Any]):
-    mode = config.get("mode", "auto")
+    """更新账号池配置。
+
+    **未提交的字段保持原值，而不是被重置成默认值。** 这一点是必须的：
+
+    界面上「设为首选」只需要改 mode 与 manualAccountId，它提交的 payload 里
+    并没有 enabledAccountIds。若这里用 ``config.get("enabledAccountIds", [])``
+    取值，缺字段会被读成空数组并**覆盖落盘** —— 用户的白名单（哪些账号参与
+    轮询）在一次「设为首选」后整份丢失。而空数组在业务上表示「全部启用」，
+    所以现场看不出任何异常，只在后续排查时表现为「设置没生效」。
+
+    因此这里以**已保存的配置为底**，只覆盖调用方明确提交的字段。
+    """
+    current = _load_pool_config()
+
+    mode = config.get("mode", current.get("mode", "auto"))
     if mode not in ("auto", "manual"):
         raise HTTPException(status_code=400, detail="mode must be auto or manual")
-    enabled = config.get("enabledAccountIds", [])
-    if not isinstance(enabled, list):
-        raise HTTPException(status_code=400, detail="enabledAccountIds must be an array")
+
+    if "enabledAccountIds" in config:
+        enabled = config.get("enabledAccountIds")
+        if not isinstance(enabled, list):
+            raise HTTPException(status_code=400,
+                                detail="enabledAccountIds must be an array")
+        enabled = [str(x) for x in enabled]
+    else:
+        # 没提交就沿用原值 —— 这是修复「设为首选把白名单清空」的关键一行。
+        enabled = [str(x) for x in (current.get("enabledAccountIds") or [])]
+
     accounts = _load_accounts()
     known = {str(_account_id(a)) for a in accounts if _account_id(a)}
-    unknown = [str(x) for x in enabled if str(x) not in known]
+    unknown = [x for x in enabled if x not in known]
     if unknown:
         raise HTTPException(status_code=400, detail={"unknownAccountIds": unknown})
-    manual_id = config.get("manualAccountId")
-    if mode == "manual" and str(manual_id) not in {str(x) for x in enabled or known}:
-        raise HTTPException(status_code=400, detail="manualAccountId must be enabled")
+
+    if "manualAccountId" in config:
+        manual_id = config.get("manualAccountId")
+    else:
+        manual_id = current.get("manualAccountId")
+
+    # 切到 manual 时必须指名一个**有效的**账号，否则请求会被路由到空处。
+    # 未提交 manualAccountId 而当前也没有可用值时，退回 auto 而不是报错 ——
+    # 「只想改白名单」的请求不该因为历史配置里没有首选账号而失败。
+    if mode == "manual":
+        pool = enabled or sorted(known)
+        if str(manual_id) not in pool:
+            manual_id = None
+            mode = "auto"
+
     saved = _save_pool_config({
         "mode": mode,
-        "enabledAccountIds": [str(x) for x in enabled],
+        "enabledAccountIds": enabled,
         "manualAccountId": manual_id,
     })
     return {"ok": True, "config": saved, "status": account_pool_status()}
@@ -901,6 +935,58 @@ def update_account_models_config(payload: Dict[str, Any]):
         "ok": True,
         "accountId": account_id,
         "disabledModels": current,
+        "disabledSources": model_policy.as_source_map(policy).get(account_id, {}),
+        "disabledTotal": model_policy.disabled_total(policy),
+    }
+
+
+@app.post("/account-models/restore")
+def restore_account_models(payload: Dict[str, Any]):
+    """一键恢复某账号被禁用的模型。
+
+    入参：``{"accountId": "...", "scope": "all" | "auto"}``
+
+    - ``all``（默认）：**不分来源**全部恢复 —— 手动禁用的和巡检禁用的都放回。
+      界面上的「全部恢复」按钮即此语义：用户的诉求是「让这些模型重新参与调用」，
+      当初是谁禁的并不重要。
+    - ``auto``：只恢复巡检写的那些，保留人工禁用的决策。用于「巡检误禁了一批，
+      但别动我手动关掉的」。
+
+    落盘前留底：恢复会改变路由行为，出问题时需要能对照恢复了哪些。
+    """
+    account_id = payload.get("accountId")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+    account_id = str(account_id)
+
+    accounts = _load_accounts()
+    known = {str(_account_id(a)) for a in accounts if _account_id(a)}
+    if account_id not in known:
+        raise HTTPException(status_code=400, detail={"unknownAccountId": account_id})
+
+    scope = str(payload.get("scope") or "all")
+    if scope not in ("all", "auto"):
+        raise HTTPException(status_code=400, detail="scope must be all or auto")
+
+    policy = _load_model_policy()
+    sources = None if scope == "all" else [model_policy.SOURCE_AUTO]
+    restored = model_policy.enable_all_models(policy, account_id, sources=sources)
+
+    if restored:
+        model_policy.backup_policy("before-restore")
+        _save_model_policy(policy)
+
+    return {
+        "ok": True,
+        "accountId": account_id,
+        "scope": scope,
+        # 本次恢复的模型名，界面据此回显「恢复了哪几个」。
+        "restored": restored,
+        "restoredCount": len(restored),
+        # 恢复后该账号**仍然**被禁用的（scope=auto 时剩下的手动项）。
+        # 统一成排序列表：同一字段在 PUT /account-models/config 里也是列表，
+        # 一个返回 set() 一个返回 [] 会让前端要写两种判空 —— 接口契约该是一份。
+        "disabledModels": sorted(model_policy.disabled_models_for(account_id, policy)),
         "disabledSources": model_policy.as_source_map(policy).get(account_id, {}),
         "disabledTotal": model_policy.disabled_total(policy),
     }
