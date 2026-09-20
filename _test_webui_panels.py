@@ -147,11 +147,44 @@ ACCOUNT_MODELS = {
 
 # 「检测账号」的响应夹具。刻意**不带** status 字段：接口已改为只下发判定结论
 # 与依据，夹具跟着同构才有意义 —— 否则前端偷偷回去读 status 也验不出来。
+# 同时带上 state / action：界面已改为只认 state（valid/invalid/restricted/unknown），
+# 不再自行解释 verdict 或状态码。
 ACCOUNT_PROBE = {
     "ok": True, "accountId": "acc-1", "accountName": "账号甲",
-    "verdict": "available", "message": "凭据有效",
-    "evidence": "上游已接受该凭据（以模型不存在拒绝）",
+    "verdict": "available", "state": "valid", "message": "凭据有效",
+    "evidence": "凭据有效（上游以「模型不存在」应答，说明已认下凭据）",
+    "action": "", "code": 11102, "semantic": "model_missing",
     "elapsedMs": 258, "error": None,
+}
+
+# 「一致性自检」的响应夹具：一个账号正常、一个被上游拦截。
+# 两个都要有 —— 只放正常的那种，验不出界面是否真的会区分「受限」与「失效」。
+ACCOUNT_AUDIT = {
+    "checkedAt": 1, "accounts": 2,
+    "summary": {"一致：均正常": 1, "账号受限": 1},
+    "criteria": {
+        "credential": "由不存在的模型名探测裁定。",
+        "model": "用真实模型名探测，只依据上游错误码判定。",
+        "note": "凭据有效性只由账号级探测裁定。",
+    },
+    "rows": [
+        {"id": "acc-1", "name": "账号甲", "variant": "ai", "inPool": True,
+         "usable": True, "accountDisabled": False, "accountDisabledSource": None,
+         "credential": {"state": "valid", "label": "凭据有效", "detail": "模型不存在",
+                        "semantic": "model_missing", "code": 11102},
+         "models": [{"model": "hy3", "verdict": "available", "semantic": None,
+                     "code": None, "explain": "调用链路正常"}],
+         "consistency": "一致：均正常", "advice": "凭据与模型两侧都正常，无需处理。"},
+        {"id": "acc-2", "name": "账号乙", "variant": "cn", "inPool": True,
+         "usable": True, "accountDisabled": False, "accountDisabledSource": None,
+         "credential": {"state": "restricted", "label": "账号受限",
+                        "detail": "凭据有效，但请求被上游内容安全审查拦下",
+                        "semantic": "restricted", "code": 11140},
+         "models": [{"model": "hy3", "verdict": "restricted", "semantic": "restricted",
+                     "code": 11140, "explain": "凭据有效，但请求被上游内容安全审查拦下"}],
+         "consistency": "账号受限",
+         "advice": "凭据有效，但请求被上游策略拦截。重新登录没用。"},
+    ],
 }
 
 ACCOUNT_POOL = {    "mode": "rotate", "enabledAccountIds": ["acc-1"], "preferredAccountId": None,
@@ -374,6 +407,7 @@ function payloadFor(url) {
   if (u.indexOf("/api/account-pool") >= 0) return PAYLOADS.accountPool;
   if (u.indexOf("/api/token-stats") >= 0) return PAYLOADS.tokenStats;
   if (u.indexOf("/api/account-health/probe") >= 0) return PAYLOADS.accountProbe;
+  if (u.indexOf("/api/account-health/audit") >= 0) return PAYLOADS.accountAudit;
   return {};
 }
 
@@ -528,6 +562,49 @@ setTimeout(async () => {
     errors.push("点击「检测账号」抛异常：" + ((e && e.message) || String(e)));
   }
 
+  // ---- 一致性自检：按钮点了要真发请求，结果要真渲染出来 -------------------
+  // 自检是「统一标准」的可见载体：它必须把两侧结论并排显示，
+  // 光有按钮不算数 —— 点了没反应与根本没接接口，表现是一样的。
+  let auditFetch = null;
+  let auditBoxText = null;
+  let auditRows = 0;
+  let auditBoxClasses = "";
+  try {
+    const auditBtn = all.find((e) => String(e.textContent || "") === "一致性自检");
+    if (auditBtn && typeof auditBtn.onclick === "function") {
+      const before = fetchLog.length;
+      auditBtn.onclick();
+      auditFetch = fetchLog[fetchLog.length - 1] || null;
+      if (fetchLog.length === before) auditFetch = null;
+      // 等 fetch 链与渲染跑完：桩是同步 resolve，但渲染在 then 里。
+      //
+      // 注意要**重新遍历** DOM 找结果块：上面那个 `all` 是点击前的静态快照，
+      // 自检渲染出来的新节点不在里面 —— 拿旧快照去找，永远找不到，
+      // 表现为「请求发了但结果框是空的」，很容易被误读成渲染没生效。
+      for (let i = 0; i < 40 && !auditBoxText; i += 1) {
+        await new Promise((r) => setTimeout(r, 10));
+        const box = walk(settingsHost, []).find((e) => (e.className || "").split(/\s+/)
+          .indexOf("wb-audit-box") >= 0);
+        if (box) {
+          // 桩上的 textContent 不会自动聚合子树，得自己把后代文本拼起来 ——
+          // 直接读 box.textContent 只会拿到空串，看着像「什么都没渲染」。
+          const nodes = walk(box, []);
+          auditBoxText = nodes.map(function (e) {
+            return String(e.textContent || "");
+          }).join(" ");
+          auditRows = nodes.filter(function (e) {
+            return (e.className || "").split(/\s+/).indexOf("wb-audit-row") >= 0;
+          }).length;
+          auditBoxClasses = nodes.map(function (e) {
+            return String(e.className || "");
+          }).join(" ");
+        }
+      }
+    }
+  } catch (e) {
+    errors.push("点击「一致性自检」抛异常：" + ((e && e.message) || String(e)));
+  }
+
   const result = {
     errors: errors.concat([runError, secondRunError, thirdRunError].filter(Boolean)),
     fetchCalls,
@@ -554,6 +631,10 @@ setTimeout(async () => {
     probeFetch,
     probeAfterCount,
     probeToast,
+    auditFetch,
+    auditBoxText,
+    auditRows,
+    auditBoxClasses,
   };
   process.stdout.write("__RESULT__" + JSON.stringify(result) + "\n");
 }, 60);
@@ -582,7 +663,7 @@ def main() -> int:
                    "gatewayInfo": GATEWAY_INFO, "keysStatus": KEYS_STATUS,
                    "health": HEALTH, "accountModels": ACCOUNT_MODELS,
                    "accountPool": ACCOUNT_POOL, "tokenStats": {},
-                   "accountProbe": ACCOUNT_PROBE},
+                   "accountProbe": ACCOUNT_PROBE, "accountAudit": ACCOUNT_AUDIT},
                    ensure_ascii=False))
                .replace("__SCRIPT__", stripped))
 
@@ -705,8 +786,42 @@ def main() -> int:
     # 正说明它认下了凭据 —— 只写「凭据有效」而把依据藏起来，用户去翻日志看见 400
     # 会以为检测坏了（这正是线上实测暴露的困惑点）。
     toast = result.get("probeToast")
-    check("检测结论提示里带上判定依据", bool(toast) and "上游已接受该凭据" in toast,
+    check("检测结论提示里带上判定依据", bool(toast) and "模型不存在" in toast,
           f"got {toast}")
+    # 界面必须按 state 判定，而不是拿 verdict 或状态码自己解释 ——
+    # 那正是「同一个账号在不同页面结论不同」的来源。
+    check("检测提示读的是 state 而不是 verdict",
+          bool(toast) and "凭据有效" in toast, f"got {toast}")
+
+    print("\n[9] 巡检面板：一致性自检入口与结果渲染")
+    af = result.get("auditFetch")
+    check("点了「一致性自检」发出请求",
+          af is not None and "/api/account-health/audit" in (af.get("url") or ""),
+          f"got {af}")
+    box = result.get("auditBoxText") or ""
+    check("自检结果渲染出来了", bool(box), f"got {box!r}")
+    # 两个账号各一行：只显示「有没有问题」是不够的，
+    # 每一行都要能看出是哪个账号、结论是什么、该怎么办。
+    check("每个账号各占一行", result.get("auditRows") == 2,
+          f"got {result.get('auditRows')}")
+    check("区分开「凭据有效」与「账号受限」两种状态",
+          "凭据有效" in box and "账号受限" in box, box[:200])
+    # 受限账号的建议里不能出现「重新登录」—— 那是错误的排查方向。
+    check("受限账号的说明不提重新登录",
+          "重新登录没用" in box or "无需重新登录" in box, box[:300])
+    # 判据要印出来，「统一标准」才是可查的而不是一句口头承诺。
+    check("结果里印出判定依据（凭据侧）",
+          "凭据有效性只由账号级探测裁定" in box or "不存在的模型名" in box, box[:300])
+    # 每个账号的判定依据也要显示：「凭据有效」与「账号受限」的差别全在
+    # 那一句 detail 里，只给标签的话用户还是分不清该重登还是该找上游。
+    check("每行印出该账号自己的判定依据",
+          "模型不存在" in box and "内容安全审查" in box, box[:400])
+    # 状态着色必须区分三档：正常 / 受限（琥珀）/ 失效（红）。
+    # 只用一个颜色的话，「账号受限」会被读成「凭据坏了」。
+    check("状态着色区分 valid / restricted",
+          "wb-audit-ok" in (result.get("auditBoxClasses") or "")
+          and "wb-audit-warn" in (result.get("auditBoxClasses") or ""),
+          str(result.get("auditBoxClasses")))
 
     print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
     return 1 if _fail else 0

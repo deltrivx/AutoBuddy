@@ -114,11 +114,92 @@ COLLAPSE_SCRIPT = r"""
   }
   /* 巡检自动停用：「不是我点的」要一眼看出来，所以用琥珀色而不是灰底。
      灰底会和「被账号池白名单排除」那种状态混淆，用户会以为自己误操作过。 */
+  .wb-audit-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--border, rgba(120, 120, 120, 0.22));
+    min-width: 0;
+  }
+  .wb-audit-row:last-of-type { border-bottom: 0; }
+  .wb-audit-state {
+    flex: 0 0 auto;
+    padding: 1px 7px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid transparent;
+  }
+  .wb-audit-ok {
+    background: rgba(16, 185, 129, 0.14);
+    color: #047857;
+    border-color: rgba(16, 185, 129, 0.4);
+  }
+  .wb-audit-warn {
+    background: rgba(217, 119, 6, 0.14);
+    color: #b45309;
+    border-color: rgba(217, 119, 6, 0.4);
+  }
+  .wb-audit-bad {
+    background: rgba(239, 68, 68, 0.14);
+    color: #b91c1c;
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+  .wb-audit-name { font-weight: 600; min-width: 0; }
+  .wb-audit-consistency { opacity: 0.85; }
+  .wb-audit-detail {
+    flex: 1 1 100%;
+    font-size: 11px;
+    opacity: 0.72;
+    padding-left: 2px;
+  }
+  .wb-audit-advice {
+    flex: 1 1 100%;
+    font-size: 11px;
+    padding-left: 2px;
+  }
+  .wb-audit-criteria { opacity: 0.6; font-size: 11px; }
   .wb-pool-btn-auto {
     border-color: rgba(217, 119, 6, 0.55);
     background: rgba(217, 119, 6, 0.14);
     color: #b45309;
   }
+  /* 一致性自检的结果块。每行 = 一个账号的「凭据状态 + 姓名 + 一致性结论 + 建议」。
+     窄屏时靠 flex-wrap 自然折行，不写死列宽 —— 写死会让长建议被裁掉。 */
+  .wb-audit-box { gap: 8px; }
+  .wb-audit-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border, rgba(120, 120, 120, 0.15));
+    min-width: 0;
+  }
+  .wb-audit-row:last-child { border-bottom: 0; }
+  .wb-audit-state {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.35));
+  }
+  .wb-audit-ok { color: #047857; border-color: rgba(4, 120, 87, 0.45); background: rgba(4, 120, 87, 0.1); }
+  .wb-audit-warn { color: #b45309; border-color: rgba(217, 119, 6, 0.5); background: rgba(217, 119, 6, 0.12); }
+  .wb-audit-bad { color: #b91c1c; border-color: rgba(185, 28, 28, 0.5); background: rgba(185, 28, 28, 0.1); }
+  .wb-audit-name { flex: 0 0 auto; font-weight: 600; min-width: 0; }
+  .wb-audit-consistency { flex: 0 0 auto; font-size: 12px; }
+  .wb-audit-advice {
+    flex: 1 1 240px;
+    min-width: 0;
+    font-size: 11px;
+    opacity: 0.75;
+    line-height: 1.5;
+  }
+  .wb-audit-criteria { font-size: 11px; opacity: 0.65; }
   .wb-pool-hint {
     font-size: 11px;
     color: var(--muted-foreground, #6b7280);
@@ -645,6 +726,70 @@ COLLAPSE_SCRIPT = r"""
       });
   }
 
+  // 渲染「一致性自检」的结果：把每个账号的凭据结论与模型结论并排摆出来。
+  //
+  // 这块存在的全部理由是**消除口径矛盾**：凭据与模型是两个独立维度，
+  // 过去界面上只有一个笼统状态，于是出现过「检测说凭据有效、巡检说凭据失效」
+  // 这种让人无从判断的局面。这里把两侧各自的结论与判据一起列出，
+  // 让「凭据好但被上游拦截」「某模型无权限」一眼就能分开。
+  function wbRenderAuditBox(card, data) {
+    var old = card.querySelector(".wb-audit-box");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var box = wbEl("div", "wb-api-row wb-api-row-stack wb-audit-box");
+    var main = wbEl("div", "wb-api-main");
+    main.appendChild(wbEl("div", "wb-api-label",
+      "一致性自检 · " + (data.accounts || 0) + " 个账号"));
+
+    var rows = data.rows || [];
+    var needAttention = rows.filter(function (r) {
+      return r.consistency && r.consistency.indexOf("一致：均正常") !== 0;
+    });
+    main.appendChild(wbEl("div", "wb-api-desc",
+      needAttention.length
+        ? "需要关注的账号 " + needAttention.length + " 个（下面标红/标黄的行）："
+        : "全部账号两侧结论一致，无需处理。"));
+
+    rows.forEach(function (r) {
+      var line = wbEl("div", "wb-audit-row");
+      // 状态着色：失效=红、受限=琥珀、正常=默认。
+      var st = (r.credential || {}).state;
+      var cls = "wb-audit-state";
+      if (st === "invalid") cls += " wb-audit-bad";
+      else if (st === "restricted") cls += " wb-audit-warn";
+      else if (st === "valid") cls += " wb-audit-ok";
+      line.appendChild(wbEl("span", cls, (r.credential || {}).label || "未检测"));
+      line.appendChild(wbEl("span", "wb-audit-name", r.name || r.id));
+      line.appendChild(wbEl("span", "wb-audit-consistency", r.consistency || ""));
+      // 判定依据必须印出来：「凭据有效」与「账号受限」的差别全在这一句里
+      // （前者是上游以模型不存在应答，后者是请求被内容审查拦下）。
+      // 只给一个标签，用户还是分不清该重登还是该找上游。
+      var detail = (r.credential || {}).detail || "";
+      if (detail) {
+        line.appendChild(wbEl("span", "wb-audit-detail", detail));
+      }
+      // 判据与建议：这是这块最该被读到的部分 —— 它解释了「为什么是这个结论」。
+      line.appendChild(wbEl("span", "wb-audit-advice", r.advice || ""));
+      main.appendChild(line);
+    });
+
+    // 把判据本身也印出来，让「统一标准」是可查的而不是口头承诺。
+    var crit = data.criteria || {};
+    if (crit.credential) {
+      main.appendChild(wbEl("div", "wb-api-desc wb-audit-criteria",
+        "判据 · 凭据：" + crit.credential));
+    }
+    if (crit.model) {
+      main.appendChild(wbEl("div", "wb-api-desc wb-audit-criteria",
+        "判据 · 模型：" + crit.model));
+    }
+    if (crit.note) {
+      main.appendChild(wbEl("div", "wb-api-desc wb-audit-criteria", "判据 · " + crit.note));
+    }
+    box.appendChild(main);
+    card.appendChild(box);
+  }
+
   // 账号级停用（与模型级是两回事：这条管「整个账号参不参与轮询」）。
   // 与 wbToggleModel 同一套写法：先乐观改本地状态让点按即时，再落盘，
   // 失败就把乐观改动回滚 —— 否则界面会显示一个并未生效的状态。
@@ -994,15 +1139,18 @@ COLLAPSE_SCRIPT = r"""
                 wbToast("检测失败：" + ((res && res.error) || "无法访问接口"), true);
                 return;
               }
-              // 异常结论用 toast 说清楚结论与建议，正常结论给个轻提示即可。
+              // 结论一律以 state 为准（valid / invalid / restricted / unknown）。
+              // 不再自行解释 verdict 或状态码 —— 那正是过去同一个账号
+              // 在这里显示有效、在巡检里显示失效的来源。
+              // 只有「确实有问题」的两种状态用醒目样式，其余是轻提示。
+              var state = res.state || "";
               var msg = (res.accountName || "账号") + "：" + (res.message || res.verdict);
-              // 有效结论附上判定依据。探测刻意用一个不存在的模型名，
-              // 上游回「模型不存在」正说明它认下了凭据 —— 不写出来，
-              // 用户去翻日志看见 400 会以为检测坏了。
-              if (res.verdict === "available" && res.evidence) {
-                msg += "（" + res.evidence + "）";
-              }
-              wbToast(msg, res.verdict !== "available");
+              // 判定依据（如「上游以模型不存在应答，说明已认下凭据」）。
+              // 探测刻意用一个不存在的模型名，上游非 2xx 是预期内的 ——
+              // 不写出依据，用户去翻日志看见 400 会以为检测坏了。
+              if (res.evidence) { msg += "（" + res.evidence + "）"; }
+              if (res.action) { msg += " " + res.action; }
+              wbToast(msg, state === "invalid" || state === "restricted");
             })
             .catch(function (e) { wbToast("检测请求失败：" + e, true); })
             .then(function () {
@@ -1716,6 +1864,11 @@ COLLAPSE_SCRIPT = r"""
       if (c.probe_defect) {
         runDesc.textContent += " / 探测被拒 " + c.probe_defect;
       }
+      // 账号被上游拦截：与「不可用」分开显示。它既不是模型坏，也不是凭据失效，
+      // 混进「不可用」会让用户点开一堆账号去找原因。
+      if (c.restricted) {
+        runDesc.textContent += " / 账号受限 " + c.restricted;
+      }
       // 手动禁用的模型这一轮整个没探测。不说出来的话，用户只会看到组合数
       // 比「账号 × 模型」总数少，却不知道差在哪。
       if (last.skippedManual) {
@@ -1758,11 +1911,15 @@ COLLAPSE_SCRIPT = r"""
             + " / 不可用 " + (cc.unavailable || 0)
             + " / 跳过 " + (cc.transient || 0);
           if (cc.probe_defect) msg += " / 探测被拒 " + cc.probe_defect;
+          if (cc.restricted) msg += " / 账号受限 " + cc.restricted;
           if ((out.disabled || []).length) msg += " · 新禁用 " + out.disabled.length + " 项";
           if ((out.enabled || []).length) msg += " · 新启用 " + out.enabled.length + " 项";
           if ((out.protected || []).length) msg += " · 手动禁用已跳过 " + out.protected.length + " 项";
           if ((out.authFailed || []).length) {
             msg += " · " + out.authFailed.length + " 个账号凭据失效已跳过";
+          }
+          if ((out.restricted || []).length) {
+            msg += " · " + out.restricted.length + " 个账号被上游拦截";
           }
           wbToast(msg);
         })
@@ -1776,6 +1933,34 @@ COLLAPSE_SCRIPT = r"""
         });
     };
     runRow.appendChild(runBtn);
+
+    // 「一致性自检」：与「立即巡检」分开的两个动作。
+    // 巡检会**改配置**（自动禁用/启用），自检只读 —— 排查问题时不该顺带动了配置。
+    var auditBtn = wbEl("button", "wb-api-btn", "一致性自检");
+    auditBtn.title = "逐个账号对照「凭据」与「模型」两侧的结论，不改动任何配置";
+    auditBtn.onclick = function () {
+      auditBtn.disabled = true;
+      auditBtn.textContent = "自检中…";
+      wbToast("正在逐账号对照检测，账号多时需要一会儿…");
+      fetch("/api/account-health/audit")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d || d.error) {
+            wbToast("自检失败：" + ((d && d.error) || "无法访问接口"), true);
+            return;
+          }
+          wbRenderAuditBox(card, d);
+          wbToast("自检完成：" + Object.keys(d.summary || {}).map(function (k) {
+            return k + " " + d.summary[k];
+          }).join(" · "));
+        })
+        .catch(function (e) { wbToast("自检请求失败：" + e, true); })
+        .then(function () {
+          auditBtn.disabled = false;
+          auditBtn.textContent = "一致性自检";
+        });
+    };
+    runRow.appendChild(auditBtn);
     card.appendChild(runRow);
 
     // ---- 6b. 凭据失效被整账号跳过的名单（有才显示）----
@@ -1791,6 +1976,23 @@ COLLAPSE_SCRIPT = r"""
         + "本轮没有为它们写入任何禁用项。重新登录后再跑一轮即可。"));
       afRow.appendChild(afMain);
       card.appendChild(afRow);
+    }
+
+    // ---- 6c. 被上游策略拦截的账号名单（有才显示）----
+    // 这一段必须与上面的「凭据失效」分开：两者的处理方式**相反**。
+    // 凭据失效需要重新登录；账号被内容审查 / 风控拦截时重新登录毫无用处，
+    // 把这两种状态混在一起提示，只会让人白折腾一遍登录。
+    if (last && (last.restricted || []).length) {
+      var rsRow = wbEl("div", "wb-api-row wb-api-row-stack");
+      var rsMain = wbEl("div", "wb-api-main");
+      rsMain.appendChild(wbEl("div", "wb-api-label", "被上游拦截的账号（凭据有效）"));
+      rsMain.appendChild(wbEl("div", "wb-api-desc",
+        (last.restricted || []).map(function (a) { return a.name || a.id; }).join("、")
+        + " —— 这些账号的凭据是有效的，但请求被上游内容安全审查 / 风控拦下"
+        + "（错误码 11140 request illegal）。重新登录解决不了，"
+        + "需要向上游确认账号状态；本轮没有为它们写入任何禁用项。"));
+      rsRow.appendChild(rsMain);
+      card.appendChild(rsRow);
     }
 
     // ---- 7. 最近变更明细（有才显示）----
@@ -2224,6 +2426,23 @@ async def account_health_probe(request: Request):
             r = await client.post(GATEWAY_BASE_URL + "/account-health/probe",
                                   content=body,
                                   headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.get("/api/account-health/audit")
+async def account_health_audit():
+    """转发「一致性自检」：把凭据与模型两侧的结论并排给出。
+
+    超时给到 120s —— 这个接口会对每个账号跑一次凭据探测加数次模型探测，
+    账号多时耗时明显长于单账号检测。用 45s 会在账号稍多时稳定超时。
+    """
+    try:
+        async with _internal_client(timeout=120.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/account-health/audit")
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:

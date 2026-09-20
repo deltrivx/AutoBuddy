@@ -53,17 +53,59 @@ LAST_RUN_FILE = DATA_DIR / "model_health_last.json"
 # 429（限流）是**临时**状态，不计入自动禁用 —— 否则高峰期巡检会把好模型全禁掉。
 UNAVAILABLE_STATUS = {400, 401, 403, 404, 422, 500, 502, 503, 504}
 TRANSIENT_STATUS = {408, 425, 429}
-# 凭据失效。一个账号的 token 过期会让它名下**所有**模型一起失败，
-# 但坏的是凭据不是模型，因此单独识别、不写禁用策略。
-AUTH_STATUS = {401, 403}
-# 整个账号都栽在鉴权上、且至少探了这么多个模型时，按「凭据失效」处理。
-# 取 2 是为了避免只探一个组合就下结论。
-AUTH_GUARD_MIN_MODELS = 2
+# 凭据失效**只认** 401。403 曾被一并算作失效，那是错的：
+# 它同样可能是内容安全审查（错误码 11140），而那种情况下凭据是好的。
+# 精确判定请走 _CODE_SEMANTICS 语义表 —— 这张表只作为语义识别不出时的兜底。
+AUTH_STATUS = {401}
 
-# 上游表示「请求参数被模型提供方拒绝」的错误码：问题出在**探测请求本身**，
-# 与模型可用性无关。命中时归为 probe_defect，只跳过、不写策略。
-PROBE_DEFECT_CODES = {11133}
-# 响应体里出现这些片段，同样判定为探测请求自身的形态问题。
+# ---------------------------------------------------------------------------
+# 上游错误码 → 语义类别（唯一事实来源）
+# ---------------------------------------------------------------------------
+#
+# 为什么要有这张表：判定曾经散落在多处 `status in {…}` 集合里，同一份响应在
+# 不同路径上得到不同结论 —— 同一批账号，「检测账号」说凭据有效、巡检说凭据失效。
+# 根因是 HTTP 状态码**不足以**表达语义：403 既可能是 token 过期，也可能是内容
+# 被安全审查拦下（凭据其实好好的）。必须看上游错误码才能分清。
+#
+# 因此：所有判定一律先查这张表；只有表里查不到时，才退回按状态码粗判。
+# 新增一处判定时不要再写 status 集合，往这里加一行。
+#
+# 类别语义：
+#   auth        —— 凭据本身失效（token 过期 / 被吊销）。只此一类能判「需要重新登录」。
+#   restricted  —— 账号被上游策略拦截（内容安全审查、账号受限）。凭据有效，
+#                  但该账号当前发不出请求。既不该提示重新登录，也不该禁用模型。
+#   quota       —— 该账号对这个模型无权限 / 额度用尽。账号整体没问题，只影响这个模型。
+#   model_missing —— 模型不存在。对**凭据探测**来说是「认下了 token」的证据。
+#   probe_defect —— 请求形态本身不被接受（非流式、参数越界）。是探测的错，不是账号的错。
+#   invalid_model_name —— 模型名格式不合法（如含非法字符），同样属探测形态问题。
+_CODE_SEMANTICS: Dict[int, str] = {
+    # —— 凭据 ——
+    11100: "auth",            # token 无效 / 已过期
+    11102: "model_missing",   # model service info not found：鉴权已过，模型没找到
+    # —— 账号被策略拦截 ——
+    11140: "restricted",      # request illegal / 内容安全审查未通过
+    # —— 模型维度 ——
+    11133: "probe_defect",    # 请求参数被模型提供方拒绝
+    11200: "quota",           # 无该模型权限 / 额度不足
+    # —— 请求形态 ——
+    11101: "probe_defect",    # Non-stream chat request is currently not supported
+    11103: "invalid_model_name",  # 模型名格式不合法
+}
+
+# 语义类别 → 人话解释。界面据此说明结论是怎么得出来的，
+# 而不是只丢一个「凭据有效」让人对着日志里的 403 发懵。
+SEMANTIC_LABELS: Dict[str, str] = {
+    "auth": "凭据已失效，需要重新登录",
+    "restricted": "凭据有效，但请求被上游内容安全审查拦下",
+    "quota": "凭据有效，但该账号对此模型无权限或额度不足",
+    "model_missing": "凭据有效（上游以「模型不存在」应答，说明已认下凭据）",
+    "probe_defect": "探测请求的形态不被上游接受，未能得出结论",
+    "invalid_model_name": "探测用了不合法的模型名，未能得出结论",
+    "ok": "调用链路正常",
+    "transient": "网络或上游临时异常，未得出结论",
+}
+
+# 响应体里出现这些片段时的兜底归类（错误码取不到或不在表里时用）。
 # 典型来源：给上游传了超出取值范围的可选参数（如 max_tokens 低于最小值）。
 PROBE_DEFECT_HINTS = (
     "integer_below_min_value",
@@ -71,7 +113,31 @@ PROBE_DEFECT_HINTS = (
     "invalid_parameter",
     "string_too_long",
     "string_too_short",
+    "not supported",
 )
+# 「账号被策略拦截」的文字特征。这些响应常常**没有**错误码，
+# 只能靠文案识别 —— 不识别的话就会被当成凭据失效（403）而误导用户重新登录。
+RESTRICTED_HINTS = (
+    "request illegal",
+    "safety review",
+    "safety_review",
+    "content policy",
+    "risk control",
+    "risk_control",
+    "violat",
+)
+# 「模型不存在」的文字特征。对凭据探测而言这是**好消息**（鉴权已过）。
+MODEL_MISSING_HINTS = (
+    "invalid model",
+    "model not found",
+    "unknown model",
+    "unsupported model",
+    "model_not_found",
+    "model service info not found",
+)
+
+# 兼容旧名：过去按「错误码集合」判探测缺陷，现在统一走语义表。
+PROBE_DEFECT_CODES = {c for c, s in _CODE_SEMANTICS.items() if s == "probe_defect"}
 
 DEFAULT_INTERVAL_MINUTES = 60
 MIN_INTERVAL_MINUTES = 5
@@ -306,22 +372,53 @@ def _extract_error_code(snippet: Optional[str]) -> Optional[int]:
 
 def _looks_like_probe_defect(code: Optional[int], snippet: Optional[str]) -> bool:
     """判断这次失败是不是「探测请求自己有问题」而不是「模型不可用」。"""
-    if code is not None and code in PROBE_DEFECT_CODES:
-        return True
-    text = snippet or ""
-    return any(hint in text for hint in PROBE_DEFECT_HINTS)
+    semantic = classify_semantic(code, snippet)
+    return semantic in ("probe_defect", "invalid_model_name")
+
+
+def classify_semantic(code: Optional[int], snippet: Optional[str] = None) -> Optional[str]:
+    """把一次失败响应归到 ``_CODE_SEMANTICS`` 里的某个类别；分不清则返回 None。
+
+    判定顺序（先精确后模糊）：
+
+    1. 上游错误码命中语义表 —— 最可靠的证据；
+    2. 错误码不在表里（上游新增/变更）时，按响应体文字特征兜底；
+    3. 都识别不出 → None，交给调用方按状态码粗判。
+
+    **状态码在这里刻意不参与**：403 至少对应三种完全不同的原因
+    （token 过期、内容审查、无模型权限），只看状态码必然误判。
+    """
+    if code is not None and code in _CODE_SEMANTICS:
+        return _CODE_SEMANTICS[code]
+    text = (snippet or "").lower()
+    if not text:
+        return None
+    if any(h in text for h in RESTRICTED_HINTS):
+        return "restricted"
+    if any(h in text for h in MODEL_MISSING_HINTS):
+        return "model_missing"
+    if any(h in text for h in PROBE_DEFECT_HINTS):
+        return "probe_defect"
+    return None
 
 
 def classify_probe(status_code: Optional[int], error: Optional[str] = None,
                    code: Optional[int] = None,
                    snippet: Optional[str] = None) -> str:
-    """把一次探测结果归类为 available / unavailable / transient / probe_defect。
+    """把一次探测结果归类为 available / unavailable / transient / probe_defect / restricted。
 
     - 正常返回 → ``available``
     - 上游拒绝了我们的请求参数 → ``probe_defect``，说明探测形态不对，
       **不能**据此判定模型好坏，不参与自动禁用
+    - 账号被上游策略拦截（内容审查 / 风控）→ ``restricted``。
+      这不是模型的问题，更不是凭据的问题 —— 同样不参与自动禁用，
+      否则一次内容审查就会把这个账号名下的模型成批误禁。
     - 限流 / 超时等**临时**状态 → ``transient``，不参与自动禁用
     - 明确的功能性失败（模型不存在、无权限、上游 5xx）→ ``unavailable``
+
+    注意 ``restricted`` 是后加的类别：过去它落在 ``unavailable`` 里，
+    再叠加 ``run_round`` 的「整账号都失败 → 凭据失效」推断，
+    最终表现为「所有账号凭据有效，但巡检说三个账号凭据失效」这种自相矛盾的结论。
     """
     if error:
         return "transient"
@@ -331,8 +428,11 @@ def classify_probe(status_code: Optional[int], error: Optional[str] = None,
         return "available"
     # 先于状态码判断：400 既可能是「模型不可用」，也可能是「请求参数不对」，
     # 后者绝不能当成模型的问题 —— 否则一次参数改动就能成批误禁好模型。
-    if _looks_like_probe_defect(code, snippet):
+    semantic = classify_semantic(code, snippet)
+    if semantic in ("probe_defect", "invalid_model_name"):
         return "probe_defect"
+    if semantic == "restricted":
+        return "restricted"
     if status_code in TRANSIENT_STATUS:
         return "transient"
     if status_code in UNAVAILABLE_STATUS:
@@ -400,12 +500,14 @@ def probe_once(client: Any, base_url: str, token: str, model: str,
         error = f"{type(e).__name__}: {e}"
 
     code = _extract_error_code(snippet)
+    semantic = classify_semantic(code, snippet)
     verdict = classify_probe(status_code, error, code, snippet)
     return {
         "model": model,
         "status": status_code,
-        "verdict": verdict,          # available / unavailable / transient / probe_defect
+        "verdict": verdict,          # available / unavailable / transient / probe_defect / restricted
         "code": code,                # 上游错误码，仅用于诊断
+        "semantic": semantic,        # 错误码对应的语义类别，界面据此解释结论
         "error": error,
         "elapsedMs": int((time.time() - started) * 1000),
     }
@@ -416,21 +518,28 @@ def probe_account(client: Any, base_url: str, token: str,
     """只探「这个账号的凭据还有效吗」，不碰任何模型。
 
     发一个刻意不成立的请求（不存在的模型名），只看上游怎么回：
-    - 落到鉴权类错误（401/403）→ 凭据已失效，这个账号现在无论如何都调不通；
-    - 落到「模型不存在」类错误（400/404）→ **鉴权已经过了**，凭据有效；
+
+    - 鉴权类错误（401 / 错误码 11100）→ 凭据已失效，这个账号现在无论如何都调不通；
+    - 「模型不存在」类错误 → **鉴权已经过了**，凭据有效；
+    - 账号被策略拦截（内容审查 / 风控）→ 凭据有效，但请求发不出去。**不是**凭据问题；
+    - 请求形态被拒（非流式 / 参数越界）→ 探测自己的错，不构成任何凭据结论；
     - 连不上 / 超时 / 5xx → 探测没得到有效结论，不据此下判断。
 
     这样做的价值在于：一个凭据失效的账号，它名下**所有**模型都会失败。
     先花一次请求确认凭据，就能省掉后面几十次注定失败的探测，
     也避免把「凭据过期」误读成「这些模型全都坏了」而批量误禁。
+
+    请求体与真实调用**完全同构**（``stream: True`` + system 首条 + 不传可选参数），
+    这一点是必须遵守的：上游对非流式请求回 400 ``Non-stream chat request is not
+    supported``，而 400 又落在「模型不存在」的判定区间里 —— 于是探测**从未真正
+    到达判定点**，却回报「凭据有效」。这种假阳性会把失效账号读成好账号，
+    比误报失效危险得多（失效账号被继续拿去轮询，请求全数失败）。
     """
     started = time.time()
-    # 用不可能存在的模型名，确保请求不会真的产生一次生成；同时请求体只放必需字段。
-    body: Dict[str, Any] = {
-        "model": "__wb_probe_nonexistent__",
-        "messages": [{"role": "user", "content": PROBE_USER_CONTENT}],
-        "stream": False,
-    }
+    # 用不可能存在的模型名，确保请求不会真的产生一次生成；
+    # 其余字段一律复用 build_probe_body，与模型探测保持同一形态，
+    # 避免两处请求体各自演化、再次出现「同一账号两种结论」。
+    body = build_probe_body("__wb_probe_nonexistent__")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     status_code: Optional[int] = None
     error: Optional[str] = None
@@ -442,28 +551,52 @@ def probe_account(client: Any, base_url: str, token: str,
         error = f"{type(e).__name__}: {e}"
 
     code = _extract_error_code(snippet)
-    verdict = classify_account_probe(status_code, error, snippet)
+    semantic = classify_semantic(code, snippet)
+    verdict = classify_account_probe(status_code, error, snippet, code)
     return {
         "status": status_code,
-        "verdict": verdict,          # available / auth_failed / transient
+        "verdict": verdict,          # available / auth_failed / restricted / transient / probe_defect
         "code": code,
+        "semantic": semantic,
         "error": error,
         "elapsedMs": int((time.time() - started) * 1000),
     }
 
 
 def classify_account_probe(status_code: Optional[int], error: Optional[str],
-                           snippet: str = "") -> str:
-    """把账号探测的响应归为 available / auth_failed / transient。
+                           snippet: str = "",
+                           code: Optional[int] = None) -> str:
+    """把账号探测的响应归为 available / auth_failed / restricted / transient / probe_defect。
 
     注意与模型探测的**语义差别**：这里 400/404 是好消息 ——
     上游能说出「这个模型不存在」，说明它已经认下了这个 token。
+
+    判定一律先查 ``_CODE_SEMANTICS`` 语义表，**不**按状态码直接下结论：
+
+    - 凭据失效**只认** 401 或语义 ``auth``。403 不再一律当失效 ——
+      它同样可能意味着内容审查，那说明凭据是好的。
+    - 语义 ``restricted`` → ``restricted``：凭据有效但被策略拦截，
+      既不能提示「重新登录」（登录也没用），也不能当作凭据失效。
+    - 语义 ``probe_defect`` / ``invalid_model_name`` → ``probe_defect``：
+      探测请求自己有问题，得不出任何凭据结论。**不能**当有效 ——
+      那样失效账号会被读成好账号。
     """
     if error:
         return "transient"
     if status_code is None:
         return "transient"
-    if status_code in AUTH_STATUS:
+    semantic = classify_semantic(code, snippet)
+    if semantic == "auth":
+        return "auth_failed"
+    if semantic == "restricted":
+        return "restricted"
+    if semantic in ("probe_defect", "invalid_model_name"):
+        return "probe_defect"
+    if semantic == "model_missing":
+        return "available"
+    # 语义表没覆盖时才退回状态码判断。
+    if status_code == 401:
+        # 401 只有一个含义：没有有效的凭据。
         return "auth_failed"
     if status_code in TRANSIENT_STATUS:
         return "transient"
@@ -471,16 +604,17 @@ def classify_account_probe(status_code: Optional[int], error: Optional[str],
         # 探测用的模型名不存在，正常上游不会返回 2xx。
         # 真返回了说明上游对未知模型很宽容 —— 凭据至少是通的，按有效处理。
         return "available"
-    # 一旦带上「认得出这个 token」的证据，就算凭据有效。
+    # 400/403/404/422 这类「上游听懂了请求、并且拒绝了它」的响应，
+    # 说明鉴权这一关已经过了（否则不会走到业务校验）。
+    # 但要先排除文字特征已表明是内容审查的情况 —— 那归 restricted。
     lowered = (snippet or "").lower()
-    if status_code in (400, 404, 422):
+    if any(h in lowered for h in RESTRICTED_HINTS):
+        return "restricted"
+    if status_code in (400, 403, 404, 422):
         return "available"
-    if any(h in lowered for h in ("invalid model", "model not found", "unknown model",
-                                  "unsupported model", "model_not_found")):
+    if any(h in lowered for h in MODEL_MISSING_HINTS):
         return "available"
-    if status_code in UNAVAILABLE_STATUS:
-        # 5xx 之类：分不清是上游整体故障还是这个账号的问题，不下结论。
-        return "transient"
+    # 5xx 之类：分不清是上游整体故障还是这个账号的问题，不下结论。
     return "transient"
 
 
@@ -496,7 +630,10 @@ def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[s
     - ``unavailable`` 且已被禁用 → 保持原来源不变（手动禁用不会被改写为 auto）
     - ``available`` 且 ``auto_enable`` 且来源是 ``auto`` → 移除（自愈）
     - ``available`` 但来源是 ``manual`` → **不动**，手动禁用受保护
-    - ``transient`` / ``probe_defect`` → **不动**（探测没得到有效结论）
+    - ``transient`` / ``probe_defect`` / ``restricted`` → **不动**（探测没得到有效结论）
+
+    ``restricted``（账号被内容审查 / 风控拦截）必须保持原样：它说明请求没被放行，
+    而不是模型坏了。据它禁用模型，等于让一次风控拦截把账号名下模型成批标坏。
 
     返回变更明细，供界面展示与排查。
     """
@@ -559,6 +696,66 @@ def apply_verdicts(policy: Dict[str, Any], account_id: str, results: List[Dict[s
     }
 
 
+def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """把账号探测的原始结果翻译成界面/接口可直接引用的凭据状态。
+
+    存在的意义是**统一口径**：账号健康状况只有一个来源（账号级探测），
+    界面不必再去模型级结果里反推，也就不会再出现
+    「同一个账号在这里说有效、在那里说失效」。
+    """
+    if not acc_probe:
+        return {
+            "state": "unknown",
+            "label": "未检测",
+            "detail": "本轮未做账号级探测",
+            "semantic": None,
+            "code": None,
+        }
+    verdict = acc_probe.get("verdict")
+    semantic = acc_probe.get("semantic")
+    code = acc_probe.get("code")
+    state = {
+        "available": "valid",
+        "auth_failed": "invalid",
+        "restricted": "restricted",
+        "probe_defect": "unknown",
+        "transient": "unknown",
+    }.get(verdict, "unknown")
+    label = {
+        "valid": "凭据有效",
+        "invalid": "凭据已失效",
+        "restricted": "账号受限",
+        "unknown": "未得出结论",
+    }[state]
+    # 说明文案优先用语义表里的解释（它带上了判定依据），
+    # 语义识别不出来时退回 verdict 的通用说明。
+    detail = SEMANTIC_LABELS.get(semantic or "") or {
+        "available": SEMANTIC_LABELS["model_missing"],
+        "auth_failed": SEMANTIC_LABELS["auth"],
+        "restricted": SEMANTIC_LABELS["restricted"],
+        "probe_defect": SEMANTIC_LABELS["probe_defect"],
+        "transient": SEMANTIC_LABELS["transient"],
+    }.get(verdict, "未得出结论")
+    # 每种状态都给出**下一步该做什么**。只报结论不给行动，用户就只能猜 ——
+    # 尤其 restricted 与 invalid 长得很像（都是 403），但处理方式完全相反：
+    # 一个要重登，一个重登多少次都没用。
+    action = {
+        "valid": None,
+        "invalid": "请重新登录该账号",
+        "restricted": "该账号被上游内容安全策略拦下，重新登录没用；"
+                      "请检查账号状态或联系上游，也可先停用该账号避免占用轮询",
+        "unknown": "稍后重试；若持续如此请检查网络与上游状态",
+    }.get(state)
+    return {
+        "state": state,
+        "label": label,
+        "detail": detail,
+        "action": action,
+        "semantic": semantic,
+        "code": code,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 巡检轮次（把「算组合 → 探测 → 写策略」串起来）
 # ---------------------------------------------------------------------------
@@ -607,7 +804,8 @@ def run_round(accounts: List[Dict[str, Any]],
             by_id[str(acc_id)] = acc
 
     account_reports: List[Dict[str, Any]] = []
-    counts = {"available": 0, "unavailable": 0, "transient": 0, "probe_defect": 0}
+    counts = {"available": 0, "unavailable": 0, "transient": 0,
+              "probe_defect": 0, "restricted": 0}
     auth_failed: List[str] = []
     defect_codes: Set[int] = set()
     # 账号级探测结果：``{account_id: verdict}``。
@@ -631,35 +829,47 @@ def run_round(accounts: List[Dict[str, Any]],
             variant = acc.get("variant", "ai")
             base_url = base_url_for(variant)
 
-            # 先花一次请求确认凭据。凭据已失效的账号，名下所有模型都会失败 ——
-            # 先探一次就能省掉后面几十次注定失败的请求，也避免把
-            # 「token 过期」误读成「这些模型全坏了」而批量误禁。
-            # 探测没得到结论（transient）时照常往下探模型，不因一次探测失败就跳过。
-            if check_accounts and len(models) > 1:
+            # 先花一次请求确认凭据，再决定要不要接着探模型。
+            #
+            # 无论名下有几个模型都先探账号级：它是凭据有效性的**唯一**来源，
+            # 只探一个模型时更需要它 —— 否则那一个模型的失败就会被当成凭据问题。
+            #
+            # 探测没得到结论（transient / probe_defect）时照常往下探模型：
+            # 一次探测失败就跳过，等于让探测侧的问题变成账号的问题。
+            acc_probe: Optional[Dict[str, Any]] = None
+            if check_accounts:
                 acc_probe = probe_account(client, base_url, token)
                 account_probes[acc_id] = acc_probe["verdict"]
-                if acc_probe["verdict"] == "auth_failed":
-                    auth_failed.append(acc_id)
-                    existing = sorted(model_policy._coerce_entry(policy.get(acc_id)) or {})
-                    account_reports.append({
-                        "accountId": acc_id,
-                        "accountName": acc.get("nickname") or acc.get("email") or acc_id,
-                        "disabled": [],
-                        "enabled": [],
-                        "protected": [],
-                        "unchanged": sorted(models),
-                        "disabledBefore": existing,
-                        "disabledAfter": existing,
-                        "changed": False,
-                        "authFailed": True,
-                        # 没能探到模型级结论：跳过的原因必须在面板上说得清，
-                        # 否则用户只会看到「组合数比模型总数少」却不知道差在哪。
-                        "skippedReason": "凭据已失效，未再逐个探测其模型",
-                        "accountProbe": acc_probe,
-                        "results": [],
-                    })
-                    continue
 
+            # 凭据确认失效：跳过后面的模型探测。它名下所有模型都会失败，
+            # 逐个探只是白花额度，而且会让「token 过期」看起来像「模型全坏了」。
+            if acc_probe and acc_probe["verdict"] == "auth_failed":
+                auth_failed.append(acc_id)
+                existing = sorted(model_policy._coerce_entry(policy.get(acc_id)) or {})
+                account_reports.append({
+                    "accountId": acc_id,
+                    "accountName": acc.get("nickname") or acc.get("email") or acc_id,
+                    "disabled": [],
+                    "enabled": [],
+                    "protected": [],
+                    "unchanged": sorted(models),
+                    "disabledBefore": existing,
+                    "disabledAfter": existing,
+                    "changed": False,
+                    "authFailed": True,
+                    # 没能探到模型级结论：跳过的原因必须在面板上说得清，
+                    # 否则用户只会看到「组合数比模型总数少」却不知道差在哪。
+                    "skippedReason": "凭据已失效，未再逐个探测其模型",
+                    "accountProbe": acc_probe,
+                    "credential": credential_state(acc_probe),
+                    "results": [],
+                })
+                continue
+
+            # 账号被策略拦截（内容审查 / 风控）：凭据是好的，但它发出的请求会被拦。
+            # 此时**不跳过**模型探测 —— 目的是把「全账号被拦」这个事实测出来，
+            # 让报告里出现一个明确的 restricted 状态，而不是留下一串
+            # 没有解释的 unavailable。这些失败会照常走 apply_verdicts 里的保护逻辑。
             results = []
             for model in models:
                 item = probe_once(client, base_url, token, model)
@@ -669,30 +879,25 @@ def run_round(accounts: List[Dict[str, Any]],
                 results.append(item)
 
             existing = sorted(model_policy._coerce_entry(policy.get(acc_id)) or {})
-            statuses = {r.get("status") for r in results}
-            # 整账号凭据失效：token 过期会让名下**所有**模型一起变红，
-            # 但坏的是凭据而不是模型。这种情况不写禁用策略，只提示重新登录 ——
-            # 否则一次 token 过期就会自动禁掉整个账号的模型清单。
-            if (len(results) >= AUTH_GUARD_MIN_MODELS
-                    and statuses and statuses <= AUTH_STATUS):
-                if acc_id not in auth_failed:
-                    auth_failed.append(acc_id)
-                report = {
-                    "accountId": acc_id,
-                    "disabled": [],
-                    "enabled": [],
-                    "protected": [],
-                    "unchanged": sorted(r["model"] for r in results),
-                    "disabledBefore": existing,
-                    "disabledAfter": existing,
-                    "changed": False,
-                    "authFailed": True,
-                }
-            else:
-                report = apply_verdicts(policy, acc_id, results,
-                                        auto_enable=bool(config.get("autoEnable", True)))
+            # 凭据有效性**只由账号级探测裁定**，不再从模型级结果反推。
+            #
+            # 这里曾有一条「整账号的模型都栽在 401/403 上 → 判凭据失效」的推断，
+            # 它制造过一组自相矛盾的结论：同样三个账号，「检测账号」说凭据有效，
+            # 巡检却说凭据失效。原因是那些 403 其实是**内容安全审查**
+            # （错误码 11140 / request illegal）—— 凭据好好的，只是请求被拦。
+            # 从「模型请求失败」反推「凭据坏了」在逻辑上就不成立：
+            # 失败可以有多个原因，凭据只是其中之一，而账号级探测能把它单独测出来。
+            #
+            # 所以：模型级失败一律按模型维度处理（该禁则禁），
+            # 账号健康状态看上面账号级探测的结论。
+            report = apply_verdicts(policy, acc_id, results,
+                                    auto_enable=bool(config.get("autoEnable", True)))
             report["accountName"] = acc.get("nickname") or acc.get("email") or acc_id
+            report["accountProbe"] = acc_probe
             report["results"] = results
+            # 账号级结论单独摆放，供界面与接口直接引用，
+            # 不必再去 results 里猜（那是模型维度的数据）。
+            report["credential"] = credential_state(acc_probe)
             account_reports.append(report)
     finally:
         try:
@@ -700,11 +905,14 @@ def run_round(accounts: List[Dict[str, Any]],
         except Exception:
             pass
 
-    # 整轮保护：一个可用的都没有，而且失败集中在「探测机制本身有问题」的两类上
-    # （请求被上游参数校验拒绝、网络与限流），几乎可以肯定是探测侧失效
-    # （凭据、请求形态、上游整体故障），而不是所有模型同时坏掉。
+    # 整轮保护：一个可用的都没有，而且失败集中在「探测机制本身有问题」或
+    # 「账号被策略拦截」这两类上，几乎可以肯定是探测侧失效
+    # （凭据、请求形态、上游整体故障、风控拦截），而不是所有模型同时坏掉。
     # 此时不写策略 —— 成批误禁要靠人工逐个放开，代价远高于漏禁一轮。
-    no_signal = counts["unavailable"] + counts["probe_defect"]
+    #
+    # restricted（内容审查）必须计入：它曾被算作「模型不可用」，
+    # 于是一次风控拦截就会把一批模型标成坏的。
+    no_signal = counts["unavailable"] + counts["probe_defect"] + counts["restricted"]
     aborted = counts["available"] == 0 and no_signal >= GUARD_MIN_UNAVAILABLE
     # 「实际落盘的变更」——整轮作废时不写策略，两者都保持为空。
     applied_disabled: List[str] = []
@@ -718,7 +926,13 @@ def run_round(accounts: List[Dict[str, Any]],
             report["disabled"] = []
             report["enabled"] = []
             report["changed"] = False
-        if counts["probe_defect"] >= GUARD_MIN_UNAVAILABLE:
+        if counts["restricted"] >= GUARD_MIN_UNAVAILABLE:
+            reason = (
+                f"本轮 {counts['restricted']} 个组合被上游内容安全审查拦下"
+                "（request illegal / safety review），凭据本身没有问题，"
+                "已跳过写入。请检查这些账号是否被上游风控标记。"
+            )
+        elif counts["probe_defect"] >= GUARD_MIN_UNAVAILABLE:
             codes = "、".join(str(c) for c in sorted(defect_codes)) or "未知"
             reason = (
                 f"本轮 {counts['probe_defect']} 个组合的探测请求被上游参数校验拒绝"
@@ -800,10 +1014,27 @@ def run_round(accounts: List[Dict[str, Any]],
             {"id": r["accountId"], "name": r.get("accountName")}
             for r in account_reports if r.get("authFailed")
         ],
+        # 账号被上游策略拦截（内容审查 / 风控）的账号。
+        # 与 authFailed 分开列：凭据是好的，提示「重新登录」会把人引向错误的方向。
+        "restricted": [
+            {"id": r["accountId"], "name": r.get("accountName"),
+             "detail": (r.get("credential") or {}).get("detail")}
+            for r in account_reports
+            if (r.get("credential") or {}).get("state") == "restricted"
+        ],
         # 本轮被自动停用的账号（凭据确认失效）。界面据此说明账号为什么不再参与调用。
         "accountsDisabled": sorted(set(applied_accounts_disabled)),
         # 账号级探测结果，界面用来区分「凭据坏了」还是「模型坏了」。
         "accountProbes": account_probes,
+        # 账号健康状况汇总：{valid / invalid / restricted / unknown: 账号数}。
+        # 这是「统一标准」在结果里的体现 —— 账号层面的结论只有这一处口径。
+        "accountHealth": {
+            state: sum(
+                1 for r in account_reports
+                if (r.get("credential") or {}).get("state") == state
+            )
+            for state in ("valid", "invalid", "restricted", "unknown")
+        },
         # 探测被上游参数校验拒绝时命中的错误码，用于排查探测形态问题。
         "defectCodes": sorted(defect_codes),
         "reports": account_reports,
@@ -837,6 +1068,11 @@ def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": round_result.get("enabled", []),
         "protected": round_result.get("protected", []),
         "authFailed": round_result.get("authFailed", []),
+        # 「账号被内容审查 / 风控拦截」与「凭据失效」是两种完全不同的状态，
+        # 界面提示的方向也相反（一个要重新登录，一个登录也没用），
+        # 所以必须分别落盘，不能只留 authFailed。
+        "restricted": round_result.get("restricted", []),
+        "accountHealth": round_result.get("accountHealth", {}),
         "accountsDisabled": round_result.get("accountsDisabled", []),
         "defectCodes": round_result.get("defectCodes", []),
         "aborted": bool(round_result.get("aborted")),

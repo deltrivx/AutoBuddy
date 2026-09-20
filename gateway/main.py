@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.10"
+VERSION_DEFAULT = "0.4.11"
 GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -650,28 +650,163 @@ def probe_account_credentials(payload: Dict[str, Any]):
             pass
 
     verdict = result.get("verdict")
-    messages = {
-        "available": "凭据有效",
-        "auth_failed": "凭据已失效，请重新登录该账号",
-        "transient": "暂时没拿到结论（网络或上游异常），可稍后再试",
-    }
-    # 不给调用方看原始状态码：探测刻意用一个不存在的模型名，上游回 400/404 正是
-    # 「认下了这个 token」的证据。把 400 原样透出去，会被读成「探测失败了」，
-    # 与同一响应里的「凭据有效」自相矛盾。改为透出**判定依据**，说明结论是怎么来的。
-    evidence = {
-        "available": "上游已接受该凭据（以模型不存在拒绝）",
-        "auth_failed": "上游以鉴权类错误拒绝",
-        "transient": "上游未给出可判定的响应",
-    }
+    semantic = result.get("semantic")
+    # 结论文案由 model_health 的统一语义表派生，接口这边不再自带一份副本 ——
+    # 两份文案各自演化，正是「同一个账号在不同页面口径不同」的老问题来源。
+    state = model_health.credential_state(result)
+    # 判定依据：优先用语义表里针对**具体错误码**的解释（如 11140 → 内容审查），
+    # 语义识别不出时才退回按 verdict 的通用说明。
+    evidence = model_health.SEMANTIC_LABELS.get(semantic or "") or state.get("detail")
     return {
         "ok": True,
         "accountId": str(acc_id),
         "accountName": _account_label(acc),
+        # 保留 verdict 字段兼容旧前端，但含义以 state 为准（见下）。
         "verdict": verdict,
-        "message": messages.get(verdict, "未识别的探测结论"),
-        "evidence": evidence.get(verdict),
+        # 统一的凭据状态：valid / invalid / restricted / unknown。
+        # 界面只认这一个字段，不再自行解释 verdict 或状态码。
+        "state": state.get("state"),
+        "message": state.get("label") or "未识别的探测结论",
+        "evidence": evidence,
+        # 行动建议只从 credential_state 取 —— 这份文案连同 state/label/detail
+        # 都在同一个函数里生成，接口不再自己拼一套。
+        # 以前就是这么散的：界面一处、接口一处、巡检一处，改一处漏两处，
+        # 于是同一个账号在不同位置给出不同说法。
+        "action": state.get("action"),
+        # 上游错误码原样透出，供排查；但**不**透 HTTP 状态码 ——
+        # 探测刻意用一个不存在的模型名，非 2xx 是预期内的，
+        # 把状态码摆到界面上只会与「凭据有效」互相矛盾（这一点踩过一次）。
+        "code": result.get("code"),
+        "semantic": semantic,
         "elapsedMs": result.get("elapsedMs"),
         "error": result.get("error"),
+    }
+
+
+@app.get("/account-health/audit")
+def audit_account_health():
+    """对全部账号做一次一致性自检，逐账号给出「凭据」与「模型」两侧的结论。
+
+    为什么需要它：凭据有效性与模型可用性是**两个独立维度**，
+    但界面上过去只有一个笼统的「账号状态」，于是同一批账号在不同页面
+    呈现出互相矛盾的结论（检测说有效、巡检说失效），让人无从判断该信哪个。
+    这个接口把两侧结论并排摆出来，并标明每一侧各自的判据，
+    使「凭据好但模型被拦」「某模型无权限」这类情况一眼可见。
+
+    只读，不改任何配置 —— 排查工具不该有副作用。
+    """
+    accounts = _load_accounts()
+    pool_cfg = _load_pool_config()
+    enabled_ids = {str(x) for x in pool_cfg.get("enabledAccountIds") or []}
+    acc_disabled = account_policy.load_policy()
+    now_ms = int(time.time() * 1000)
+
+    # 每个账号要测的模型：取该账号被显式禁用之外的、配置里声明过的模型。
+    # 上限截断，避免一个接口调用打出几百次上游请求。
+    try:
+        base_models = _base_model_ids()
+    except Exception:
+        base_models = []
+    max_models = 3
+
+    rows: List[Dict[str, Any]] = []
+    client = httpx.Client(timeout=30.0)
+    try:
+        for acc in accounts:
+            acc_id = str(_account_id(acc))
+            if not acc_id:
+                continue
+            variant = acc.get("variant", "ai")
+            base_url = _health_base_url(variant)
+            token = acc.get("access_token")
+            entry = model_policy._coerce_entry(_load_model_policy().get(acc_id)) or {}
+            disabled_models = set(entry)
+
+            # 侧一：凭据
+            probe = model_health.probe_account(client, base_url, token)
+            cred = model_health.credential_state(probe)
+
+            # 侧二：模型（最多 max_models 个未禁用的）
+            candidates = [m for m in base_models
+                          if m not in disabled_models
+                          and model_policy.MODEL_ALIAS_MAP.get(m, m) not in disabled_models]
+            model_rows = []
+            for model in candidates[:max_models]:
+                item = model_health.probe_once(client, base_url, token, model)
+                model_rows.append({
+                    "model": model,
+                    "verdict": item.get("verdict"),
+                    "semantic": item.get("semantic"),
+                    "code": item.get("code"),
+                    "explain": model_health.SEMANTIC_LABELS.get(
+                        item.get("semantic") or "", ""
+                    ) or {
+                        "available": "调用链路正常",
+                        "unavailable": "该模型对此账号不可用",
+                        "transient": "临时异常，未能判定",
+                    }.get(item.get("verdict"), ""),
+                })
+
+            # 一致性结论：把两侧摆在一起，直接给出「该怎么理解」。
+            verdicts = {r["verdict"] for r in model_rows}
+            if cred["state"] == "invalid":
+                consistency = "凭据失效"
+                advice = "先重新登录该账号；凭据修好之前，它名下模型的探测结果都不代表模型好坏。"
+            elif cred["state"] == "restricted":
+                consistency = "账号受限"
+                advice = ("凭据有效，但请求被上游策略拦截（内容审查 / 风控）。"
+                          "这不是登录问题 —— 重新登录没用，需要向上游确认账号状态。")
+            elif cred["state"] == "unknown":
+                consistency = "凭据未判定"
+                advice = "凭据探测未得到结论，模型侧的结论仅供参考。"
+            elif model_rows and verdicts == {"available"}:
+                consistency = "一致：均正常"
+                advice = "凭据与模型两侧都正常，无需处理。"
+            elif "restricted" in verdicts:
+                consistency = "账号受限"
+                advice = "凭据有效，但模型请求被上游拦截，同「账号受限」处理。"
+            elif model_rows and "unavailable" in verdicts:
+                consistency = "凭据有效，部分模型不可用"
+                advice = "凭据没问题，是这些模型本身对该账号不可用（无权限 / 不存在），可单独禁用它们。"
+            else:
+                consistency = "结论不完整"
+                advice = "本轮探测未覆盖到足以判定的组合，可稍后重试。"
+
+            rows.append({
+                "id": acc_id,
+                "name": _account_label(acc),
+                "variant": variant,
+                "inPool": (not enabled_ids) or acc_id in enabled_ids,
+                "usable": _account_is_usable(acc, now_ms),
+                "accountDisabled": acc_id in acc_disabled,
+                "accountDisabledSource": acc_disabled.get(acc_id),
+                "credential": cred,
+                "models": model_rows,
+                "consistency": consistency,
+                "advice": advice,
+            })
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    # 汇总：让调用方一眼看出「哪些账号需要关注」。
+    summary: Dict[str, int] = {}
+    for row in rows:
+        summary[row["consistency"]] = summary.get(row["consistency"], 0) + 1
+    return {
+        "checkedAt": int(time.time() * 1000),
+        "accounts": len(rows),
+        "summary": summary,
+        "criteria": {
+            "credential": "由不存在的模型名探测裁定：上游回「模型不存在」= 凭据有效；"
+                          "回鉴权类错误 = 凭据失效；回内容审查 = 账号受限（凭据有效）。",
+            "model": "用真实模型名探测：只依据上游错误码判定，"
+                     "内容审查与参数错误不会被算作模型不可用。",
+            "note": "凭据有效性只由账号级探测裁定，不从模型探测结果反推。",
+        },
+        "rows": rows,
     }
 
 

@@ -399,8 +399,12 @@ model_policy.save_policy({})
 
 
 class FakeResponse:
-    def __init__(self, status):
+    """假响应。``text`` 用于测「靠响应体文案识别错误类别」的分支 ——
+    内容审查（11140）之类经常没有可用的错误码，只能看文案。"""
+
+    def __init__(self, status, text=""):
         self.status_code = status
+        self.text = text or ""
 
 
 class FakeClient:
@@ -409,19 +413,36 @@ class FakeClient:
     ``account_default`` 是**账号级探测**（不带真实模型名的那种）的默认响应。
     两者必须能分开预设：账号探测故意用一个不存在的模型名，
     如果混进模型映射里，就分不清「这条是探凭据」还是「探某个真模型」了。
+
+    ``account_codes`` 用于按 token 单独指定账号级探测的状态码
+    （例如让 t1 的凭据探测回 401，而它的模型探测回别的）。
+    账号级探测是凭据结论的**唯一**来源，所以测试必须能独立控制它 ——
+    否则「凭据失效」这个场景根本造不出来。
     """
 
-    def __init__(self, mapping, default=200, account_default=None):
+    def __init__(self, mapping, default=200, account_default=None,
+                 account_codes=None, account_bodies=None, bodies=None):
         self.mapping = mapping
         self.default = default
-        self.account_default = account_default
+        self.account_default = account_default if account_default is not None else default
+        self.account_codes = account_codes or {}
+        self.account_bodies = account_bodies or {}
+        # (token, model) → 响应体。用于测那些**必须看文案**才能分类的响应
+        # （内容审查经常没有可用的错误码，只有一句 safety review）。
+        self.bodies = bodies or {}
         self.calls = []
 
     def post(self, url, json=None, headers=None, timeout=None):
         token = (headers or {}).get("Authorization", "").replace("Bearer ", "")
         model = (json or {}).get("model")
         self.calls.append((token, model))
-        return FakeResponse(self.mapping.get((token, model), self.default))
+        if str(model).startswith("__wb_probe"):
+            # 账号级探测：按 token 单独预设，未预设时用 account_default。
+            status = self.account_codes.get(token, self.account_default)
+            body = self.account_bodies.get(token)
+            return FakeResponse(status, body)
+        return FakeResponse(self.mapping.get((token, model), self.default),
+                            self.bodies.get((token, model)))
 
     def close(self):
         pass
@@ -672,13 +693,18 @@ check("作废原因点明参数校验被拒",
 # ---------------------------------------------------------------------------
 print("\n[17c] 账号凭据失效")
 model_policy.save_policy({})
-# a1 凭据整体失效（全 401），a2 一切正常。若把 a1 的 401 当「模型不可用」，
-# 就会一次性自动禁用掉 a1 名下的整个模型清单 —— 这正是要避免的。
+# a1 凭据整体失效（账号级探测回 401），a2 一切正常。
+#
+# 关键变化：凭据结论**只由账号级探测裁定**，不再从模型级结果反推。
+# 这里刻意让 a1 的模型探测也回 401，用来验证「模型级失败不再被当成凭据问题」——
+# 若哪次改动把这条推断加回来，下面「凭据失效不写禁用」会立刻失败。
 auth_round = model_health.run_round(
     accounts=accounts,
     config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
-    client_factory=lambda: FakeClient({("t1", "hy3"): 401, ("t1", "kimi-k3"): 401,
-                                       ("t1", "glm-5.3"): 401}),
+    client_factory=lambda: FakeClient(
+        {("t1", "hy3"): 401, ("t1", "kimi-k3"): 401, ("t1", "glm-5.3"): 401},
+        account_codes={"t1": 401},
+    ),
     base_url_for=lambda variant: "https://example.test",
     used_models={},
     base_models=guard_models,
@@ -694,21 +720,60 @@ check("凭据失效的账号带 authFailed 标记",
       [r["accountId"] for r in auth_round["reports"] if r.get("authFailed")] == ["a1"])
 check("健康账号照常参与且不误判", auth_round["aborted"] is False
       and auth_round["counts"]["available"] == len(guard_models), f"got {auth_round['counts']}")
+# 凭据状态单独成字段，界面只认它，不必再去模型结果里猜。
+_a1_cred = next(r["credential"] for r in auth_round["reports"] if r["accountId"] == "a1")
+check("凭据失效在 credential 里标为 invalid",
+      _a1_cred["state"] == "invalid", f"got {_a1_cred}")
 
-# 只有一个模型、无法区分「凭据坏了」还是「这个模型坏了」时，按普通规则处理
-single = model_health.run_round(
+# 模型级失败**不**反推凭据失效：账号级探测说有效，就按有效处理，
+# 那些失败只在该模型维度上生效（该禁则禁）。
+model_policy.save_policy({})
+mixed = model_health.run_round(
     accounts=[accounts[0]],
     config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
-    client_factory=lambda: FakeClient({("t1", "hy3"): 401, ("t1", "kimi-k3"): 200}),
-    base_url_for=lambda variant: "https://example.test",
+    client_factory=lambda: FakeClient(
+        {("t1", "hy3"): 403, ("t1", "kimi-k3"): 200},
+        account_codes={"t1": 400},
+    ),
+    base_url_for=lambda variant="ai": "https://example.test",
     used_models={},
     base_models=["hy3", "kimi-k3"],
 )
-check("有可用模型时不误判为凭据失效", not (single.get("authFailed") or []),
-      f"got {single.get('authFailed')}")
-check("混合状态下 401 的模型照常禁用",
+check("模型级 403 不再反推为凭据失效", not (mixed.get("authFailed") or []),
+      f"got {mixed.get('authFailed')}")
+check("凭据有效时模型失败照常按模型维度处理",
       (model_policy.load_policy().get("a1") or {}).get("hy3") == "auto",
       f"got {model_policy.load_policy()}")
+
+# 内容审查（11140）：凭据有效但请求被拦，既不算凭据失效，也不禁用模型。
+model_policy.save_policy({})
+restricted_round = model_health.run_round(
+    accounts=[accounts[0]],
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient(
+        {("t1", "hy3"): 403, ("t1", "kimi-k3"): 403},
+        account_codes={"t1": 403},
+        account_bodies={"t1": '{"code":11140,"msg":"request illegal"}'},
+        bodies={("t1", "hy3"): '{"code":11140,"msg":"request illegal"}',
+                ("t1", "kimi-k3"): '{"code":11140,"msg":"request illegal"}'},
+    ),
+    base_url_for=lambda variant="ai": "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("内容审查不算凭据失效", not (restricted_round.get("authFailed") or []),
+      f"got {restricted_round.get('authFailed')}")
+_r_cred = restricted_round["reports"][0]["credential"]
+check("内容审查标为 restricted 且凭据有效",
+      _r_cred["state"] == "restricted", f"got {_r_cred}")
+check("内容审查被单独点名", len(restricted_round.get("restricted") or []) == 1,
+      f"got {restricted_round.get('restricted')}")
+check("内容审查计入 counts.restricted",
+      restricted_round["counts"]["restricted"] > 0, f"got {restricted_round['counts']}")
+check("内容审查不写禁用（凭据没问题）", model_policy.load_policy() == {},
+      f"got {model_policy.load_policy()}")
+check("内容审查时不提示重新登录",
+      "重新登录" not in (_r_cred.get("detail") or ""), f"got {_r_cred.get('detail')}")
 
 # ---------------------------------------------------------------------------
 # 18. 上次巡检摘要落盘与回读
@@ -964,8 +1029,34 @@ check("关掉后账号策略不被写", account_policy.load_policy() == {},
 # 场景四：账号级探测的判定函数本身。
 check("401 判为凭据失效",
       model_health.classify_account_probe(401, None) == "auth_failed")
-check("403 判为凭据失效",
-      model_health.classify_account_probe(403, None) == "auth_failed")
+# 403 **不再**一律当凭据失效 —— 这是本次统一口径的核心修正。
+# 403 至少对应三种原因：token 被吊销、内容审查、无模型权限。
+# 只看状态码必然误判，必须看错误码。
+check("403 不再一律判为凭据失效（裸 403 交给语义表或兜底逻辑）",
+      model_health.classify_account_probe(403, None) != "auth_failed",
+      f"got {model_health.classify_account_probe(403, None)}")
+check("403 + 11140（内容审查）判为账号受限，而非凭据失效",
+      model_health.classify_account_probe(
+          403, None, '{"code":11140,"msg":"request illegal"}', 11140) == "restricted")
+check("403 + 无错误码但有审查文案，同样判为账号受限",
+      model_health.classify_account_probe(
+          403, None, '{"msg":"The content did not pass the safety review."}') == "restricted")
+check("403 + 11100（token 失效）才是凭据失效",
+      model_health.classify_account_probe(
+          403, None, '{"code":11100}', 11100) == "auth_failed")
+check("401 无论有无错误码都判凭据失效（401 只有这一种含义）",
+      model_health.classify_account_probe(401, None, "") == "auth_failed")
+# 探测形态错误：非流式请求被上游拒绝（11101）。
+# 这类必须判 probe_defect，**不能**当凭据有效 ——
+# 那是「探测没到达判定点」，把失效账号读成好账号比误报更危险。
+check("11101（非流式不支持）判为探测形态问题，不当作凭据有效",
+      model_health.classify_account_probe(
+          400, None, '{"code":11101,"msg":"Non-stream chat request is not supported"}',
+          11101) == "probe_defect")
+check("11102（模型不存在）才判凭据有效",
+      model_health.classify_account_probe(
+          400, None, '{"code":11102,"msg":"model service info not found"}',
+          11102) == "available")
 # 关键：400/404 是好消息 —— 上游能说「这个模型不存在」，说明它认下了这个 token。
 check("400 判为凭据有效（上游认得出 token）",
       model_health.classify_account_probe(400, None) == "available")
@@ -975,6 +1066,49 @@ check("5xx 不下结论",
       model_health.classify_account_probe(503, None) == "transient")
 check("网络异常不下结论",
       model_health.classify_account_probe(None, "ConnectTimeout") == "transient")
+
+# 场景五：行动建议。每个状态都要给出「下一步做什么」——
+# restricted 与 invalid 都是 403，长得像但处理方式完全相反：
+# 一个要重登，一个重登多少次都没用。这里把两者的建议钉死。
+check("凭据失效建议重新登录",
+      "重新登录" in (model_health.credential_state(
+          {"verdict": "auth_failed"}) or {}).get("action", ""),
+      str(model_health.credential_state({"verdict": "auth_failed"})))
+_r_action = (model_health.credential_state(
+    {"verdict": "restricted", "semantic": "restricted"}) or {}).get("action", "")
+check("账号受限明确说明重新登录没用",
+      "重新登录没用" in _r_action, _r_action)
+check("凭据有效不给多余建议",
+      not model_health.credential_state(
+          {"verdict": "available", "semantic": "model_missing"}).get("action"))
+check("探测形态错误归为未得出结论",
+      model_health.credential_state(
+          {"verdict": "probe_defect"}).get("state") == "unknown")
+
+# 场景六：11101「不支持非流式」是探测自身的形态问题，不是「凭据有效」的证据。
+# 线上实测就栽在这里：probe_account 曾写死 stream:False，上游回 11101 被
+# 当成「模型不存在」而判为 available —— 一个从没测到凭据的假阳性。
+check("非流式不支持识别为探测形态问题",
+      model_health.classify_semantic(11101) == "probe_defect",
+      str(model_health.classify_semantic(11101)))
+check("非流式不支持不判为凭据有效",
+      model_health.classify_account_probe(
+          400, None,
+          '{"code":11101,"msg":"Non-stream chat request is currently not supported"}'
+      ) == "probe_defect",
+      model_health.classify_account_probe(
+          400, None,
+          '{"code":11101,"msg":"Non-stream chat request is currently not supported"}'))
+
+# 场景七：账号探测必须与真实调用同构（走 stream），否则上游直接拒绝，
+# 探测根本到不了判定点。
+_acct_src = open("gateway/model_health.py", encoding="utf-8").read()
+_probe_acct = _acct_src[_acct_src.index("def probe_account("):
+                        _acct_src.index("def credential_state(")]
+check("账号探测不再写死非流式（必须与真实调用同构）",
+      '"stream": False' not in _probe_acct, "probe_account 里仍有 stream:False")
+check("账号探测复用统一的请求构造",
+      "build_probe_body" in _probe_acct, "未复用 build_probe_body")
 
 # 场景四点五：探测接口对外只给**结论**，不给原始状态码。
 # 探测刻意用一个不存在的模型名，上游回 400/404 正是「认下了 token」的证据；
@@ -1013,5 +1147,65 @@ check("autoDisableAccounts 可被配置覆盖",
       model_health._coerce_config({"autoDisableAccounts": False})["autoDisableAccounts"] is False)
 
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 统一判定标准：把线上实测抓到的**真实响应体**固化在这里。
+# 这些字符串不是编的 —— 每一条都对应一次真实的线上排查结论，
+# 改动判定逻辑时它们会立刻告诉你有没有把既有结论改坏。
+# ---------------------------------------------------------------------------
+UPSTREAM_SAMPLES = {
+    "ai_model_missing": (400, '{"code":11102,"msg":"model service info not found"}'),
+    "cn_content_review": (403, '{"code":11140,"msg":"request illegal",'
+                               '"displayMsg":"The content did not pass the safety review."}'),
+    "nonstream_unsupported": (400, '{"code":11101,"msg":"Non-stream chat request is currently not supported"}'),
+    "auth_expired": (401, '{"code":401,"msg":"unauthorized"}'),
+    "rate_limited": (429, '{"code":429,"msg":"too many requests"}'),
+}
+
+_ai_sn = UPSTREAM_SAMPLES["ai_model_missing"][1]
+_cn_sn = UPSTREAM_SAMPLES["cn_content_review"][1]
+_ns_sn = UPSTREAM_SAMPLES["nonstream_unsupported"][1]
+
+# 账号级：凭据有效性的唯一裁定者
+check("实测·ai 版模型不存在 → 凭据有效",
+      model_health.credential_state({
+          "verdict": model_health.classify_account_probe(400, None, _ai_sn),
+          "semantic": "model_missing"})["state"] == "valid")
+check("实测·cn 版内容审查 → 账号受限而非凭据失效",
+      model_health.credential_state({
+          "verdict": model_health.classify_account_probe(403, None, _cn_sn),
+          "semantic": "restricted"})["state"] == "restricted")
+check("实测·非流式不支持 → 未得出结论而非凭据有效",
+      model_health.credential_state({
+          "verdict": model_health.classify_account_probe(400, None, _ns_sn),
+          "semantic": "probe_defect"})["state"] == "unknown")
+check("实测·401 → 凭据失效",
+      model_health.credential_state({
+          "verdict": model_health.classify_account_probe(
+              401, None, UPSTREAM_SAMPLES["auth_expired"][1])})["state"] == "invalid")
+check("实测·429 → 未得出结论",
+      model_health.credential_state({
+          "verdict": model_health.classify_account_probe(
+              429, None, UPSTREAM_SAMPLES["rate_limited"][1])})["state"] == "unknown")
+
+# 模型级：只判模型好坏，不反推凭据
+check("实测·模型级 11140 判 restricted 而非 unavailable",
+      model_health.classify_probe(403, None, 11140, _cn_sn) == "restricted",
+      model_health.classify_probe(403, None, 11140, _cn_sn))
+check("实测·模型级 11101 判 probe_defect",
+      model_health.classify_probe(400, None, 11101, _ns_sn) == "probe_defect")
+check("实测·模型级 11102 判 unavailable",
+      model_health.classify_probe(400, None, 11102, _ai_sn) == "unavailable",
+      model_health.classify_probe(400, None, 11102, _ai_sn))
+
+# 策略写入：只有确凿的不可用才允许落盘
+for _v, _expect in (("restricted", False), ("probe_defect", False),
+                    ("transient", False), ("unavailable", True)):
+    _rep = model_health.apply_verdicts({}, "acc-samp", [
+        {"model": "hy3", "verdict": _v,
+          "code": 11140 if _v == "restricted" else None}], auto_enable=True)
+    check(f"实测·{_v} → {'写禁用' if _expect else '不写禁用'}",
+          bool(_rep["disabled"]) == _expect, str(_rep["disabled"]))
+
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

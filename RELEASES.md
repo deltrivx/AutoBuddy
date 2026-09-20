@@ -5,7 +5,7 @@
 本页是 **WorkBuddy Switch 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.4.10](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.10)
+**当前稳定版：** [v0.4.11](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.11)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,12 +13,13 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.4.11](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.11) | 2026-09-20 | 统一账号有效性判定标准，修正内容审查被误判为凭据失效 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.11.md) |
 | [v0.4.10](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.10) | 2026-09-20 | 修正「检测账号」的结论表述，说明凭据有效的判定依据 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.10.md) |
 | [v0.4.9](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.9) | 2026-09-20 | 新增账号级停用与凭据检测；修复手机等窄屏下侧边栏与设置项被挤压 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.9.md) |
 | [v0.4.8](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.8) | 2026-09-20 | 巡检落盘改为只叠加本轮判定，巡检期间点下的手动禁用不再被覆盖 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.8.md) |
 | [v0.4.7](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.7) | 2026-09-20 | 账号卡片把「手动禁用」与「巡检禁用」分开计数，巡检也不再探测手动禁用的模型 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.7.md) |
-| [v0.4.6](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.6) | 2026-09-20 | 账号卡片里注入的两块固定收尾，「积分明细」不再一会儿在上一会儿在下 | — |
-| [v0.4.5](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.5) | 2026-09-19 | 缓存命中率改为采用上游实测用量，版本号合并为一套，设置页「关于」重新排版 | — |
+| [v0.4.6](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.6) | 2026-09-20 | 账号卡片里注入的两块固定收尾，「积分明细」不再一会儿在上一会儿在下 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.6.md) |
+| [v0.4.5](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.5) | 2026-09-19 | 缓存命中率改为采用上游实测用量，版本号合并为一套，设置页「关于」重新排版 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.5.md) |
 | [v0.4.4](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.4) | 2026-09-19 | 巡检探测彻底对齐真实调用，并补上「探测被拒」「凭据失效」两道跳过规则 | — |
 | [v0.4.3](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.3) | 2026-09-19 | 修复巡检误报导致的成批误禁，禁用项区分「手动 / 巡检」来源，设置页补上「关于」 | — |
 | [v0.4.2](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.2) | 2026-09-19 | 模型可用性自动巡检：调不通自动禁用，恢复自动启用 | — |
@@ -53,7 +54,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/workbuddy-switch:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.10    # 锁定版本
+docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.11    # 锁定版本
 ```
 
 ## 部署产物
