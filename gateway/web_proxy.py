@@ -906,6 +906,41 @@ COLLAPSE_SCRIPT = r"""
     injectAccountPool();
   }
 
+  function wbPinAccountBlocks() {
+    // 账号卡片里我们注入的两块（账号池控制条 / 可用模型）必须**固定在卡片末尾**，
+    // 且顺序恒为 [控制条] → [模型区]。有两处竞态会让顺序漂移：
+    //   1) 官方的「近期到期 / 积分明细」是数据到齐后才由 React 追加的。React 判定
+    //      它是末节点时走的是 appendChild，于是它落到我们两块**之后** —— 同一页里
+    //      就出现「积分明细一会儿在上一会儿在下」；
+    //   2) 我们自己的两个 fetch（/api/account-pool 与 /api/account-models）谁先回来
+    //      谁先 append，控制条与模型区也会互换位置。
+    // 每次渲染后按固定顺序把我们两块挪回末尾即可。**已经是目标顺序时不动作**，
+    // 否则 appendChild 会触发新的 DOM 变更，被 MutationObserver 接住后无限循环。
+    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
+    cards.forEach(function (card) {
+      var sec = card.querySelector("section") || card;
+      var pool = null;
+      var box = null;
+      Array.prototype.slice.call(sec.children).forEach(function (child) {
+        if (!child.classList) return;
+        if (child.classList.contains("wb-pool-bar")) pool = child;
+        else if (child.classList.contains("wb-am-box")) box = child;
+      });
+      var tail = [];
+      if (pool) tail.push(pool);
+      if (box) tail.push(box);
+      if (!tail.length) return;          // 官方自己的卡片，不碰
+
+      var kids = Array.prototype.slice.call(sec.children);
+      var n = tail.length;
+      var pinned = n <= kids.length && tail.every(function (el, i) {
+        return kids[kids.length - n + i] === el;
+      });
+      if (pinned) return;
+      tail.forEach(function (el) { sec.appendChild(el); });
+    });
+  }
+
   /* ------------------------------------------------------------------
      设置页：API 接入
      容器只做两件事 —— 账号管理/自动签到，以及对外提供 OpenAI 兼容 API。
@@ -1844,6 +1879,7 @@ COLLAPSE_SCRIPT = r"""
     enforceTitle();
     injectAccountModels();
     injectAccountPool();
+    wbPinAccountBlocks();
     injectApiAccess();
     injectModelHealth();
     injectAbout();

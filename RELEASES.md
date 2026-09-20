@@ -5,7 +5,7 @@
 本页是 **WorkBuddy Switch 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.4.5](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.5)
+**当前稳定版：** [v0.4.6](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.6)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.4.6](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.6) | 2026-09-20 | 账号卡片里注入的两块固定收尾，「积分明细」不再一会儿在上一会儿在下 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.6.md) |
 | [v0.4.5](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.5) | 2026-09-19 | 缓存命中率改为采用上游实测用量，版本号合并为一套，设置页「关于」重新排版 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.5.md) |
 | [v0.4.4](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.4) | 2026-09-19 | 巡检探测彻底对齐真实调用，并补上「探测被拒」「凭据失效」两道跳过规则 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.4.md) |
 | [v0.4.3](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.3) | 2026-09-19 | 修复巡检误报导致的成批误禁，禁用项区分「手动 / 巡检」来源，设置页补上「关于」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.3.md) |
@@ -48,7 +49,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/workbuddy-switch:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.5    # 锁定版本
+docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.6    # 锁定版本
 ```
 
 ## 部署产物

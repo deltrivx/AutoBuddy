@@ -128,6 +128,7 @@ HEALTH = {
 }
 
 ACCOUNT_MODELS = {
+    "catalog": ["m-a", "m-b", "m-c"],
     "accounts": [{"id": "acc-1", "name": "账号甲", "variant": "ai",
                   "models": ["m-a", "m-b"], "disabledModels": ["m-b"],
                   "disabledSources": {"m-b": "manual"}, "disabledTotal": 1,
@@ -157,6 +158,24 @@ process.on("uncaughtException", (e) => {
 
 // ---- 最小 DOM 桩 -------------------------------------------------------
 const registry = {};
+
+function collect(node, out) {
+  (node.children || []).forEach((c) => { out.push(c); collect(c, out); });
+  return out;
+}
+
+// 只给「账号卡片」绑真实的后代查询：默认的 querySelector 一律返回 null，
+// 换成全局实现会改变其他面板代码路径的行为，所以这里保持外科式改动。
+function bindQuery(el) {
+  el.querySelector = (sel) => {
+    const ds = collect(el, []);
+    if (String(sel).charAt(0) === ".") {
+      const cls = String(sel).slice(1);
+      return ds.find((d) => (d.className || "").split(/\s+/).indexOf(cls) >= 0) || null;
+    }
+    return ds.find((d) => d.tagName === String(sel).toUpperCase()) || null;
+  };
+}
 
 function makeEl(tag) {
   const el = {
@@ -194,6 +213,14 @@ function makeEl(tag) {
   el.appendChild = (c) => {
     if (!c) return c;
     if (c.__fragment) { (c.children || []).slice().forEach((k) => el.appendChild(k)); return c; }
+    // 真实 DOM 的 appendChild 对「已在同一父节点下的节点」是**移动**而不是复制（去掉旧的再放到末尾）。
+    // 桩里如果只 push，重复 append 会凭空多出一份节点，顺序断言就失真了。
+    if (c.parentElement && c.parentElement !== el) {
+      const old = c.parentElement;
+      old.children = (old.children || []).filter((x) => x !== c);
+      old.childNodes = old.children;
+    }
+    el.children = el.children.filter((x) => x !== c);
     el.children.push(c);
     c.parentElement = el;
     el.childNodes = el.children;
@@ -238,16 +265,51 @@ const h1 = makeEl("h1");
 h1.textContent = "设置";
 h1.closest = (sel) => (sel === "header" ? header : null);
 
+const bodyEl = makeEl("body");
+
+// ---- 账号卡片桩：article > [h3, section] ------------------------------
+// 卡片里官方自己的内容（摘要 / 积分明细）与我们注入的两块（账号池控制条 /
+// 可用模型）是同级的，顺序断言就落在这上面。
+//   第一张：带 h3（账号甲），官方与我们两块都在；
+//   第二张：**不带 h3**，所以两个注入函数都会跳过它 —— 用来验证我们不去搬官方内容。
+const ACCOUNT_CARDS = [];
+function makeCard(name) {
+  const art = makeEl("article");
+  const sec = makeEl("section");
+  // 官方自己的两块：积分摘要 + 积分明细
+  const summary = makeEl("div");
+  summary.className = "credit-summary";
+  summary.textContent = "1,234.56 个积分包";
+  const detail = makeEl("div");
+  detail.className = "credit-detail";
+  detail.textContent = "近期到期";
+  sec.appendChild(summary);
+  sec.appendChild(detail);
+  if (name) {
+    const h3 = makeEl("h3");
+    h3.textContent = name;
+    art.appendChild(h3);
+  }
+  art.appendChild(sec);
+  bindQuery(art);
+  bodyEl.appendChild(art);
+  ACCOUNT_CARDS.push({ art, sec, name });
+}
+makeCard("账号甲");
+makeCard(null);
+
 const document = {
   createElement: makeEl,
   createTextNode: (t) => ({ textContent: t, nodeType: 3 }),
   createDocumentFragment: () => { const f = makeEl("div"); f.__fragment = true; return f; },
   getElementById: (id) => registry[id] || null,
   querySelector: () => null,
-  querySelectorAll: (sel) => (sel === "h1" ? [h1] : []),
+  querySelectorAll: (sel) => (sel === "h1"
+    ? [h1]
+    : (sel === "article" ? ACCOUNT_CARDS.map((c) => c.art) : [])),
   addEventListener: () => {},
   removeEventListener: () => {},
-  body: makeEl("body"),
+  body: bodyEl,
   documentElement: makeEl("html"),
   title: "",
   execCommand: () => true,
@@ -331,8 +393,44 @@ setTimeout(() => {
   const text = all.map((e) => e.textContent || "").join(" | ");
   const article = (cls) => all.filter((e) => (e.className || "").split(/\s+/).indexOf(cls) >= 0);
 
+  // ---- 账号卡片顺序（竞态回归）------------------------------------------
+  // 我们的两块是 fetch 回来后追加的，真实页面里 MutationObserver 会因此再跑一轮
+  // run() —— 线上正是这一轮把顺序钉正。这里手动补这一轮。
+  function tailOf(sec) {
+    return (sec.children || []).slice(-2).map((c) => {
+      if (c.classList.contains("wb-pool-bar")) return "POOL";
+      if (c.classList.contains("wb-am-box")) return "BOX";
+      return "OTHER";
+    });
+  }
+  let secondRunError = null;
+  try { WB.run(); } catch (e) { secondRunError = "渲染后二次 run() 抛异常：" + (e && e.message); }
+  const cardTails = ACCOUNT_CARDS.map((c) => tailOf(c.sec));
+
+  // 模拟官方把「积分明细」晚一步追加进来：React 判它是末节点 → appendChild，
+  // 它就会落在我们两块**之后**（这正是线上看到的「明细掉到卡片最底」）。
+  ACCOUNT_CARDS.forEach((c) => {
+    const late = makeEl("div");
+    late.className = "late-credit-detail";
+    late.textContent = "近期到期";
+    c.sec.appendChild(late);
+  });
+  const tailsAfterLateRaw = ACCOUNT_CARDS.map((c) => tailOf(c.sec));
+
+  let thirdRunError = null;
+  try { WB.run(); } catch (e) { thirdRunError = "明细晚到后 run() 抛异常：" + (e && e.message); }
+  const tailsAfterLate = ACCOUNT_CARDS.map((c) => tailOf(c.sec));
+  const lateStaysAbove = ACCOUNT_CARDS.map((c) => {
+    const kids = c.sec.children || [];
+    const iLate = kids.findIndex((k) => (k.className || "").indexOf("late-credit-detail") >= 0);
+    const iPool = kids.findIndex((k) => (k.className || "").indexOf("wb-pool-bar") >= 0);
+    if (iLate < 0) return "no-late";
+    if (iPool < 0) return "no-ours";
+    return iLate < iPool ? "above" : "below";
+  });
+
   const result = {
-    errors: runError ? errors.concat([runError]) : errors,
+    errors: errors.concat([runError, secondRunError, thirdRunError].filter(Boolean)),
     fetchCalls,
     hostFound: !!WB.findHost(),
     nodes: all.length,
@@ -347,6 +445,10 @@ setTimeout(() => {
     hasHealthSection: !!registry["settings-model-health"] || text.indexOf("可用性巡检") >= 0,
     mentionsImage: text.indexOf("容器镜像") >= 0,
     versionBadgeShown: text.indexOf("v9.9.9") >= 0,
+    cardTails,
+    tailsAfterLateRaw,
+    tailsAfterLate,
+    lateStaysAbove,
   };
   process.stdout.write("__RESULT__" + JSON.stringify(result) + "\n");
 }, 60);
@@ -427,6 +529,22 @@ def main() -> int:
     print("\n[5] 其他面板仍在渲染")
     check("API 接入面板还在", result["hasApiSection"])
     check("可用性巡检面板还在", result["hasHealthSection"])
+
+    print("\n[6] 账号卡片：注入块的顺序恒定（竞态回归）")
+    check("卡片尾两块恒为 [控制条, 模型区]",
+          result["cardTails"] == [["POOL", "BOX"], ["OTHER", "OTHER"]],
+          f"got {result['cardTails']}")
+    check("只含官方内容的卡片不被搬动", result["cardTails"][1] == ["OTHER", "OTHER"],
+          f"got {result['cardTails'][1]}")
+    check("官方晚一步追加明细时，原生顺序确实会漂（这是竞态的成因）",
+          result["tailsAfterLateRaw"][0][-1] == "OTHER",
+          f"got {result['tailsAfterLateRaw']}")
+    check("下一轮渲染把注入块挪回末尾",
+          result["tailsAfterLate"] == [["POOL", "BOX"], ["OTHER", "OTHER"]],
+          f"got {result['tailsAfterLate']}")
+    check("晚到的官方明细块留在我们两块之前（不再掉到卡片最底）",
+          result["lateStaysAbove"] == ["above", "no-ours"],
+          f"got {result['lateStaysAbove']}")
 
     print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
     return 1 if _fail else 0
