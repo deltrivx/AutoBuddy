@@ -496,6 +496,51 @@ check("跳过数不计入任何探测计数",
       f"got {skip_round['counts']} combos={skip_round['combos']}")
 
 # ---------------------------------------------------------------------------
+# 16c. 巡检查到一半时用户点下的手动禁用不能被覆盖
+#
+# 一轮巡检要跑几分钟（几百次探测）。早期实现是「开场读入策略 → 结尾整份写回」，
+# 于是这几分钟里用户在卡片上点下的手动禁用会被那份旧快照**静默抹掉** ——
+# 实测中真的丢过一次（巡检 10:57 开始，10:58 点下的禁用到巡检结束时不见了）。
+# 现在落盘前重新读盘，只把本轮的判定叠加到最新策略上。
+# ---------------------------------------------------------------------------
+print("\n[16c] 巡检期间的并发手动禁用不被覆盖")
+model_policy.save_policy({"a1": {"hy3": "auto"}})
+
+
+class _ConcurrentToggleClient(FakeClient):
+    """第一次探测时往策略文件里写一条手动禁用，模拟用户在巡检期间点卡片。"""
+
+    def __init__(self):
+        super().__init__({("t1", "hy3"): 404}, default=200)
+        self.toggled = False
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        if not self.toggled:
+            self.toggled = True
+            pol = model_policy.load_policy()
+            model_policy.set_model_disabled(pol, "a1", "kimi-k3", True)
+            model_policy.save_policy(pol)
+        return super().post(url, json=json, headers=headers, timeout=timeout)
+
+
+concurrent = _ConcurrentToggleClient()
+model_health.run_round(
+    accounts=accounts,
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: concurrent,
+    base_url_for=lambda variant: "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+after_race = model_policy.load_policy()
+check("巡检期间点下的手动禁用活了下来",
+      model_policy.source_of(after_race, "a1", "kimi-k3") == "manual", f"got {after_race}")
+check("巡检期间点下的手动禁用没被降级成 auto",
+      model_policy.source_of(after_race, "a1", "kimi-k3") != "auto", f"got {after_race}")
+check("同一轮里探测到的不可用照常写入",
+      model_policy.source_of(after_race, "a1", "hy3") == "auto", f"got {after_race}")
+
+# ---------------------------------------------------------------------------
 # 17. 整轮误判保护
 #
 # 一个可用的都没有，几乎可以肯定是探测机制失效（凭据 / 请求形态 / 上游整体故障），

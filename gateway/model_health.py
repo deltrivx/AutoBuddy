@@ -581,6 +581,9 @@ def run_round(accounts: List[Dict[str, Any]],
     # 此时不写策略 —— 成批误禁要靠人工逐个放开，代价远高于漏禁一轮。
     no_signal = counts["unavailable"] + counts["probe_defect"]
     aborted = counts["available"] == 0 and no_signal >= GUARD_MIN_UNAVAILABLE
+    # 「实际落盘的变更」——整轮作废时不写策略，两者都保持为空。
+    applied_disabled: List[str] = []
+    applied_enabled: List[str] = []
     if aborted:
         # 逐账号明细里的变更声明要一并清空：策略没有落盘，
         # 留着会让人以为「这些已经被禁了」，而实际什么都没写。
@@ -602,12 +605,33 @@ def run_round(accounts: List[Dict[str, Any]],
             )
     else:
         reason = None
+        # 落盘前**重新读一遍策略**，只把本轮的判定叠加上去，而不是把开场读到的快照整份写回。
+        #
+        # 一轮巡检要跑几分钟（几百次探测），开场读入的文件在这段时间里可能已经被改过 ——
+        # 用户在卡片上点下的手动禁用就是一例。把旧快照整份写回会把这些改动**静默抹掉**，
+        # 而「巡检不得影响手动禁用」正是来源标记存在的意义。
+        #
+        # 叠加用的是 auto_disable / auto_enable，它们本身就带保护：
+        #   - auto_disable 不会把已有的 manual 项改写成 auto；
+        #   - auto_enable 只放得开 auto 项。
+        # 于是「本轮探测到不可用」仍然生效，而人手点下的一律照旧。
+        fresh = model_policy.load_policy()
+        for report in account_reports:
+            acc_id = report["accountId"]
+            for model in report["disabled"]:
+                if model_policy.auto_disable(fresh, acc_id, model):
+                    applied_disabled.append(model)
+            if bool(config.get("autoEnable", True)):
+                for model in report["enabled"]:
+                    if model_policy.auto_enable(fresh, acc_id, model):
+                        applied_enabled.append(model)
+
         # 有实际改动才留底：一轮巡检可能同时改动上百个条目，
         # 判定万一有误，用户需要的是整份回退，而不是逐个点回来。
         # 无改动时不覆盖，好让更早的那份底尽可能久地留着。
-        if any(r["disabled"] or r["enabled"] for r in account_reports):
+        if applied_disabled or applied_enabled:
             model_policy.backup_policy(BACKUP_SUFFIX)
-        model_policy.save_policy(policy)
+        model_policy.save_policy(fresh)
 
     result = {
         "checkedAt": now_ms,
@@ -617,8 +641,10 @@ def run_round(accounts: List[Dict[str, Any]],
         # 否则用户只会看到组合数比模型总数少，却不知道差在哪。
         "skippedManual": skipped_manual,
         "counts": counts,
-        "disabled": sorted({m for r in account_reports for m in r["disabled"]}),
-        "enabled": sorted({m for r in account_reports for m in r["enabled"]}),
+        # 变更列表取**实际落盘的结果**，不是本轮的意图：叠加到最新策略上之后，
+        # 某项可能因为用户刚刚手动禁用它而无需再写，如实反映才不会谎报。
+        "disabled": sorted(set(applied_disabled)),
+        "enabled": sorted(set(applied_enabled)),
         "protected": sorted({m for r in account_reports for m in r["protected"]}),
         # 凭据失效被跳过的账号：界面据此提示「请重新登录」，
         # 而不是让人对着「一轮下来什么都没变」的结果猜原因。

@@ -17,6 +17,23 @@
 
 ---
 
+## [v0.4.8] - 2026-09-20
+
+<!-- summary: 巡检落盘改为只叠加本轮判定，巡检期间点下的手动禁用不再被覆盖 -->
+
+### 修复
+
+- 修复**巡检进行中做的手动禁用会消失**：一轮巡检要真实探测几百个组合、耗时以分钟计，
+  此前是「开场读一次策略、结尾整份写回」。这几分钟里在账号卡片上点掉的模型，
+  会被开场那份快照覆盖回去 —— 界面显示着已禁用，配置里却没有，刷新或重启后更会「自己恢复」。
+
+  | | 修复前 | 修复后 |
+  | :--- | :--- | :--- |
+  | 巡检期间你在卡片上的改动 | 被开场快照覆盖 | 原样保留 |
+  | 本轮的探测判定（不可用自动禁用 / 恢复自动启用） | 生效 | 生效，且只走自动通道 |
+
+---
+
 ## [v0.4.7] - 2026-09-20
 
 <!-- summary: 账号卡片把「手动禁用」与「巡检禁用」分开计数，巡检也不再探测手动禁用的模型 -->
@@ -674,7 +691,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.7...HEAD
+[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.8...HEAD
+[v0.4.8]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.7...v0.4.8
 [v0.4.7]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.6...v0.4.7
 [v0.4.6]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.5...v0.4.6
 [v0.4.5]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.4...v0.4.5
