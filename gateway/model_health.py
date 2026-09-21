@@ -96,9 +96,13 @@ _CODE_SEMANTICS: Dict[int, str] = {
 # 而不是只丢一个「凭据有效」让人对着日志里的 403 发懵。
 SEMANTIC_LABELS: Dict[str, str] = {
     "auth": "登录已过期，需要重新登录",
-    # 风控就说「风控」。这是用户能对上号的词 —— 它直接指向
-    # 「账号被平台限制了」，而不是让人以为工具或网络出了问题。
-    "restricted": "账号被上游风控拦截",
+    # 11140 的定性来自实测，不是推测：换一张全新凭据（同一账号重新扫码）后
+    # 仍然 403/11140，且响应耗时只有 0.4s（请求未进模型），
+    # 说明拦的是**账号本身**，不是这张凭据、也不是请求内容
+    # （发「hi」、发不存在的模型名都一样被拦）。
+    # 因此不能写「风控」—— 那个词会让人以为是内容或频率问题，从而去调整
+    # 调用方式；也不能写「重新登录」，实测证明换凭据无效。
+    "restricted": "账号已被上游拦截",
     "quota": "该账号对这个模型没有权限或额度不足",
     # 探测刻意用一个**不存在的模型名**：上游回「模型不存在」正是它已认下凭据的证据。
     # 旧文案直接写「上游以『模型不存在』应答」，用户看到「不存在」三个字就读成故障，
@@ -738,7 +742,7 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     label = {
         "valid": "账号正常",
         "invalid": "登录已过期",
-        "restricted": "账号被风控",
+        "restricted": "账号被上游拦截",
         "unknown": "没测出结果",
     }[state]
     # 说明文案优先用语义表里的解释（它带上了判定依据），
@@ -750,17 +754,14 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "probe_defect": SEMANTIC_LABELS["probe_defect"],
         "transient": SEMANTIC_LABELS["transient"],
     }.get(verdict, "未得出结论")
-    # 每档一句**可执行**的建议，措辞尽量短 —— 它会被放在提示里给人看，
-    # 长篇解释没人读完。只保留「该做什么」，不再复述结论
-    #（结论已经由 userMessage 说过，重复一遍等于让人读两遍同一件事）。
+    # 每档一句**可执行**的建议。这里的措辞会被拼进提示条，所以一律从简：
+    # 提示条一闪而过，塞进去的解释没人读得完，还会把结论挤没。
+    # 「为什么」「怎么办」这类需要展开的内容放设置页的说明里（见 SETTINGS_NOTES）。
     action = {
         "valid": None,
         # userMessage 已经说了「请重新登录」，这里不再重复一遍。
         "invalid": None,
-        # 风控的关键信息只有一个：重新登录没用。
-        # 过去这一句后面还跟着「请检查账号状态或联系上游，也可先停用该账号避免
-        # 占用轮询」，把一件小事写成了一段话 —— 而其中「先停用」巡检已经自动做了。
-        "restricted": "重新登录没用，需要确认账号状态",
+        "restricted": None,
         "unknown": "稍后重试",
     }.get(state)
     # 面向用户的整句提示。给界面直接显示用，**不暴露任何探测细节**。
@@ -772,9 +773,10 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     user_message = {
         "valid": "账号正常，可以放心使用",
         "invalid": "登录已过期，请重新登录",
-        # 风控要说成风控：用户看到「风控」立刻明白是自己账号的状态问题，
-        # 而不是以为工具坏了。这也是唯一能让人做出正确处置的说法。
-        "restricted": "账号被上游风控拦截，暂时用不了",
+        # 只说「被拦截、用不了」。不写「风控」—— 那个词把人引向内容或频率，
+        # 实测证明两者都不是；也不在这里讲「重新扫码没用」，那是设置页
+        # 该说清的事，提示条只负责让人知道这个账号现在不能用。
+        "restricted": "账号被上游拦截，暂时用不了",
         "unknown": "这次没测出结果，请稍后重试",
     }.get(state, "未得出结论")
     return {
@@ -968,9 +970,9 @@ def run_round(accounts: List[Dict[str, Any]],
             report["changed"] = False
         if counts["restricted"] >= GUARD_MIN_UNAVAILABLE:
             reason = (
-                f"本轮 {counts['restricted']} 个组合被上游内容安全审查拦下"
-                "（request illegal / safety review），凭据本身没有问题，"
-                "已跳过写入。请检查这些账号是否被上游风控标记。"
+                f"本轮 {counts['restricted']} 个组合被上游直接拦下"
+                "（403 / request illegal），凭据本身没有问题，"
+                "已跳过写入。这些账号需要更换，重新扫码登录解不开。"
             )
         elif counts["probe_defect"] >= GUARD_MIN_UNAVAILABLE:
             codes = "、".join(str(c) for c in sorted(defect_codes)) or "未知"
@@ -1137,8 +1139,8 @@ def summarize(round_result: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": round_result.get("enabled", []),
         "protected": round_result.get("protected", []),
         "authFailed": round_result.get("authFailed", []),
-        # 「账号被内容审查 / 风控拦截」与「凭据失效」是两种完全不同的状态，
-        # 界面提示的方向也相反（一个要重新登录，一个登录也没用），
+        # 「账号被上游拦截」与「凭据失效」是两种完全不同的状态，
+        # 处置方向也相反（一个要重新登录，一个重新扫码也没用、只能换账号），
         # 所以必须分别落盘，不能只留 authFailed。
         "restricted": round_result.get("restricted", []),
         "accountHealth": round_result.get("accountHealth", {}),

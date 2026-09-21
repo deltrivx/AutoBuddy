@@ -5,7 +5,7 @@
 本页是 **WorkBuddy Switch 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.4.15](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.15)
+**当前稳定版：** [v0.4.16](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.16)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.4.16](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.16) | 2026-09-21 | 修正账号被拦截的判定与措辞，重扫无效的说明移到设置页 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.16.md) |
 | [v0.4.15](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.15) | 2026-09-21 | 修复设为首选清空账号白名单；新增模型一键恢复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.15.md) |
 | [v0.4.14](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.14) | 2026-09-20 | 异常账号的提示收成一句，详情从提示里移出 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.14.md) |
 | [v0.4.13](https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.4.13) | 2026-09-20 | 提示改说人话，风控账号纳入自动停用，恢复正常才自动放回 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.13.md) |
@@ -58,7 +59,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/workbuddy-switch:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.15    # 锁定版本
+docker pull ghcr.io/deltrivx/workbuddy-switch:0.4.16    # 锁定版本
 ```
 
 ## 部署产物

@@ -175,7 +175,7 @@ ACCOUNT_PROBE = {
 # 两个都要有 —— 只放正常的那种，验不出界面是否真的会区分「受限」与「失效」。
 ACCOUNT_AUDIT = {
     "checkedAt": 1, "accounts": 2,
-    "summary": {"一致：均正常": 1, "账号受限": 1},
+    "summary": {"一致：均正常": 1, "账号已被上游拦截": 1},
     "criteria": {
         "credential": "由不存在的模型名探测裁定。",
         "model": "用真实模型名探测，只依据上游错误码判定。",
@@ -184,20 +184,22 @@ ACCOUNT_AUDIT = {
     "rows": [
         {"id": "acc-1", "name": "账号甲", "variant": "ai", "inPool": True,
          "usable": True, "accountDisabled": False, "accountDisabledSource": None,
-         "credential": {"state": "valid", "label": "凭据有效", "detail": "模型不存在",
+         "credential": {"state": "valid", "label": "账号正常", "detail": "模型不存在",
                         "semantic": "model_missing", "code": 11102},
          "models": [{"model": "hy3", "verdict": "available", "semantic": None,
                      "code": None, "explain": "调用链路正常"}],
          "consistency": "一致：均正常", "advice": "凭据与模型两侧都正常，无需处理。"},
         {"id": "acc-2", "name": "账号乙", "variant": "cn", "inPool": True,
          "usable": True, "accountDisabled": False, "accountDisabledSource": None,
-         "credential": {"state": "restricted", "label": "账号受限",
-                        "detail": "凭据有效，但请求被上游内容安全审查拦下",
+         "credential": {"state": "restricted", "label": "账号已被上游拦截",
+                        "detail": "账号已被上游拦截",
                         "semantic": "restricted", "code": 11140},
          "models": [{"model": "hy3", "verdict": "restricted", "semantic": "restricted",
-                     "code": 11140, "explain": "凭据有效，但请求被上游内容安全审查拦下"}],
-         "consistency": "账号受限",
-         "advice": "凭据有效，但请求被上游策略拦截。重新登录没用。"},
+                     "code": 11140, "explain": "账号已被上游拦截"}],
+         "consistency": "账号已被上游拦截",
+         "advice": "登录是好的，但请求被上游直接拦下，所以用不了。"
+                   "重新扫码登录没用（实测：换新凭据后依然被拦，"
+                   "上游认的是账号本身），建议换个账号；巡检会自动停用它。"},
     ],
 }
 
@@ -967,20 +969,31 @@ def main() -> int:
     # 每一行都要能看出是哪个账号、结论是什么、该怎么办。
     check("每个账号各占一行", result.get("auditRows") == 2,
           f"got {result.get('auditRows')}")
-    check("区分开「凭据有效」与「账号受限」两种状态",
-          "凭据有效" in box and "账号受限" in box, box[:200])
-    # 受限账号的建议里不能出现「重新登录」—— 那是错误的排查方向。
-    check("受限账号的说明不提重新登录",
-          "重新登录没用" in box or "无需重新登录" in box, box[:300])
+    check("区分开「账号正常」与「账号被上游拦截」两种状态",
+          "账号正常" in box and "账号已被上游拦截" in box, box[:200])
+    # 被拦截的账号必须明说「重新扫码没用」—— 这是实测得出的结论，
+    # 也是这一档唯一需要用户改变行为的信息。不写的话，用户会照旧去
+    # 重新登录一次，白折腾（这正是线上发生过的事）。
+    # 注意：允许出现「重新扫码登录没用」这个句子，但**不能**出现
+    # 「需要重新登录」这类会把人引向重登的表述。
+    check("受限账号的说明明确指出重新扫码无效",
+          "重新扫码登录没用" in box or "重新扫码没用" in box, box[:300])
+    check("受限账号的说明不把人引向重新登录",
+          "需要重新登录" not in box and "请重新登录" not in box, box[:300])
     # 判据要印出来，「统一标准」才是可查的而不是一句口头承诺。
     check("结果里印出判定依据（凭据侧）",
           "凭据有效性只由账号级探测裁定" in box or "不存在的模型名" in box, box[:300])
-    # 每个账号的判定依据也要显示：「凭据有效」与「账号受限」的差别全在
-    # 那一句 detail 里，只给标签的话用户还是分不清该重登还是该找上游。
+    # 每个账号的判定依据也要显示：「账号正常」与「账号被上游拦截」的差别全在
+    # 那一句 detail 里，只给标签的话用户还是分不清该重登还是该换账号。
     check("每行印出该账号自己的判定依据",
-          "模型不存在" in box and "内容安全审查" in box, box[:400])
-    # 状态着色必须区分三档：正常 / 受限（琥珀）/ 失效（红）。
-    # 只用一个颜色的话，「账号受限」会被读成「凭据坏了」。
+          "模型不存在" in box and "被上游拦截" in box, box[:400])
+    # 自检面板里不能再用「风控」—— 实测证明 11140 与内容、频率无关，
+    # 是账号本身被拦。说成风控会把用户引向错误的排查方向
+    #（去调调用频率、去查内容），而正解是换账号。
+    check("自检面板不再使用「风控」这个说法",
+          "风控" not in box, box[:400])
+    # 状态着色必须区分三档：正常 / 被拦截（琥珀）/ 失效（红）。
+    # 只用一个颜色的话，「账号被拦截」会被读成「凭据坏了」。
     check("状态着色区分 valid / restricted",
           "wb-audit-ok" in (result.get("auditBoxClasses") or "")
           and "wb-audit-warn" in (result.get("auditBoxClasses") or ""),

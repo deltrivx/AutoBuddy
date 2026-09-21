@@ -1067,8 +1067,8 @@ check("5xx 不下结论",
 check("网络异常不下结论",
       model_health.classify_account_probe(None, "ConnectTimeout") == "transient")
 
-# 场景五：行动建议。restricted 与 invalid 都是 403，长得像但处理方式完全相反：
-# 一个要重登，一个重登多少次都没用。这里把两者的区别钉死。
+# 场景五：行动建议。restricted 与 invalid 都是 403 开头，长得像但处置方式完全相反：
+# 一个重新登录就能好，另一个重新扫码也解不开、只能换账号。
 check("凭据失效的提示已含「请重新登录」",
       "重新登录" in (model_health.credential_state(
           {"verdict": "auth_failed"}) or {}).get("userMessage", ""),
@@ -1077,10 +1077,19 @@ check("凭据失效不再另给一句重复的建议",
       not (model_health.credential_state(
           {"verdict": "auth_failed"}) or {}).get("action"),
       str(model_health.credential_state({"verdict": "auth_failed"})))
-_r_action = (model_health.credential_state(
-    {"verdict": "restricted", "semantic": "restricted"}) or {}).get("action", "")
-check("账号受限明确说明重新登录没用",
-      "重新登录没用" in _r_action, _r_action)
+_r_state = model_health.credential_state(
+    {"verdict": "restricted", "semantic": "restricted"}) or {}
+# 受限档的提示条只留结论一句。「重新扫码没用」这类要展开讲的结论不进提示条
+# —— 它一闪而过，塞进去的解释没人读得完；那件事由设置页的说明区块负责。
+check("账号被拦截的提示只有结论一句（不放建议，避免提示条变长）",
+      _r_state.get("action") in (None, ""), str(_r_state.get("action")))
+check("账号被拦截的结论措辞不含「风控」（实测证明与内容 / 频率无关）",
+      "风控" not in (_r_state.get("userMessage") or ""),
+      str(_r_state.get("userMessage")))
+check("账号被拦截的结论说明账号状态而非凭据状态",
+      "账号" in (_r_state.get("userMessage") or "")
+      and "被上游拦截" in (_r_state.get("userMessage") or ""),
+      str(_r_state.get("userMessage")))
 check("凭据有效不给多余建议",
       not model_health.credential_state(
           {"verdict": "available", "semantic": "model_missing"}).get("action"))
@@ -1308,7 +1317,9 @@ check("实测·人工停用的账号不被巡检自动放回",
 for _verdict, _sem, _want in (
         ("available", "model_missing", "账号正常"),
         ("auth_failed", "auth", "重新登录"),
-        ("restricted", "restricted", "风控"),
+        # 期望词是「被上游拦截」而不是「风控」：实测已证明 11140 与内容、
+        # 频率都无关，是账号本身被拦，说成「风控」会把用户引向错误的排查方向。
+        ("restricted", "restricted", "被上游拦截"),
         ("transient", "transient", "重试"),
 ):
     _st = model_health.credential_state({"verdict": _verdict, "semantic": _sem})
@@ -1335,9 +1346,11 @@ check("实测·正常账号不附带建议（无事需处理）",
           {"verdict": "available", "semantic": "model_missing"}).get("action") is None,
       model_health.credential_state(
           {"verdict": "available", "semantic": "model_missing"}).get("action"))
-check("实测·风控提示明说重登无效",
-      "重新登录没用" in (model_health.credential_state(
-          {"verdict": "restricted", "semantic": "restricted"}).get("action") or ""),
+# 「重新扫码没用」这条结论放设置页，不进提示条 —— 提示条一闪而过，
+# 展开的说明塞进去只会把结论挤没。这里只需要确认提示条本身足够短。
+check("实测·账号被拦截的提示条不给建议（说明归设置页）",
+      model_health.credential_state(
+          {"verdict": "restricted", "semantic": "restricted"}).get("action") is None,
       model_health.credential_state(
           {"verdict": "restricted", "semantic": "restricted"}).get("action"))
 

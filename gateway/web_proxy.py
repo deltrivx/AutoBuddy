@@ -1151,7 +1151,7 @@ COLLAPSE_SCRIPT = r"""
           toggle.className = "wb-pool-btn" + (autoOff ? " wb-pool-btn-auto" : "");
           toggle.textContent = autoOff ? "已停用（巡检）· 点击启用" : "已停用 · 点击启用";
           toggle.title = autoOff
-            ? "可用性巡检发现这个账号登录已过期或被上游风控，自动停用了它。\n恢复后巡检会自己放回来，也可以点这里立即启用。"
+            ? "可用性巡检发现这个账号登录已过期或被上游拦截，自动停用了它。\n恢复后巡检会自己放回来，也可以点这里立即启用。"
             : "你手动停用了这个账号。点击恢复参与调用。";
         } else if (!inPool) {
           toggle.className = "wb-pool-btn";
@@ -1241,13 +1241,13 @@ COLLAPSE_SCRIPT = r"""
               // 全文案来自后端下发的 userMessage（一句人话），**不再拼
               // evidence / action**。它们说的是同一件事的另外两个说法：
               //
-              //   userMessage  账号被上游风控拦截，暂时用不了
-              //   evidence     账号被上游风控拦截              ← 同义重复
-              //   action       该账号被上游风控拦下，重新登录没用；请检查账号
-              //                状态或联系上游，也可先停用该账号避免占用轮询
+              //   userMessage  账号被上游拦截，暂时用不了
+              //   evidence     账号已被上游拦截              ← 同义重复
+              //   action       已并入上面的结论，不再单独拼
               //
               // 三句拼起来是一段要读三遍的话，而用户只需要知道
               //「能不能用、要不要动手」。完整成因仍在接口里，排查时看得到。
+              // 「重新扫码也没用」这类需要展开的说明放设置页，不进提示条。
               // 正常档连建议都没有：多一句话反而让人以为还有别的事要处理。
               var name = res.accountName || "账号";
               var msg = name + "：" + (res.userMessage || res.message || res.verdict);
@@ -1988,7 +1988,7 @@ COLLAPSE_SCRIPT = r"""
       // 账号被上游拦截：与「不可用」分开显示。它既不是模型坏，也不是凭据失效，
       // 混进「不可用」会让用户点开一堆账号去找原因。
       if (c.restricted) {
-        runDesc.textContent += " / 账号被风控 " + c.restricted;
+        runDesc.textContent += " / 账号被拦截 " + c.restricted;
       }
       // 手动禁用的模型这一轮整个没探测。不说出来的话，用户只会看到组合数
       // 比「账号 × 模型」总数少，却不知道差在哪。
@@ -2032,7 +2032,7 @@ COLLAPSE_SCRIPT = r"""
             + " / 不可用 " + (cc.unavailable || 0)
             + " / 跳过 " + (cc.transient || 0);
           if (cc.probe_defect) msg += " / 探测被拒 " + cc.probe_defect;
-          if (cc.restricted) msg += " / 账号被风控 " + cc.restricted;
+          if (cc.restricted) msg += " / 账号被拦截 " + cc.restricted;
           if ((out.disabled || []).length) msg += " · 新禁用 " + out.disabled.length + " 项";
           if ((out.enabled || []).length) msg += " · 新启用 " + out.enabled.length + " 项";
           if ((out.protected || []).length) msg += " · 手动禁用已跳过 " + out.protected.length + " 项";
@@ -2099,19 +2099,25 @@ COLLAPSE_SCRIPT = r"""
       card.appendChild(afRow);
     }
 
-    // ---- 6c. 被上游策略拦截的账号名单（有才显示）----
-    // 这一段必须与上面的「凭据失效」分开：两者的处理方式**相反**。
-    // 凭据失效需要重新登录；账号被内容审查 / 风控拦截时重新登录毫无用处，
-    // 把这两种状态混在一起提示，只会让人白折腾一遍登录。
+    // ---- 6c. 被上游拦截的账号名单 + 「重新扫码没用」的说明（有才显示）----
+    //
+    // 这一块存在的唯一理由是**把「重扫没用」讲清楚**。
+    // 提示条只来得及说「账号被上游拦截，暂时用不了」，用户看到 403 的第一反应
+    // 通常是「重新登录一下试试」—— 而实测证明那是在白费功夫：
+    // 同一个账号换一张全新凭据后仍然被拦（403/11140，响应 0.4s，请求根本没进模型），
+    // 说明拦的是账号本身，不是这张凭据、也不是发的内容或调用频率。
+    // 这个结论需要完整几句话才讲得清，所以它归设置页，不进提示条。
     if (last && (last.restricted || []).length) {
       var rsRow = wbEl("div", "wb-api-row wb-api-row-stack");
       var rsMain = wbEl("div", "wb-api-main");
-      rsMain.appendChild(wbEl("div", "wb-api-label", "被上游风控的账号"));
+      rsMain.appendChild(wbEl("div", "wb-api-label", "被上游拦截的账号"));
       rsMain.appendChild(wbEl("div", "wb-api-desc",
         (last.restricted || []).map(function (a) { return a.name || a.id; }).join("、")
-        + " —— 登录是好的，但它发出的请求被上游风控拦下，所以暂时用不了。"
-        + "重新登录解决不了，需要确认账号状态。\n"
-        + "巡检已把它们停用，避免继续占用轮询；账号恢复正常后会自动放回来。"));
+        + " —— 这些账号登录是好的，但发出的请求被上游直接拦下（403），"
+        + "所以暂时用不了。"));
+      rsMain.appendChild(wbEl("div", "wb-api-desc",
+        "重新扫码登录解决不了：同一个账号换上新凭据后依然被拦，"
+        + "上游认的是账号本身。建议直接删除这些账号，换新的账号使用。"));
       rsRow.appendChild(rsMain);
       card.appendChild(rsRow);
     }
