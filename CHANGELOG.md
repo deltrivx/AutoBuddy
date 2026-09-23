@@ -15,6 +15,20 @@
 
 - 暂无。
 
+## [v0.5.1] - 2026-09-23
+
+### 认证与数据库
+- 内置 SQLite 数据库（`/data/.autobuddy/autobuddy.db`），持久化存储用户认证与系统配置。
+- WebUI 增加管理员登录认证（默认用户 `admin`，初始密码 `admin123`），支持密码修改与会话管理。
+- 环境变量精简：自动化注册相关配置（邮箱 API、Cloudflare 凭据、代理节点等）直接在 WebUI 保存至 SQLite 数据库，避免在 Docker / Unraid 模板中繁琐堆砌。
+
+### 代理环境与精确分流
+- 容器启动脚本（`entrypoint.sh`）注入完整代理支持（`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`）。
+- 严格遵循内网防回环与 Python SDK/httpx 分流约束，`NO_PROXY` 默认预置精确 IP 列表（`localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1...`），禁止 CIDR 网段，确保内网互通与出网代理互不干扰。
+
+### 品牌细节
+- 修复侧边栏左上角旧版残留文字：通过响应层字节过滤与前端 DOM 实时对齐，彻底更新为 **AutoBuddy**。
+
 ## [v0.5.0] - 2026-09-23
 
 ### 更名
@@ -962,7 +976,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.1...HEAD
+[v0.5.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.0...v0.5.1
 [v0.5.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.4.17...v0.5.0
 [v0.4.17]: https://github.com/deltrivx/AutoBuddy/compare/v0.4.16...v0.4.17
 [v0.4.16]: https://github.com/deltrivx/AutoBuddy/compare/v0.4.15...v0.4.16

@@ -1,3 +1,4 @@
+import gateway.db as db
 import json
 import os
 from pathlib import Path
@@ -600,6 +601,149 @@ COLLAPSE_SCRIPT = r"""
 </style>
 <script>
 (function() {
+
+  /* ------------------- 侧边栏左上角品牌文字实时校准 ------------------- */
+  function sanitizeSidebarBrand() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var truncates = aside.querySelectorAll("div.truncate");
+    truncates.forEach(function(el) {
+      if (el.textContent && (el.textContent.indexOf("WorkBuddy") !== -1 || el.textContent.indexOf("Switch") !== -1)) {
+        el.textContent = "AutoBuddy";
+      }
+    });
+  }
+
+  /* ------------------- WebUI 用户安全认证与登录模态框 ------------------- */
+  var __wbAuthChecked = false;
+  var __wbCurrentUser = null;
+
+  function wbCheckAuth() {
+    fetch("/api/auth/status")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.enabled) {
+          __wbAuthChecked = true;
+          return;
+        }
+        if (!data.authenticated) {
+          wbShowLoginModal();
+        } else {
+          __wbAuthChecked = true;
+          __wbCurrentUser = data.username;
+          wbRenderUserBadge(data.username);
+        }
+      })
+      .catch(function() {
+        __wbAuthChecked = true;
+      });
+  }
+
+  function wbShowLoginModal() {
+    if (document.getElementById("wb-login-overlay")) return;
+    var overlay = document.createElement("div");
+    overlay.id = "wb-login-overlay";
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.78);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;";
+    
+    var card = document.createElement("div");
+    card.style.cssText = "background:var(--card,#ffffff);color:var(--foreground,#0f172a);border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,0.25);width:100%;max-width:380px;padding:28px 24px;border:1px solid var(--border,rgba(120,120,120,0.2));font-family:inherit;";
+    
+    card.innerHTML = 
+      '<div style="text-align:center;margin-bottom:20px;">' +
+        '<img src="/icon.png" style="width:56px;height:56px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,0.12);margin:0 auto 12px;display:block;" />' +
+        '<div style="font-size:18px;font-weight:700;letter-spacing:-0.02em;">AutoBuddy 控制台</div>' +
+        '<div style="font-size:12px;color:var(--muted-foreground,#64748b);margin-top:4px;">访问受限 · 请输入管理员密码</div>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:12px;">' +
+        '<div>' +
+          '<label style="font-size:12px;font-weight:500;display:block;margin-bottom:4px;">账号</label>' +
+          '<input id="wb-login-user" type="text" placeholder="默认 admin" value="admin" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border,rgba(120,120,120,0.3));background:var(--background,#ffffff);color:inherit;font-size:13px;box-sizing:border-box;" />' +
+        '</div>' +
+        '<div>' +
+          '<label style="font-size:12px;font-weight:500;display:block;margin-bottom:4px;">密码</label>' +
+          '<input id="wb-login-pass" type="password" placeholder="默认 [密钥]" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border,rgba(120,120,120,0.3));background:var(--background,#ffffff);color:inherit;font-size:13px;box-sizing:border-box;" />' +
+        '</div>' +
+        '<div id="wb-login-err" style="color:#ef4444;font-size:12px;display:none;margin-top:2px;"></div>' +
+        '<button id="wb-login-submit" style="margin-top:6px;width:100%;padding:9px;border-radius:8px;background:#3b82f6;color:#ffffff;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background 0.2s;">登 录</button>' +
+      '</div>';
+      
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    var subBtn = document.getElementById("wb-login-submit");
+    var userIn = document.getElementById("wb-login-user");
+    var passIn = document.getElementById("wb-login-pass");
+    var errEl = document.getElementById("wb-login-err");
+
+    function doLogin() {
+      var u = (userIn.value || "").trim();
+      var p = (passIn.value || "").trim();
+      if (!u || !p) {
+        errEl.textContent = "请输入账号和密码";
+        errEl.style.display = "block";
+        return;
+      }
+      subBtn.disabled = true;
+      subBtn.textContent = "登录中…";
+      errEl.style.display = "none";
+
+      fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: p })
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(res) {
+        subBtn.disabled = false;
+        subBtn.textContent = "登 录";
+        if (res.ok) {
+          overlay.remove();
+          __wbAuthChecked = true;
+          __wbCurrentUser = res.username;
+          wbRenderUserBadge(res.username);
+          wbToast("登录成功，欢迎使用 AutoBuddy！", "ok");
+          window.location.reload();
+        } else {
+          errEl.textContent = res.error || "账号或密码错误";
+          errEl.style.display = "block";
+        }
+      })
+      .catch(function() {
+        subBtn.disabled = false;
+        subBtn.textContent = "登 录";
+        errEl.textContent = "登录请求失败，请检查网络";
+        errEl.style.display = "block";
+      });
+    }
+
+    subBtn.onclick = doLogin;
+    passIn.onkeydown = function(e) { if (e.key === "Enter") doLogin(); };
+    userIn.onkeydown = function(e) { if (e.key === "Enter") passIn.focus(); };
+    setTimeout(function() { passIn.focus(); }, 100);
+  }
+
+  function wbRenderUserBadge(username) {
+    var aside = document.querySelector("aside");
+    if (!aside || document.getElementById("wb-user-status-bar")) return;
+    var bar = document.createElement("div");
+    bar.id = "wb-user-status-bar";
+    bar.style.cssText = "margin-top:auto;padding-top:12px;border-top:1px solid var(--border,rgba(120,120,120,0.2));display:flex;align-items:center;justify-content:space-between;font-size:11.5px;";
+    bar.innerHTML = 
+      '<div style="display:flex;align-items:center;gap:6px;min-width:0;">' +
+        '<span style="width:7px;height:7px;border-radius:50%;background:#10b981;flex-shrink:0;"></span>' +
+        '<span class="wb-nav-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;">' + username + '</span>' +
+      '</div>' +
+      '<button id="wb-logout-btn" title="退出登录" style="background:transparent;border:none;color:var(--muted-foreground,#94a3b8);cursor:pointer;padding:2px 6px;border-radius:4px;font-size:11px;">退出</button>';
+    aside.appendChild(bar);
+
+    document.getElementById("wb-logout-btn").onclick = function() {
+      fetch("/api/auth/logout", { method: "POST" }).then(function() {
+        window.location.reload();
+      });
+    };
+  }
+
+
   // 账号卡片上的 WorkBuddy / CodeBuddy IDE / CodeBuddy CLI 切换按钮与「当前账号」徽章，
   // 以及「导入本机账号」「权限检测」「启动设置」「自动更新」等桌面专有入口，
   // 都已在 patch/patch_binary.py 里从二进制物理移除（它们只会调用宿主桌面程序）。
@@ -2845,6 +2989,8 @@ COLLAPSE_SCRIPT = r"""
   window.addEventListener("hashchange", wbUpdateAccountConnectView);
 
   function run() {
+    sanitizeSidebarBrand();
+    wbCheckAuth();
     initCollapse();
     sanitizeMacUI();
     enforceTitle();
@@ -2898,6 +3044,9 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
         (b"/icon-transparent.png", b"/icon.png"),
         (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"),
         (b"workbuddy-switch.app", b"workbuddy-switch"),
+        (b'"WorkBuddy Switch"', b'"AutoBuddy"'),
+        (b">WorkBuddy Switch<", b">AutoBuddy<"),
+        (b"WorkBuddy Switch", b"AutoBuddy"),
     ]
     for old, new in replacements:
         content = content.replace(old, new)
@@ -2921,6 +3070,68 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
             content = content.replace(old_b, new_b)
 
     return content
+
+
+# ---------------------------------------------------------------------------
+# 用户认证与配置持久化 API (SQLite 驱动)
+# ---------------------------------------------------------------------------
+from fastapi import Cookie, Depends, Response
+
+class LoginReq(BaseModel):
+    username: str
+    password: str
+
+class PwdChangeReq(BaseModel):
+    old_password: str
+    new_password: str
+
+def get_current_user(autobuddy_session: Optional[str] = Cookie(None)) -> Optional[str]:
+    if not autobuddy_session:
+        return None
+    return db.validate_session(autobuddy_session)
+
+@app.get("/api/auth/status")
+async def auth_status(user: Optional[str] = Depends(get_current_user)):
+    enabled = os.getenv("AUTH_ENABLED", "1") == "1"
+    return {
+        "enabled": enabled,
+        "authenticated": bool(user) if enabled else True,
+        "username": user or ("anonymous" if not enabled else None)
+    }
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginReq, response: Response):
+    if not db.verify_user(req.username, req.password):
+        return {"ok": False, "error": "用户名或密码错误"}
+    token = db.create_session(req.username)
+    # 设置 HttpOnly Cookie，有效期 7 天
+    response.set_cookie(
+        key="autobuddy_session",
+        value=token,
+        max_age=7 * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+        path="/"
+    )
+    return {"ok": True, "username": req.username}
+
+@app.post("/api/auth/logout")
+async def auth_logout(response: Response, autobuddy_session: Optional[str] = Cookie(None)):
+    if autobuddy_session:
+        db.destroy_session(autobuddy_session)
+    response.delete_cookie("autobuddy_session", path="/")
+    return {"ok": True}
+
+@app.post("/api/auth/password")
+async def auth_change_pwd(req: PwdChangeReq, user: Optional[str] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已失效")
+    if not db.verify_user(user, req.old_password):
+        return {"ok": False, "error": "当前密码不正确"}
+    if len(req.new_password) < 6:
+        return {"ok": False, "error": "新密码至少需要 6 个字符"}
+    db.change_password(user, req.new_password)
+    return {"ok": True, "message": "密码修改成功"}
 
 @app.get("/icon.png")
 @app.get("/icon-transparent.png")

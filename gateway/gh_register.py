@@ -1,3 +1,4 @@
+import gateway.db as db
 """GitHub 自动化注册服务（配置驱动与内置浏览器版）。
 
 运行在 AutoBuddy 容器内部（loopback 18092），对外由 web_proxy 统一转发。
@@ -56,8 +57,18 @@ DEFAULT_CONFIG = {
 
 
 def load_config() -> dict:
-    """加载配置：优先读取持久化文件，其次回退到环境变量，默认使用安全占位值。"""
+    """加载配置：优先从内置 SQLite 数据库读取，其次读 json 文件，再回退环境变量。"""
     cfg = dict(DEFAULT_CONFIG)
+    
+    # 1. 从 SQLite 数据库读取持久化配置
+    try:
+        db_cfg = db.get_config("gh_register_config")
+        if isinstance(db_cfg, dict):
+            cfg.update(db_cfg)
+    except Exception as e:
+        print(f"[gh-register] 读数据库配置出错: {e}")
+
+    # 2. 兼容旧 json 配置文件（如存在）
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -65,9 +76,9 @@ def load_config() -> dict:
                 if isinstance(saved, dict):
                     cfg.update(saved)
         except Exception as e:
-            print(f"[gh-register] 读取配置文件出错: {e}")
+            print(f"[gh-register] 读取 json 配置文件出错: {e}")
 
-    # 环境变量作为首次启动的初始默认值（若未在文件配置）
+    # 3. 环境变量作为初始兜底默认值
     if not cfg["mail_api_base"] and os.getenv("CF_MAIL_API_BASE"):
         cfg["mail_api_base"] = os.getenv("CF_MAIL_API_BASE", "")
     if not cfg["mail_domains"] and os.getenv("CF_MAIL_DOMAINS"):
@@ -79,12 +90,24 @@ def load_config() -> dict:
 
 
 def save_config(new_data: dict) -> dict:
-    """保存配置并持久化到数据目录。"""
+    """保存配置并同时持久化到 SQLite 数据库与 json 文件。"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     cfg = load_config()
     cfg.update(new_data)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    
+    # 持久化到 SQLite 数据库
+    try:
+        db.set_config("gh_register_config", cfg, category="gh_register", description="GitHub 自动化注册与临时邮箱配置")
+    except Exception as e:
+        print(f"[gh-register] 写数据库配置出错: {e}")
+
+    # 同时写文件兼容备份
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[gh-register] 写 json 文件出错: {e}")
+        
     return cfg
 
 
