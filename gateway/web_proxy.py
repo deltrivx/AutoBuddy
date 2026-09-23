@@ -2348,6 +2348,426 @@ COLLAPSE_SCRIPT = r"""
     if (parent.lastElementChild !== about) parent.appendChild(about);
   }
 
+
+  /* ------------------------------------------------------------------
+     侧边栏「账号接入」入口与专属管理视图
+     ------------------------------------------------------------------ */
+
+  var wbAcDataLoaded = false;
+  var wbAcDlTimer = null;
+  var wbAcJobTimer = null;
+
+  function wbCreateAccountConnectView() {
+    var v = document.createElement("div");
+    v.id = "wb-account-connect-view";
+    v.style.display = "none";
+    v.innerHTML =
+      '<div style="max-width:960px;margin:0 auto;padding:24px 20px;display:flex;flex-direction:column;gap:20px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border,rgba(120,120,120,.2));padding-bottom:14px">' +
+          '<div>' +
+            '<h1 style="font-size:20px;font-weight:700;margin:0;color:var(--foreground,#0f172a)">账号接入</h1>' +
+            '<p style="font-size:13px;margin:4px 0 0 0;color:var(--muted-foreground,#64748b)">自动化注册并接入 GitHub 账号，提供环境管理、自定义临时邮箱与代理配置。</p>' +
+          '</div>' +
+          '<div id="wb-ac-env-badge" class="wb-api-badge">环境检测中…</div>' +
+        '</div>' +
+
+        '<!-- 卡片 1: 浏览器环境 -->' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">浏览器环境 (Playwright Headless Chromium)</div>' +
+              '<div class="wb-api-desc">容器内置 Playwright 驱动，按需下载 Chromium 至持久化挂载卷，不外接 CDP。</div>' +
+            '</div>' +
+            '<div id="wb-ac-browser-pill" class="wb-api-badge">检测中…</div>' +
+          '</div>' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-desc">挂载存储路径：<span id="wb-ac-browser-path" class="wb-api-mono">/data/.wb-switch/browsers</span></div>' +
+            '</div>' +
+            '<button id="wb-ac-dl-btn" class="wb-api-btn wb-api-btn-primary" style="display:none">一键下载浏览器</button>' +
+          '</div>' +
+          '<div id="wb-ac-dl-box" class="wb-api-row wb-api-row-stack" style="display:none">' +
+            '<div class="wb-api-label">下载控制台输出</div>' +
+            '<div id="wb-ac-dl-log" class="wb-api-code" style="max-height:120px;overflow-y:auto"></div>' +
+          '</div>' +
+        '</div>' +
+
+        '<!-- 卡片 2: 自定义参数配置 -->' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">接入参数配置 (本地安全持久化)</div>' +
+              '<div class="wb-api-desc">配置存储于容器挂载目录（gh_register_config.json），纯本地持久化，严禁暴露至任何外部仓库。</div>' +
+            '</div>' +
+            '<button id="wb-ac-cfg-save" class="wb-api-btn wb-api-btn-on">保存配置</button>' +
+          '</div>' +
+          '<div class="wb-api-row wb-api-row-stack">' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;width:100%">' +
+              '<div>' +
+                '<div class="wb-api-label">临时邮箱 API 基础地址</div>' +
+                '<input id="wb-cfg-mail-base" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 https://email-api.example.com">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">可用邮箱域名 (逗号分隔)</div>' +
+                '<input id="wb-cfg-mail-domains" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 example.com, mail.example.com">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">邮箱 API 认证头名称 (可选)</div>' +
+                '<input id="wb-cfg-auth-name" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 x-admin-auth">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">邮箱 API 认证头值 (可选)</div>' +
+                '<input id="wb-cfg-auth-val" type="password" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="认证密钥或密码">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">创建邮箱路径</div>' +
+                '<input id="wb-cfg-create-path" class="wb-api-input" style="width:100%;margin-top:4px" value="/new">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">提取邮件路径</div>' +
+                '<input id="wb-cfg-fetch-path" class="wb-api-input" style="width:100%;margin-top:4px" value="/mails?address={email}">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">Clash REST API 地址</div>' +
+                '<input id="wb-cfg-clash-base" class="wb-api-input" style="width:100%;margin-top:4px" value="http://127.0.0.1:9090">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">Google 登录密码 (可选)</div>' +
+                '<input id="wb-cfg-google-pw" type="password" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="遇密码框时自动填入">' +
+              '</div>' +
+            '</div>' +
+            '<div style="margin-top:10px;display:flex;align-items:center;gap:6px">' +
+              '<input id="wb-cfg-no-proxy" type="checkbox" style="cursor:pointer">' +
+              '<label for="wb-cfg-no-proxy" style="font-size:12px;color:var(--muted-foreground,#64748b);cursor:pointer">禁用自动切换 Clash 节点（稳定走默认网络出口）</label>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<!-- 卡片 3: 执行任务控制 -->' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">执行注册任务</div>' +
+              '<div class="wb-api-desc">在 GitHub 注册流程中触发设备安全校验时，在此填入验证码启动任务。</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px">' +
+              '<button id="wb-ac-job-abort" class="wb-api-btn wb-api-btn-danger" style="display:none">中止任务</button>' +
+              '<button id="wb-ac-job-start" class="wb-api-btn wb-api-btn-primary">开始注册</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wb-api-row">' +
+            '<div style="width:100%">' +
+              '<div class="wb-api-label">GitHub 设备验证码 (Launch Code)</div>' +
+              '<input id="wb-ac-sec-code" class="wb-api-input" style="width:100%;margin-top:6px" placeholder="输入从验证邮件或页面获取的验证码，例如 41238998">' +
+            '</div>' +
+          '</div>' +
+          '<div id="wb-ac-task-box" class="wb-api-row wb-api-row-stack" style="display:none">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center">' +
+              '<div class="wb-api-label">任务进度状态</div>' +
+              '<div id="wb-ac-task-status" class="wb-api-badge">运行中</div>' +
+            '</div>' +
+            '<div id="wb-ac-task-log" class="wb-api-code" style="max-height:160px;overflow-y:auto;margin-top:6px"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    // 绑定事件
+    var dlBtn = v.querySelector("#wb-ac-dl-btn");
+    dlBtn.addEventListener("click", function() {
+      dlBtn.disabled = true;
+      dlBtn.textContent = "下载中…";
+      var box = v.querySelector("#wb-ac-dl-box");
+      if (box) box.style.display = "flex";
+      fetch("/api/gh-register/browser/install", { method: "POST" })
+        .then(function(r) { return r.json(); })
+        .then(function() {
+          if (wbAcDlTimer) clearInterval(wbAcDlTimer);
+          wbAcDlTimer = setInterval(wbPollDlProgress, 2000);
+          wbPollDlProgress();
+        });
+    });
+
+    var saveBtn = v.querySelector("#wb-ac-cfg-save");
+    saveBtn.addEventListener("click", function() {
+      var domainsStr = (v.querySelector("#wb-cfg-mail-domains").value || "").trim();
+      var domains = domainsStr ? domainsStr.split(",").map(function(s){ return s.trim(); }).filter(Boolean) : [];
+      var payload = {
+        mail_api_base: (v.querySelector("#wb-cfg-mail-base").value || "").trim(),
+        mail_domains: domains,
+        mail_auth_header_name: (v.querySelector("#wb-cfg-auth-name").value || "").trim(),
+        mail_auth_header_value: (v.querySelector("#wb-cfg-auth-val").value || "").trim(),
+        mail_create_path: (v.querySelector("#wb-cfg-create-path").value || "/new").trim(),
+        mail_fetch_path: (v.querySelector("#wb-cfg-fetch-path").value || "/mails?address={email}").trim(),
+        clash_rest_base: (v.querySelector("#wb-cfg-clash-base").value || "http://127.0.0.1:9090").trim(),
+        google_password: (v.querySelector("#wb-cfg-google-pw").value || "").trim(),
+        no_switch_proxy: !!v.querySelector("#wb-cfg-no-proxy").checked
+      };
+      saveBtn.disabled = true;
+      fetch("/api/gh-register/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          saveBtn.disabled = false;
+          if (res.ok) {
+            wbToast("配置已成功保存并持久化！", "ok");
+          } else {
+            wbToast("保存失败：" + (res.error || "未知错误"), "error");
+          }
+        })
+        .catch(function(e) {
+          saveBtn.disabled = false;
+          wbToast("保存请求出错: " + e, "error");
+        });
+    });
+
+    var startBtn = v.querySelector("#wb-ac-job-start");
+    var abortBtn = v.querySelector("#wb-ac-job-abort");
+    startBtn.addEventListener("click", function() {
+      var code = (v.querySelector("#wb-ac-sec-code").value || "").trim();
+      var googlePw = (v.querySelector("#wb-cfg-google-pw").value || "").trim();
+      if (!code) {
+        wbToast("请填写 GitHub 设备验证码 (Launch Code)", "warn");
+        return;
+      }
+      startBtn.disabled = true;
+      var taskBox = v.querySelector("#wb-ac-task-box");
+      if (taskBox) taskBox.style.display = "flex";
+      var taskStatus = v.querySelector("#wb-ac-task-status");
+      if (taskStatus) taskStatus.textContent = "启动中…";
+      var taskLog = v.querySelector("#wb-ac-task-log");
+      if (taskLog) taskLog.textContent = "正在提交注册任务…\n";
+
+      fetch("/api/gh-register/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ security_code: code, google_password: googlePw })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.job_id) {
+            window.__wbAcJobId = data.job_id;
+            abortBtn.style.display = "inline-block";
+            if (wbAcJobTimer) clearInterval(wbAcJobTimer);
+            wbAcJobTimer = setInterval(wbPollJobStatus, 2000);
+            wbPollJobStatus();
+          } else {
+            startBtn.disabled = false;
+            wbToast("任务启动失败: " + (data.error || JSON.stringify(data)), "error");
+          }
+        })
+        .catch(function(e) {
+          startBtn.disabled = false;
+          wbToast("请求失败: " + e, "error");
+        });
+    });
+
+    abortBtn.addEventListener("click", function() {
+      if (!window.__wbAcJobId) return;
+      abortBtn.disabled = true;
+      fetch("/api/gh-register/abort/" + window.__wbAcJobId, { method: "DELETE" })
+        .then(function() {
+          wbToast("已请求中止任务", "warn");
+          abortBtn.disabled = false;
+        });
+    });
+
+    return v;
+  }
+
+  function wbPollDlProgress() {
+    fetch("/api/gh-register/browser/log")
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var box = document.getElementById("wb-ac-dl-box");
+        var log = document.getElementById("wb-ac-dl-log");
+        var pill = document.getElementById("wb-ac-browser-pill");
+        var dlBtn = document.getElementById("wb-ac-dl-btn");
+        if (box) box.style.display = "flex";
+        if (log) log.textContent = (d.tail || []).join("\n") || "下载进行中…";
+        if (d.installed) {
+          if (pill) { pill.textContent = "已就绪"; pill.className = "wb-api-badge wb-api-badge-ok"; }
+          if (dlBtn) dlBtn.style.display = "none";
+          if (wbAcDlTimer) clearInterval(wbAcDlTimer);
+          wbToast("浏览器下载安装完成！", "ok");
+        } else if (d.status === "failed") {
+          if (pill) { pill.textContent = "下载失败"; pill.className = "wb-api-badge wb-api-badge-warn"; }
+          if (dlBtn) { dlBtn.style.display = "inline-block"; dlBtn.disabled = false; dlBtn.textContent = "重新下载"; }
+          if (wbAcDlTimer) clearInterval(wbAcDlTimer);
+          wbToast("浏览器下载失败：" + (d.error || "未知原因"), "error");
+        }
+      })
+      .catch(function() {});
+  }
+
+  function wbPollJobStatus() {
+    if (!window.__wbAcJobId) return;
+    fetch("/api/gh-register/status/" + window.__wbAcJobId)
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        var statusBadge = document.getElementById("wb-ac-task-status");
+        var logEl = document.getElementById("wb-ac-task-log");
+        var startBtn = document.getElementById("wb-ac-job-start");
+        var abortBtn = document.getElementById("wb-ac-job-abort");
+        if (!s || s.status === "not_found") return;
+
+        if (statusBadge) {
+          statusBadge.textContent = s.status + " (" + (s.progress || "0%") + ")";
+          if (s.status === "done") statusBadge.className = "wb-api-badge wb-api-badge-ok";
+          else if (s.status === "failed" || s.status === "aborted") statusBadge.className = "wb-api-badge wb-api-badge-warn";
+          else statusBadge.className = "wb-api-badge";
+        }
+        if (logEl) {
+          var lines = ["当前进度: " + (s.progress || "")].concat(s.steps || []).concat(s.log || []);
+          if (s.result) lines.push("结果: " + JSON.stringify(s.result));
+          logEl.textContent = lines.join("\n");
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        if (s.status === "done" || s.status === "failed" || s.status === "aborted") {
+          if (wbAcJobTimer) clearInterval(wbAcJobTimer);
+          if (startBtn) startBtn.disabled = false;
+          if (abortBtn) abortBtn.style.display = "none";
+          if (s.status === "done") wbToast("GitHub 账号自动化接入成功！", "ok");
+          else wbToast("任务结束：" + (s.result || s.status), "warn");
+        }
+      })
+      .catch(function() {});
+  }
+
+  function wbLoadAcData() {
+    // 拉取浏览器状态
+    fetch("/api/gh-register/browser")
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var pill = document.getElementById("wb-ac-browser-pill");
+        var pathEl = document.getElementById("wb-ac-browser-path");
+        var dlBtn = document.getElementById("wb-ac-dl-btn");
+        var envBadge = document.getElementById("wb-ac-env-badge");
+        if (pathEl && d.path) pathEl.textContent = d.path;
+        if (d.installed) {
+          if (pill) { pill.textContent = "已就绪"; pill.className = "wb-api-badge wb-api-badge-ok"; }
+          if (envBadge) { envBadge.textContent = "服务与环境正常"; envBadge.className = "wb-api-badge wb-api-badge-ok"; }
+          if (dlBtn) dlBtn.style.display = "none";
+        } else {
+          if (pill) { pill.textContent = "未安装"; pill.className = "wb-api-badge wb-api-badge-warn"; }
+          if (envBadge) { envBadge.textContent = "需要下载浏览器"; envBadge.className = "wb-api-badge wb-api-badge-warn"; }
+          if (dlBtn) { dlBtn.style.display = "inline-block"; dlBtn.textContent = "一键下载浏览器"; dlBtn.disabled = false; }
+        }
+      })
+      .catch(function() {});
+
+    // 拉取配置
+    if (!wbAcDataLoaded) {
+      fetch("/api/gh-register/config")
+        .then(function(r) { return r.json(); })
+        .then(function(cfg) {
+          wbAcDataLoaded = true;
+          var setVal = function(id, v) { var el = document.getElementById(id); if (el) el.value = v || ""; };
+          setVal("wb-cfg-mail-base", cfg.mail_api_base);
+          setVal("wb-cfg-mail-domains", (cfg.mail_domains || []).join(", "));
+          setVal("wb-cfg-auth-name", cfg.mail_auth_header_name);
+          setVal("wb-cfg-auth-val", cfg.mail_auth_header_value);
+          setVal("wb-cfg-create-path", cfg.mail_create_path || "/new");
+          setVal("wb-cfg-fetch-path", cfg.mail_fetch_path || "/mails?address={email}");
+          setVal("wb-cfg-clash-base", cfg.clash_rest_base || "http://127.0.0.1:9090");
+          setVal("wb-cfg-google-pw", cfg.google_password || "");
+          var noProxy = document.getElementById("wb-cfg-no-proxy");
+          if (noProxy) noProxy.checked = !!cfg.no_switch_proxy;
+        })
+        .catch(function() {});
+    }
+  }
+
+  function injectAccountConnect() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var nav = aside.querySelector("nav");
+    if (!nav) return;
+
+    var navLink = document.getElementById("wb-nav-account-connect");
+    if (!navLink) {
+      navLink = document.createElement("a");
+      navLink.id = "wb-nav-account-connect";
+      navLink.href = "#/account-connect";
+      navLink.className = "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground cursor-pointer";
+      navLink.innerHTML = '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line></svg><span class="wb-nav-label">账号接入</span>';
+
+      var settingsA = nav.querySelector('a[href="/settings"]') || nav.lastElementChild;
+      if (settingsA) {
+        nav.insertBefore(navLink, settingsA);
+      } else {
+        nav.appendChild(navLink);
+      }
+
+      navLink.addEventListener("click", function(e) {
+        e.preventDefault();
+        window.location.hash = "#/account-connect";
+        wbUpdateAccountConnectView();
+      });
+
+      nav.querySelectorAll("a:not(#wb-nav-account-connect)").forEach(function(a) {
+        a.addEventListener("click", function() {
+          if (window.location.hash === "#/account-connect") {
+            window.location.hash = "";
+            setTimeout(wbUpdateAccountConnectView, 20);
+          }
+        });
+      });
+    }
+
+    wbUpdateAccountConnectView();
+  }
+
+  function wbUpdateAccountConnectView() {
+    var isAc = window.location.hash === "#/account-connect";
+    var navLink = document.getElementById("wb-nav-account-connect");
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+
+    if (navLink) {
+      if (isAc) {
+        navLink.classList.add("bg-foreground/[0.06]", "font-medium", "text-foreground");
+        navLink.classList.remove("text-muted-foreground");
+        var otherLinks = aside.querySelectorAll("nav a:not(#wb-nav-account-connect)");
+        otherLinks.forEach(function(link) {
+          link.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
+          link.classList.add("text-muted-foreground");
+        });
+      } else {
+        navLink.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
+        navLink.classList.add("text-muted-foreground");
+      }
+    }
+
+    var main = document.querySelector("main");
+    if (!main) return;
+
+    var acView = document.getElementById("wb-account-connect-view");
+    if (isAc) {
+      if (!acView) {
+        acView = wbCreateAccountConnectView();
+        main.appendChild(acView);
+      }
+      acView.style.display = "block";
+      Array.prototype.slice.call(main.children).forEach(function(child) {
+        if (child !== acView) child.style.display = "none";
+      });
+      wbLoadAcData();
+    } else {
+      if (acView) acView.style.display = "none";
+      Array.prototype.slice.call(main.children).forEach(function(child) {
+        if (child !== acView && child.style.display === "none") {
+          child.style.display = "";
+        }
+      });
+    }
+  }
+
+  window.addEventListener("hashchange", wbUpdateAccountConnectView);
+
   function run() {
     initCollapse();
     sanitizeMacUI();
@@ -2359,6 +2779,7 @@ COLLAPSE_SCRIPT = r"""
     injectModelHealth();
     injectAbout();
     wbPinAboutLast();
+    injectAccountConnect();
   }
 
   const observer = new MutationObserver(() => run());
@@ -2892,6 +3313,74 @@ async def account_models_api():
     result["discovered"] = sorted(all_used)
     result["disabledTotal"] = sum(len(v) for v in disabled_by_account.values())
     return result
+
+# ---------------------------------------------------------------------------
+# GitHub 账号接入服务转发（由容器内网 loopback 18092 提供，不对外暴露独立端口）。
+# ---------------------------------------------------------------------------
+GH_REGISTER_INTERNAL = os.getenv("GH_REGISTER_INTERNAL", "http://127.0.0.1:18092")
+
+
+def _gh_register_client(timeout: float = 30.0) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout, trust_env=False)
+
+
+@app.get("/api/gh-register/config")
+async def gh_register_config_get():
+    async with _gh_register_client() as client:
+        r = await client.get(f"{GH_REGISTER_INTERNAL}/api/gh-register/config")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/gh-register/config")
+async def gh_register_config_post(request: Request):
+    body = await request.body()
+    async with _gh_register_client() as client:
+        r = await client.post(f"{GH_REGISTER_INTERNAL}/api/gh-register/config", content=body, headers={"Content-Type": "application/json"})
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/gh-register/browser")
+async def gh_register_browser_status():
+    async with _gh_register_client() as client:
+        r = await client.get(f"{GH_REGISTER_INTERNAL}/api/gh-register/browser")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/gh-register/browser/install")
+async def gh_register_browser_install():
+    async with _gh_register_client() as client:
+        r = await client.post(f"{GH_REGISTER_INTERNAL}/api/gh-register/browser/install")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/gh-register/browser/log")
+async def gh_register_browser_log():
+    async with _gh_register_client() as client:
+        r = await client.get(f"{GH_REGISTER_INTERNAL}/api/gh-register/browser/log")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/gh-register/jobs")
+async def gh_register_start(request: Request):
+    body = await request.body()
+    async with _gh_register_client() as client:
+        r = await client.post(f"{GH_REGISTER_INTERNAL}/api/gh-register/jobs", content=body, headers={"Content-Type": "application/json"})
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/gh-register/status/{job_id}")
+async def gh_register_status(job_id: str):
+    async with _gh_register_client() as client:
+        r = await client.get(f"{GH_REGISTER_INTERNAL}/api/gh-register/status/{job_id}")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.delete("/api/gh-register/abort/{job_id}")
+async def gh_register_abort(job_id: str):
+    async with _gh_register_client() as client:
+        r = await client.delete(f"{GH_REGISTER_INTERNAL}/api/gh-register/abort/{job_id}")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_all(request: Request, path: str):

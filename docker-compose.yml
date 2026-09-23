@@ -8,9 +8,23 @@ services:
       - "18091:18091"
     volumes:
       - ./workbuddy-switch/data:/data
+      # 浏览器缓存目录（快照式，可共用）。首次使用需在 UI 点「下载浏览器」，
+      # 下完持久化在这里，容器重建/升级不必重下。
+      - ./workbuddy-switch/browsers:/data/.wb-switch/browsers
     environment:
       # 影响签到定时任务与统计流水的日期归属
       TZ: Asia/Shanghai
       # 容器内端口，一般无需修改；修改时两个端口映射需同步调整
       PORT: "18090"
       API_PORT: "18091"
+      # GitHub 自动化注册接入（浏览器运行时下载到挂载卷，不外接 CDP）。
+      # 注册服务跑在容器内网 18092，由 web_proxy 转发，不对外映射端口。
+      GH_REGISTER_ENABLED: "1"
+      GH_REGISTER_PORT: "18092"
+      # 浏览器安装目录（与上面的挂载点保持一致）。
+      PLAYWRIGHT_BROWSERS_PATH: "/data/.wb-switch/browsers"
+      # 邮箱 API 与代理配置可直接在 WebUI「账号接入」页面填写并持久化，
+      # 也可通过以下环境变量指定初始值（可选）：
+      # CF_MAIL_API_BASE: "https://email-api.example.com"
+      # CF_MAIL_DOMAINS: "example.com"
+      # CLASH_REST_BASE: "http://127.0.0.1:9090"

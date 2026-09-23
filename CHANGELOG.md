@@ -17,6 +17,35 @@
 
 ---
 
+## [v0.4.17] - 2026-09-23
+
+<!-- summary: 新增 GitHub 账号自动化接入，浏览器改为运行时下载到挂载卷 -->
+
+### 新增
+
+- **GitHub 账号自动化接入（容器内一站式）**：WebUI 新增「账号接入」面板，
+  在容器内直接跑完 Google OAuth 登录 → 注册 GitHub → 绑定域名邮箱 →
+  收验证邮件 → 设主邮箱 → 删旧邮箱的完整流程。浏览器由容器内置驱动直接
+  launch（headless），**不外接任何 CDP**，不依赖宿主机桌面环境或 9222 端口。
+  邮箱验证走 Cloudflare D1 收件箱；节点轮换走 OpenClash REST，不再依赖
+  Windows 命名管道，可在纯 Linux 容器内运行。
+
+- **浏览器改为运行时下载**：镜像不再打包 Chromium，只装 Playwright 驱动与
+  headless 运行时系统库；WebUI「账号接入」面板提供「下载浏览器」按钮，
+  下载到挂载卷并持久化。镜像因此明显瘦身，构建更快、推拉更轻，
+  且容器重建或升级都不必重下浏览器。
+
+### 变更
+
+- **新增浏览器缓存挂载路径**：容器新增 `/data/.wb-switch/browsers` 挂载点，
+  Unraid 模板对应新增「浏览器缓存目录」配置项
+  （默认 `/mnt/user/appdata/workbuddy-switch/browsers`）。
+- 注册服务跑在容器内网 `18092`，由 WebUI 反代转发，**不对外映射端口**；
+  对外仍只有 `18090` / `18091`。
+
+---
+
+
 ## [v0.4.16] - 2026-09-21
 
 <!-- summary: 修正账号被拦截的判定与措辞，重扫无效的说明移到设置页 -->
@@ -914,7 +943,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.16...HEAD
+[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.17...HEAD
+[v0.4.17]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.16...v0.4.17
 [v0.4.16]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.15...v0.4.16
 [v0.4.15]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.14...v0.4.15
 [v0.4.14]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.13...v0.4.14
