@@ -5,7 +5,30 @@ echo "=== 启动 AutoBuddy & OpenAI API Gateway ==="
 
 # 只确保数据目录存在。**不要**再创建 /data/.autobuddy/rotate —— 那是 CodeBuddy CLI
 # 时代的 token 轮换目录，CLI 已于 v0.3.11 彻底移除，空目录留着纯属残留。
+# ==============================================================================
+# 官方闭源底层服务兼容保障：
+# 官方底层 wb-switch 二进制硬编码读取 $HOME/.wb-switch/accounts.json。
+# 容器 HOME=/data，真实持久化数据保存在 /data/.autobuddy/。
+# 建立 /data/.wb-switch 自动软链 / 同步，彻底保障官方服务读取原有账号与凭据。
+# ==============================================================================
 mkdir -p /data/.autobuddy
+mkdir -p /data/.wb-switch
+
+# 自动双向映射保障
+for f in /data/.autobuddy/*; do
+    fname=$(basename "$f")
+    if [ ! -e "/data/.wb-switch/$fname" ]; then
+        ln -s "/data/.autobuddy/$fname" "/data/.wb-switch/$fname" 2>/dev/null || true
+    fi
+done
+# 反向保障（官方生成的新文件落到 .autobuddy）
+for f in /data/.wb-switch/*; do
+    fname=$(basename "$f")
+    if [ ! -e "/data/.autobuddy/$fname" ]; then
+        ln -s "/data/.wb-switch/$fname" "/data/.autobuddy/$fname" 2>/dev/null || true
+    fi
+done
+
 
 # 浏览器安装目录（挂载卷，参考 MoviePilot 方案：镜像不内置浏览器，容器部署时自动下载并持久化）。
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.autobuddy/browsers}"
