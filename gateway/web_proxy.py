@@ -3161,7 +3161,7 @@ async def credits_stats_proxy(request: Request):
 
     # 读取当前有效的真实账号列表
     valid_account_ids = set()
-    for acc_file in [DATA_DIR / "accounts.json", Path("/data/.wb-switch/accounts.json")]:
+    for acc_file in [Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json", Path("/data/.wb-switch/accounts.json")]:
         if acc_file.exists():
             try:
                 with open(acc_file, "r", encoding="utf-8") as f:
