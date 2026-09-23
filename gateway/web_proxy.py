@@ -2380,14 +2380,31 @@ COLLAPSE_SCRIPT = r"""
             '</div>' +
             '<div id="wb-ac-browser-pill" class="wb-api-badge">检测中…</div>' +
           '</div>' +
+          '<div id="wb-ac-browse-progress" class="wb-api-row wb-api-row-stack" style="display:none">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;width:100%">' +
+              '<span id="wb-ac-browse-phase" class="wb-api-desc">正在下载浏览器内核</span>' +
+              '<span id="wb-ac-browse-pct" class="wb-api-mono">0%</span>' +
+            '</div>' +
+            '<div style="width:100%;height:6px;border-radius:3px;background:rgba(120,120,120,.25);overflow:hidden;margin-top:6px">' +
+              '<div id="wb-ac-browse-bar" style="width:0%;height:100%;background:#3b82f6;transition:width .3s ease"></div>' +
+            '</div>' +
+            '<div id="wb-ac-browse-meta" class="wb-api-desc" style="margin-top:4px"></div>' +
+          '</div>' +
+          '<div id="wb-ac-browse-done" class="wb-api-row" style="display:none">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">已安装内核</div>' +
+              '<div class="wb-api-desc">持久化路径：<span id="wb-ac-browser-path" class="wb-api-mono">/data/.wb-switch/browsers</span></div>' +
+              '<div id="wb-ac-browse-dirs" class="wb-api-desc" style="margin-top:2px"></div>' +
+            '</div>' +
+          '</div>' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div class="wb-api-desc">挂载存储路径：<span id="wb-ac-browser-path" class="wb-api-mono">/data/.wb-switch/browsers</span></div>' +
+              '<div class="wb-api-desc">状态由注册服务自动托管，容器部署时自动安装并持久化，无需手动点击。</div>' +
             '</div>' +
-            '<button id="wb-ac-dl-btn" class="wb-api-btn wb-api-btn-primary" style="display:none">一键下载浏览器</button>' +
+            '<button id="wb-ac-dl-btn" class="wb-api-btn wb-api-btn-primary" style="display:none">重新下载</button>' +
           '</div>' +
           '<div id="wb-ac-dl-box" class="wb-api-row wb-api-row-stack" style="display:none">' +
-            '<div class="wb-api-label">下载控制台输出</div>' +
+            '<div class="wb-api-label">下载明细（仅关键输出）</div>' +
             '<div id="wb-ac-dl-log" class="wb-api-code" style="max-height:120px;overflow-y:auto"></div>' +
           '</div>' +
         '</div>' +
@@ -2577,26 +2594,88 @@ COLLAPSE_SCRIPT = r"""
     return v;
   }
 
+  function wbFmtBytes(n) {
+    if (!n || n < 0) return "";
+    var u = ["B", "KiB", "MiB", "GiB"], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return n.toFixed(n >= 100 || i === 0 ? 0 : 1) + " " + u[i];
+  }
+
+  // 用统一数据渲染浏览器卡片：未安装 -> 进度条；已安装 -> 路径与内核列表
+  function wbRenderBrowser(d) {
+    var pill = document.getElementById("wb-ac-browser-pill");
+    var prog = document.getElementById("wb-ac-browse-progress");
+    var doneBox = document.getElementById("wb-ac-browse-done");
+    var dlBtn = document.getElementById("wb-ac-dl-btn");
+    var dl = d.download || {};
+
+    if (d.installed) {
+      if (pill) { pill.textContent = "已就绪"; pill.className = "wb-api-badge wb-api-badge-ok"; }
+      if (prog) prog.style.display = "none";
+      if (doneBox) doneBox.style.display = "flex";
+      var pathEl = document.getElementById("wb-ac-browser-path");
+      if (pathEl && d.path) pathEl.textContent = d.path;
+      var dirsEl = document.getElementById("wb-ac-browse-dirs");
+      if (dirsEl) {
+        dirsEl.textContent = (d.dirs && d.dirs.length)
+          ? "内核目录：" + d.dirs.join("、")
+          : "";
+      }
+      if (dlBtn) { dlBtn.style.display = "none"; dlBtn.disabled = false; dlBtn.textContent = "重新下载"; }
+      return;
+    }
+
+    // 未安装
+    if (doneBox) doneBox.style.display = "none";
+
+    if (dl.status === "running") {
+      if (pill) { pill.textContent = "未安装 · 下载中"; pill.className = "wb-api-badge"; }
+      if (prog) prog.style.display = "flex";
+      var pct = typeof dl.percent === "number" ? dl.percent : 0;
+      var bar = document.getElementById("wb-ac-browse-bar");
+      var pctEl = document.getElementById("wb-ac-browse-pct");
+      var phaseEl = document.getElementById("wb-ac-browse-phase");
+      var metaEl = document.getElementById("wb-ac-browse-meta");
+      if (bar) bar.style.width = pct + "%";
+      if (pctEl) pctEl.textContent = pct.toFixed(1) + "%";
+      if (phaseEl) phaseEl.textContent = dl.phase || "正在下载浏览器内核";
+      if (metaEl) {
+        var parts = [];
+        if (dl.received) parts.push(wbFmtBytes(dl.received) + " / " + wbFmtBytes(dl.total));
+        if (dl.elapsed) parts.push("已用时 " + dl.elapsed + "s");
+        metaEl.textContent = parts.join(" · ");
+      }
+      if (dlBtn) { dlBtn.style.display = "none"; dlBtn.disabled = false; }
+    } else if (dl.status === "failed") {
+      if (pill) { pill.textContent = "未安装 · 下载失败"; pill.className = "wb-api-badge wb-api-badge-warn"; }
+      if (prog) prog.style.display = "none";
+      if (dlBtn) { dlBtn.style.display = "inline-block"; dlBtn.disabled = false; dlBtn.textContent = "重新下载"; }
+      var logBoxFail = document.getElementById("wb-ac-dl-box");
+      if (logBoxFail) logBoxFail.style.display = "flex";
+    } else {
+      if (pill) { pill.textContent = "未安装"; pill.className = "wb-api-badge wb-api-badge-warn"; }
+      if (prog) prog.style.display = "none";
+      if (dlBtn) { dlBtn.style.display = "inline-block"; dlBtn.disabled = false; dlBtn.textContent = "下载浏览器"; }
+    }
+  }
+
   function wbPollDlProgress() {
-    fetch("/api/gh-register/browser/log")
+    // 合并成一次请求：状态 + 进度 + 关键日志
+    fetch("/api/gh-register/browser")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var box = document.getElementById("wb-ac-dl-box");
-        var log = document.getElementById("wb-ac-dl-log");
-        var pill = document.getElementById("wb-ac-browser-pill");
-        var dlBtn = document.getElementById("wb-ac-dl-btn");
-        if (box) box.style.display = "flex";
-        if (log) log.textContent = (d.tail || []).join("\n") || "下载进行中…";
+        wbRenderBrowser(d);
+        var dl = d.download || {};
+        if (dl.status === "running") {
+          var log = document.getElementById("wb-ac-dl-log");
+          if (log && dl.phase) log.textContent = dl.phase + "\n" + (log.textContent || "");
+        }
         if (d.installed) {
-          if (pill) { pill.textContent = "已就绪"; pill.className = "wb-api-badge wb-api-badge-ok"; }
-          if (dlBtn) dlBtn.style.display = "none";
           if (wbAcDlTimer) clearInterval(wbAcDlTimer);
-          wbToast("浏览器下载安装完成！", "ok");
-        } else if (d.status === "failed") {
-          if (pill) { pill.textContent = "下载失败"; pill.className = "wb-api-badge wb-api-badge-warn"; }
-          if (dlBtn) { dlBtn.style.display = "inline-block"; dlBtn.disabled = false; dlBtn.textContent = "重新下载"; }
+          wbToast("浏览器内核已就绪！", "ok");
+        } else if (dl.status === "failed") {
           if (wbAcDlTimer) clearInterval(wbAcDlTimer);
-          wbToast("浏览器下载失败：" + (d.error || "未知原因"), "error");
+          wbToast("浏览器下载失败：" + (dl.error || "未知原因"), "error");
         }
       })
       .catch(function() {});
@@ -2638,23 +2717,20 @@ COLLAPSE_SCRIPT = r"""
   }
 
   function wbLoadAcData() {
-    // 拉取浏览器状态
+    // 拉取浏览器状态（未安装时持续轮询，进度实时可见）
     fetch("/api/gh-register/browser")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var pill = document.getElementById("wb-ac-browser-pill");
-        var pathEl = document.getElementById("wb-ac-browser-path");
-        var dlBtn = document.getElementById("wb-ac-dl-btn");
+        wbRenderBrowser(d);
         var envBadge = document.getElementById("wb-ac-env-badge");
-        if (pathEl && d.path) pathEl.textContent = d.path;
+        var dl = d.download || {};
         if (d.installed) {
-          if (pill) { pill.textContent = "已就绪"; pill.className = "wb-api-badge wb-api-badge-ok"; }
           if (envBadge) { envBadge.textContent = "服务与环境正常"; envBadge.className = "wb-api-badge wb-api-badge-ok"; }
-          if (dlBtn) dlBtn.style.display = "none";
+          if (wbAcDlTimer) { clearInterval(wbAcDlTimer); wbAcDlTimer = null; }
         } else {
-          if (pill) { pill.textContent = "未安装"; pill.className = "wb-api-badge wb-api-badge-warn"; }
-          if (envBadge) { envBadge.textContent = "需要下载浏览器"; envBadge.className = "wb-api-badge wb-api-badge-warn"; }
-          if (dlBtn) { dlBtn.style.display = "inline-block"; dlBtn.textContent = "一键下载浏览器"; dlBtn.disabled = false; }
+          if (envBadge) { envBadge.textContent = "浏览器内核待安装"; envBadge.className = "wb-api-badge wb-api-badge-warn"; }
+          // 未安装就常驻轮询：无论是自动下载还是手动重下，进度条都能自己动
+          if (!wbAcDlTimer) wbAcDlTimer = setInterval(wbPollDlProgress, 1500);
         }
       })
       .catch(function() {});

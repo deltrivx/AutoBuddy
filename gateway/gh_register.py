@@ -90,7 +90,50 @@ def save_config(new_data: dict) -> dict:
 
 # ------------------------------------------------------------------ 浏览器管理
 
-_DL = {"status": "idle", "log": [], "error": None}
+_DL = {
+    "status": "idle",        # idle | running | done | failed
+    "log": [],
+    "error": None,
+    "phase": "",            # 当前阶段说明（如「下载内核」「解压安装」）
+    "percent": 0.0,         # 0-100，来自 playwright 的进度条
+    "received": 0,          # 已下载字节
+    "total": 0,             # 总字节
+    "startedAt": None,
+    "finishedAt": None,
+}
+
+# playwright install 的进度行形如：
+#   |■■■■■■■■        |  45% of 186.8 MiB
+# 我们把它解析成结构化进度，前端就不必自己啃日志尾巴。
+_DL_PROGRESS_RE = re.compile(
+    r"^\s*\|?[^|]*\|?\s*(?P<pct>\d{1,3})%\s+of\s+(?P<total>[\d.]+)\s*(?P<unit>KiB|MiB|GiB|B)",
+    re.IGNORECASE,
+)
+
+_UNIT_BYTES = {"B": 1, "KIB": 1024, "MIB": 1024 ** 2, "GIB": 1024 ** 3}
+
+
+def _parse_download_line(line: str) -> None:
+    """从 playwright 输出里提取进度与阶段，写入 _DL。"""
+    m = _DL_PROGRESS_RE.match(line)
+    if m:
+        pct = float(m.group("pct"))
+        unit = m.group("unit").upper()
+        total = float(m.group("total")) * _UNIT_BYTES.get(unit, 1)
+        _DL["percent"] = max(0.0, min(100.0, pct))
+        _DL["total"] = int(total)
+        _DL["received"] = int(total * pct / 100.0)
+        if "download" not in _DL["phase"]:
+            _DL["phase"] = "正在下载浏览器内核"
+        return
+
+    low = line.lower()
+    if "downloading" in low:
+        _DL["phase"] = "正在下载浏览器内核"
+    elif "extracting" in low or "installing" in low:
+        _DL["phase"] = "正在解压安装"
+    elif "downloaded to" in low or "install" in low and "done" in low:
+        _DL["phase"] = "安装完成"
 
 
 def browser_installed() -> bool:
@@ -115,6 +158,12 @@ async def _download_browser():
     _DL["status"] = "running"
     _DL["log"] = []
     _DL["error"] = None
+    _DL["phase"] = "正在准备下载环境"
+    _DL["percent"] = 0.0
+    _DL["received"] = 0
+    _DL["total"] = 0
+    _DL["startedAt"] = time.time()
+    _DL["finishedAt"] = None
     os.makedirs(BROWSERS_PATH, exist_ok=True)
     env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=BROWSERS_PATH)
     try:
@@ -128,19 +177,28 @@ async def _download_browser():
         async for raw in proc.stdout:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if line:
-                _DL["log"].append(line)
-                if len(_DL["log"]) > 400:
-                    _DL["log"] = _DL["log"][-300:]
-                print(f"[browser-dl] {line}")
+                # 进度条行每秒会刷很多条（\r 分隔），只保留非进度行进日志，
+                # 结构化进度另存 _DL，避免日志被刷屏、也避免前端读不到重点。
+                if not _DL_PROGRESS_RE.match(line):
+                    _DL["log"].append(line)
+                    if len(_DL["log"]) > 400:
+                        _DL["log"] = _DL["log"][-300:]
+                _parse_download_line(line)
         code = await proc.wait()
+        _DL["finishedAt"] = time.time()
         if code == 0 and browser_installed():
             _DL["status"] = "done"
+            _DL["percent"] = 100.0
+            _DL["phase"] = "安装完成"
         else:
             _DL["status"] = "failed"
             _DL["error"] = f"playwright install 退出码 {code}"
+            _DL["phase"] = "安装失败"
     except Exception as e:
         _DL["status"] = "failed"
         _DL["error"] = f"{type(e).__name__}: {e}"
+        _DL["phase"] = "安装失败"
+        _DL["finishedAt"] = time.time()
 
 
 # ------------------------------------------------------------------ 辅助函数
@@ -607,12 +665,40 @@ async def save_config_api(data: dict):
 @app.get("/api/gh-register/browser")
 async def browser_status():
     installed = browser_installed()
+    elapsed = None
+    if _DL["startedAt"]:
+        end = _DL["finishedAt"] or time.time()
+        elapsed = round(end - _DL["startedAt"], 1)
     return {
         "installed": installed,
         "path": BROWSERS_PATH,
         "dirs": _browser_dirs(),
-        "download": {"status": _DL["status"], "error": _DL["error"]},
+        "download": {
+            "status": _DL["status"],
+            "error": _DL["error"],
+            "phase": _DL["phase"],
+            "percent": round(_DL["percent"], 1),
+            "received": _DL["received"],
+            "total": _DL["total"],
+            "elapsed": elapsed,
+        },
     }
+
+
+@app.on_event("startup")
+async def _autostart_download_if_missing():
+    """容器部署时自动补内核：未安装且没有下载在跑，就由本服务托管下载。
+
+    这是**唯一**的自动触发点。entrypoint.sh 不再自己拉 playwright，
+    避免两个进程同时下载、互相抢 __dirlock（表现为目录一直空、进度不动）。
+    """
+    if browser_installed():
+        _DL["status"] = "done"
+        _DL["percent"] = 100.0
+        _DL["phase"] = "已安装"
+        return
+    if _DL["status"] != "running":
+        asyncio.create_task(_download_browser())
 
 
 @app.post("/api/gh-register/browser/install")
@@ -627,10 +713,15 @@ async def browser_install():
 
 @app.get("/api/gh-register/browser/log")
 async def browser_log():
+    installed = browser_installed()
     return {
         "status": _DL["status"],
         "error": _DL["error"],
-        "installed": browser_installed(),
+        "installed": installed,
+        "phase": _DL["phase"],
+        "percent": round(_DL["percent"], 1),
+        "received": _DL["received"],
+        "total": _DL["total"],
         "tail": _DL["log"][-40:],
     }
 

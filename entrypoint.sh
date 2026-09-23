@@ -11,21 +11,14 @@ mkdir -p /data/.wb-switch
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.wb-switch/browsers}"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
 
-auto_install_browsers() {
-    if ! ls -1 "$PLAYWRIGHT_BROWSERS_PATH" 2>/dev/null | grep -q '^chromium'; then
-        echo "[browsers] 首次启动未检测到持久化 Chromium，开始自动下载内核至 $PLAYWRIGHT_BROWSERS_PATH..."
-        if python3 -m playwright install chromium; then
-            echo "[browsers] Chromium 内核自动下载安装完成，已持久化于挂载卷！"
-        else
-            echo "[browsers] Chromium 自动下载失败，可在 WebUI「账号接入」页面手动重试。"
-        fi
-    else
-        echo "[browsers] 检测到持久化 Chromium 内核已就绪：$(ls -1 "$PLAYWRIGHT_BROWSERS_PATH" | tr '\n' ' ')"
-    fi
-}
-# 后台异步执行内核检测与下载，不阻塞 WebUI 与 API 网关的即时启动
-auto_install_browsers &
-
+# 浏览器内核由 gh_register 服务自己托管下载（见其 startup 钩子）。
+# 这里只负责建目录与提示，**不再**自己拉 playwright —— 两个进程同时下载会抢
+# __dirlock，结果是目录一直是空的、进度卡住不动。
+if ls -1 "$PLAYWRIGHT_BROWSERS_PATH" 2>/dev/null | grep -q '^chromium'; then
+    echo "[browsers] 已检测到持久化 Chromium 内核：$(ls -1 "$PLAYWRIGHT_BROWSERS_PATH" | tr '\n' ' ')"
+else
+    echo "[browsers] 未检测到持久化 Chromium，将由注册服务在后台自动下载（进度见 WebUI「账号接入」）"
+fi
 
 # 1. 启动官方 workbuddy-switch 在 57890 端口
 echo "[WorkBuddy-Switch] 正在启动底层服务..."
