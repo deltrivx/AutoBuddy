@@ -1,7 +1,7 @@
 # AutoBuddy
 
 <p align="center">
-  <a href="https://github.com/deltrivx/autobuddy">
+  <a href="https://github.com/deltrivx/AutoBuddy">
     <img src="./icon.png" width="120" height="120" alt="AutoBuddy Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);" />
   </a>
 </p>
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/deltrivx/autobuddy/releases"><img src="https://img.shields.io/github/v/release/deltrivx/autobuddy?color=blue&label=Release" alt="GitHub release" /></a>
+  <a href="https://github.com/deltrivx/AutoBuddy/releases"><img src="https://img.shields.io/github/v/release/deltrivx/autobuddy?color=blue&label=Release" alt="GitHub release" /></a>
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" />
   <img src="https://img.shields.io/badge/Unraid-Compatible-F15A24?logo=unraid&logoColor=white" alt="Unraid Compatible" />
   <img src="https://img.shields.io/badge/FastAPI-Gateway-009688?logo=fastapi&logoColor=white" alt="FastAPI" />

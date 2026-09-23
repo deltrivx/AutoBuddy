@@ -1005,7 +1005,7 @@ def restore_account_models(payload: Dict[str, Any]):
 # 项目元信息。设置页的「关于」面板由此渲染 —— 放在环境变量里而不是写死在前端，
 # 一是保持单一出处，二是 fork 出去的人可以改成自己的仓库，
 # 不会把使用者引回上游作者的项目。
-PROJECT_URL = os.getenv("AB_PROJECT_URL", "https://github.com/deltrivx/autobuddy")
+PROJECT_URL = os.getenv("AB_PROJECT_URL", "https://github.com/deltrivx/AutoBuddy")
 PROJECT_NAME = os.getenv("AB_PROJECT_NAME", "AutoBuddy")
 
 # 容器内的 WebUI 代理与网关同容器，靠 loopback 访问。容器外的请求经 docker NAT
