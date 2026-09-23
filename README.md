@@ -1,17 +1,17 @@
-# WorkBuddy Switch
+# AutoBuddy
 
 <p align="center">
-  <a href="https://github.com/deltrivx/workbuddy-switch">
-    <img src="./icon.png" width="120" height="120" alt="WorkBuddy Switch Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);" />
+  <a href="https://github.com/deltrivx/autobuddy">
+    <img src="./icon.png" width="120" height="120" alt="AutoBuddy Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);" />
   </a>
 </p>
 
 <p align="center">
-  <strong>为 NAS 与服务器打造的 WorkBuddy 账号管理面板 + OpenAI 兼容 API 网关</strong>
+  <strong>为 NAS 与服务器打造的 WorkBuddy / CodeBuddy 账号管理面板 + OpenAI 兼容 API 网关</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/deltrivx/workbuddy-switch/releases"><img src="https://img.shields.io/github/v/release/deltrivx/workbuddy-switch?color=blue&label=Release" alt="GitHub release" /></a>
+  <a href="https://github.com/deltrivx/autobuddy/releases"><img src="https://img.shields.io/github/v/release/deltrivx/autobuddy?color=blue&label=Release" alt="GitHub release" /></a>
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" />
   <img src="https://img.shields.io/badge/Unraid-Compatible-F15A24?logo=unraid&logoColor=white" alt="Unraid Compatible" />
   <img src="https://img.shields.io/badge/FastAPI-Gateway-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
@@ -32,7 +32,7 @@
 
 ## 📖 这是什么
 
-`WorkBuddy Switch` 把官方的账号管理核心服务封装进一个容器，并补上两样官方没有的东西：
+`AutoBuddy` 把官方的账号管理核心服务封装进一个容器，并补上两样官方没有的东西：
 一个**为容器环境重做的 Web 控制台**，以及一个**自研的 OpenAI 兼容 API 网关**。
 
 它只做两件事，且把这两件事做完整：
@@ -49,7 +49,7 @@
 | 定位 | WorkBuddy / CodeBuddy 账号管理 + OpenAI 兼容网关，面向 NAS 与服务器 |
 | 形态 | 单容器，除 `/data` 外不需要任何其他挂载 |
 | 端口 | `18090` Web 控制台 · `18091` OpenAI API 网关 |
-| 镜像 | `ghcr.io/deltrivx/workbuddy-switch`（GitHub Actions 云端构建） |
+| 镜像 | `ghcr.io/deltrivx/autobuddy`（GitHub Actions 云端构建） |
 | 数据 | 全部落盘 `/data`，升级不动账号数据 |
 | 许可 | MIT（非官方项目） |
 
@@ -174,26 +174,26 @@
 
 Unraid 上请**使用容器模板创建容器，不要手工拼接 `docker run`**：
 
-1. 下载 [unraid/WorkBuddy-Switch.xml](./unraid/WorkBuddy-Switch.xml)（或从任意 Release 的附件中获取）；
+1. 下载 [unraid/AutoBuddy.xml](./unraid/AutoBuddy.xml)（或从任意 Release 的附件中获取）；
 2. Unraid 后台进入 **Docker** → **Add Container**，模板来源选择该 XML；
 3. 按向导确认端口与数据目录后启动即可。
 
 模板已内置标准容器名、官方描述、项目与支持链接、WebUI 地址与图标。
-图标如需改为本地路径（离线环境），把模板里的 `<Icon>` 换成 `/mnt/user/icons/WorkBuddy-Switch.png` 即可。
+图标如需改为本地路径（离线环境），把模板里的 `<Icon>` 换成 `/mnt/user/icons/AutoBuddy.png` 即可。
 
 ### Docker Compose
 
 ```yaml
 services:
-  workbuddy-switch:
-    image: ghcr.io/deltrivx/workbuddy-switch:latest
-    container_name: WorkBuddy-Switch
+  autobuddy:
+    image: ghcr.io/deltrivx/autobuddy:latest
+    container_name: AutoBuddy
     restart: unless-stopped
     ports:
       - "18090:18090"
       - "18091:18091"
     volumes:
-      - /mnt/user/appdata/workbuddy-switch:/data
+      - /mnt/user/appdata/autobuddy:/data
     environment:
       TZ: Asia/Shanghai
 ```
@@ -204,12 +204,12 @@ services:
 
 ```bash
 docker run -d \
-  --name WorkBuddy-Switch \
+  --name AutoBuddy \
   -p 18090:18090 \
   -p 18091:18091 \
-  -v /mnt/user/appdata/workbuddy-switch:/data \
+  -v /mnt/user/appdata/autobuddy:/data \
   --restart unless-stopped \
-  ghcr.io/deltrivx/workbuddy-switch:latest
+  ghcr.io/deltrivx/autobuddy:latest
 ```
 
 ### 端口与数据
@@ -221,7 +221,7 @@ docker run -d \
 
 - `/data` —— 挂载至宿主机的 AppData 目录，持久化保存账号凭证、积分快照、Token 统计明细、
   账号池与模型策略配置、API 密钥。**升级时数据目录不变，不会动到账号数据。**
-- 删除 `/data/.wb-switch/api_keys.json` 即等于关闭密钥校验并清空全部密钥。
+- 删除 `/data/.autobuddy/api_keys.json` 即等于关闭密钥校验并清空全部密钥。
 
 ---
 
@@ -243,7 +243,7 @@ docker run -d \
 
 ### 密钥规则
 
-- 格式 `sk-wb-` + 32 位十六进制，放在 `Authorization: Bearer <key>` 或 `x-api-key: <key>` 均可，
+- 格式 `sk-ab-` + 32 位十六进制，放在 `Authorization: Bearer <key>` 或 `x-api-key: <key>` 均可，
   `Bearer` 大小写不敏感，首尾空格会被容忍。
 - 缺失 / 错误 / 已停用的密钥统一返回 `401`，并给出可读中文原因。
 - **容器内回环免校验**：WebUI 代理与网关同容器，放行回环不会把外部请求放进来。
@@ -251,7 +251,7 @@ docker run -d \
 ### Sub2API 配置
 
 1. **渠道（Channel）**：选择 `OpenAI` 格式，Base URL 填入 `http://<IP>:18091/v1`。
-2. **账号类型**：选择 `apikey`。若已打开**强制 API 密钥校验**，这里必须填真实密钥（`sk-wb-…`）；
+2. **账号类型**：选择 `apikey`。若已打开**强制 API 密钥校验**，这里必须填真实密钥（`sk-ab-…`）；
    未打开校验时填任意值都能通过。
 3. **模型映射**：Sub2API 的 `model_mapping` 是手工白名单、不会自动发现上游模型，
    请把下方模型目录里的模型全量映射至对应分组。
@@ -262,7 +262,7 @@ docker run -d \
 # 未开启密钥校验时可省略 Authorization 头
 curl -X POST http://localhost:18091/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-wb-你的密钥" \
+  -H "Authorization: Bearer sk-ab-你的密钥" \
   -d '{
     "model": "deepseek-v3",
     "messages": [{"role": "user", "content": "你好！"}],
@@ -277,7 +277,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 ```bash
 curl -X POST http://localhost:18091/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "X-WorkBuddy-Account-Id: <account-id>" \
+  -H "X-AutoBuddy-Account-Id: <account-id>" \
   -d '{"model": "deepseek-v3", "messages": [{"role": "user", "content": "你好！"}]}'
 ```
 
@@ -350,7 +350,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 
 ### 配置文件
 
-账号池配置持久化在 `/data/.wb-switch/account_pool_config.json`：
+账号池配置持久化在 `/data/.autobuddy/account_pool_config.json`：
 
 ```json
 {
@@ -363,7 +363,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 - `enabledAccountIds` **空数组 = 全部启用**（默认）；写入明确列表后即为白名单。
 - `mode: "manual"` 时固定使用 `manualAccountId`；`"auto"` 时在已启用账号间轮询。
 
-模型禁用策略单独存放在 `/data/.wb-switch/model_policy.json`，与账号池配置**互不覆盖**：
+模型禁用策略单独存放在 `/data/.autobuddy/model_policy.json`，与账号池配置**互不覆盖**：
 
 ```json
 {
@@ -373,7 +373,7 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 
 **只记禁用项** —— 未列出的模型一律视为可用，因此官方上新模型时天然是可用态，不需要迁移配置。
 
-账号级停用策略存放在 `/data/.wb-switch/account_policy.json`，同样**与账号池配置互不覆盖**：
+账号级停用策略存放在 `/data/.autobuddy/account_policy.json`，同样**与账号池配置互不覆盖**：
 
 ```json
 {
@@ -408,7 +408,7 @@ curl -s http://localhost:18091/account-pool/selections
 也可以直接看容器日志：
 
 ```bash
-docker logs WorkBuddy-Switch 2>&1 | grep '\[pool\]'
+docker logs AutoBuddy 2>&1 | grep '\[pool\]'
 ```
 
 ---
@@ -419,9 +419,9 @@ docker logs WorkBuddy-Switch 2>&1 | grep '\[pool\]'
 
 ```bash
 # 拉取指定版本
-docker pull ghcr.io/deltrivx/workbuddy-switch:vX.Y.Z
+docker pull ghcr.io/deltrivx/autobuddy:vX.Y.Z
 # 或拉取最新稳定版
-docker pull ghcr.io/deltrivx/workbuddy-switch:latest
+docker pull ghcr.io/deltrivx/autobuddy:latest
 ```
 
 ### Unraid

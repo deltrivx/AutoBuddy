@@ -72,7 +72,7 @@ _httpx.AsyncClient = type("AsyncClient", (), {})
 sys.modules["httpx"] = _httpx
 
 tmpdir = tempfile.mkdtemp(prefix="wbs-pool-")
-os.environ["WB_DATA_DIR"] = tmpdir
+os.environ["AB_DATA_DIR"] = tmpdir
 
 main = importlib.import_module("main")
 model_policy = importlib.import_module("model_policy")

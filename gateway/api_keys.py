@@ -25,10 +25,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 KEYS_FILE = DATA_DIR / "api_keys.json"
 
-KEY_PREFIX = "sk-wb-"
+KEY_PREFIX = "sk-ab-"
 KEY_BODY_LEN = 32
 
 DEFAULT_KEY_NAME = "默认密钥"

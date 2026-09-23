@@ -23,7 +23,7 @@ CHANGELOG = REPO / "CHANGELOG.md"
 OUTPUT = REPO / "RELEASES.md"
 NOTES_DIR = REPO / "docs" / "release-notes"
 
-REPO_SLUG = "deltrivx/workbuddy-switch"
+REPO_SLUG = "deltrivx/autobuddy"
 
 
 def parse_versions(text: str):
@@ -83,11 +83,11 @@ def main() -> int:
             f"| {entry['date']} | {entry['title']} | {link} |"
         )
 
-    body = f"""# WorkBuddy Switch Releases
+    body = f"""# AutoBuddy Releases
 
 [项目说明](README.md) | [更新日志](CHANGELOG.md)
 
-本页是 **WorkBuddy Switch 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
+本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
 **当前稳定版：** [{latest}](https://github.com/{REPO_SLUG}/releases/tag/{latest})
@@ -115,7 +115,7 @@ docker pull ghcr.io/{REPO_SLUG}:{latest.lstrip('v')}    # 锁定版本
 
 | 产物 | 说明 |
 |---|---|
-| `WorkBuddy-Switch.xml` | Unraid 容器模板（**请以模板方式创建容器，勿手工拼接 `docker run`**） |
+| `AutoBuddy.xml` | Unraid 容器模板（**请以模板方式创建容器，勿手工拼接 `docker run`**） |
 | `docker-compose.yml` | Docker Compose 部署文件 |
 | `icon.png` | 512×512 容器图标（Unraid 模板使用） |
 | `SHA256SUMS` | 上述产物的校验值 |

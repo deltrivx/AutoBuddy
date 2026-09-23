@@ -682,8 +682,8 @@ COLLAPSE_SCRIPT = r"""
 
   function enforceTitle() {
     // 浏览器标签标题精简为固定短名，官方标题过长会被标签栏截断
-    if (document.title !== "WorkBuddy Switch") {
-      document.title = "WorkBuddy Switch";
+    if (document.title !== "AutoBuddy") {
+      document.title = "AutoBuddy";
     }
   }
 
@@ -1634,7 +1634,7 @@ COLLAPSE_SCRIPT = r"""
     var listRow = wbEl("div", "wb-api-row wb-api-row-stack");
     if (!keys.length) {
       listRow.appendChild(wbEl("div", "wb-api-empty",
-        "还没有密钥。点「新建密钥」生成一个 —— 密钥格式为 sk-wb-…，明文保存在 /data/.wb-switch/api_keys.json（权限 0600）。"));
+        "还没有密钥。点「新建密钥」生成一个 —— 密钥格式为 sk-ab-…，明文保存在 /data/.autobuddy/api_keys.json（权限 0600）。"));
     } else {
       keys.forEach(function (k) {
         var line = wbEl("div", "wb-api-keyrow");
@@ -1743,7 +1743,7 @@ COLLAPSE_SCRIPT = r"""
     var copyAll = wbEl("button", "wb-api-btn wb-api-btn-primary", "复制接入信息");
     copyAll.onclick = function () {
       wbCopy([
-        "WorkBuddy Switch · OpenAI 兼容 API",
+        "AutoBuddy · OpenAI 兼容 API",
         "Base URL: " + apiRoot,
         "端点: POST /v1/chat/completions, GET /v1/models",
         "鉴权: Authorization: Bearer <key>" + (data.requireKey ? "（当前强制校验）" : "（当前未强制校验）"),
@@ -2222,7 +2222,7 @@ COLLAPSE_SCRIPT = r"""
     var nameRow = wbEl("div", "wb-api-row wb-api-row-stack");
     var nameMain = wbEl("div", "wb-api-main");
     var headLine = wbEl("div", "wb-about-head");
-    headLine.appendChild(wbEl("span", "wb-about-name", proj.name || "WorkBuddy Switch"));
+    headLine.appendChild(wbEl("span", "wb-about-name", proj.name || "AutoBuddy"));
     var versionBadge = wbEl("span", "wb-api-badge wb-api-badge-ok", "v" + (data.version || "?"));
     versionBadge.title = "与 GitHub 发布标签、镜像 tag 同号";
     headLine.appendChild(versionBadge);
@@ -2393,7 +2393,7 @@ COLLAPSE_SCRIPT = r"""
           '<div id="wb-ac-browse-done" class="wb-api-row" style="display:none">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-label">已安装内核</div>' +
-              '<div class="wb-api-desc">持久化路径：<span id="wb-ac-browser-path" class="wb-api-mono">/data/.wb-switch/browsers</span></div>' +
+              '<div class="wb-api-desc">持久化路径：<span id="wb-ac-browser-path" class="wb-api-mono">/data/.autobuddy/browsers</span></div>' +
               '<div id="wb-ac-browse-dirs" class="wb-api-desc" style="margin-top:2px"></div>' +
             '</div>' +
           '</div>' +
@@ -2941,8 +2941,8 @@ async def token_stats_api(request: Request):
     return stats
 
 
-GATEWAY_BASE_URL = os.getenv("WB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
-GATEWAY_MODELS_URL = os.getenv("WB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")
+GATEWAY_BASE_URL = os.getenv("AB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
+GATEWAY_MODELS_URL = os.getenv("AB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")
 
 
 @app.get("/api/account-pool")
@@ -3277,7 +3277,7 @@ async def account_models_api():
     只靠官方缓存会出现「只有一个账号有调用记录」的假象，这正是必须叠加网关归因的原因。
     """
     import json as _json
-    data_dir = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+    data_dir = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
     cache_file = data_dir / "official_usage_cache.json"
     tracker_file = data_dir / "token_stats_logs.json"
 

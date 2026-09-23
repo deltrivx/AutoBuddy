@@ -48,7 +48,7 @@ def check(name, cond, extra=""):
 
 
 tmpdir = Path(tempfile.mkdtemp())
-os.environ["WB_DATA_DIR"] = str(tmpdir)
+os.environ["AB_DATA_DIR"] = str(tmpdir)
 sys.path.insert(0, str(Path(__file__).parent / "gateway"))
 
 import model_policy  # noqa: E402

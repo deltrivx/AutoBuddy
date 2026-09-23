@@ -68,7 +68,7 @@
 | `GET /model-health/status` | 运行状态与当前禁用总数 |
 | `POST /model-health/run` | 立即执行一轮巡检（不改变开关状态） |
 
-巡检配置持久化在 `/data/.wb-switch/model_health_config.json`，与账号数据、账号池配置相互独立。
+巡检配置持久化在 `/data/.autobuddy/model_health_config.json`，与账号数据、账号池配置相互独立。
 配置缺失或损坏时回退为「默认关闭」，**不会影响正常调用**。
 
 ## 不改变的行为

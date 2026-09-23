@@ -20,10 +20,10 @@
 
 ### 密钥格式与鉴权
 
-- 格式：`sk-wb-` + 32 位十六进制
+- 格式：`sk-ab-` + 32 位十六进制
 - 两种请求头都支持：
-  - `Authorization: Bearer sk-wb-…`
-  - `x-api-key: sk-wb-…`
+  - `Authorization: Bearer sk-ab-…`
+  - `x-api-key: sk-ab-…`
 - `Bearer` 大小写不敏感，密钥首尾空格会被容忍
 - 缺失 / 错误 / 已停用的密钥统一返回 `401`，并给出可读中文原因
 
@@ -70,4 +70,4 @@ WebUI 代理（18090）和网关（18091）跑在同一个容器里，代理需�
 
 账号管理、自动签到、账号池调度（并行/首选）、Token 统计与既有模型别名路由**全部保持不变**。
 本次只新增了 API 接入的可见性与可配置性。
-密钥文件在 `/data/.wb-switch/api_keys.json`，升级不会动到账号数据。
+密钥文件在 `/data/.autobuddy/api_keys.json`，升级不会动到账号数据。

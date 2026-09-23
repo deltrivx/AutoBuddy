@@ -73,7 +73,7 @@ sys.modules["httpx"] = _httpx
 
 # ---------- 用临时目录当 DATA_DIR ----------
 tmpdir = tempfile.mkdtemp(prefix="wbs-apikey-")
-os.environ["WB_DATA_DIR"] = tmpdir
+os.environ["AB_DATA_DIR"] = tmpdir
 
 main = importlib.import_module("main")
 api_keys = importlib.import_module("gateway.api_keys")
@@ -112,11 +112,11 @@ check("开启校验被拒（无可用密钥会把自己锁在门外）",
 print("\n=== 2. 新建密钥 -> 格式、掩码、落盘 ===")
 rec, err = api_keys.create_key("Sub2API")
 check("创建成功", rec is not None and err is None, str(err))
-check("前缀为 sk-wb-", rec["key"].startswith("sk-wb-"), rec["key"][:12])
-check("密钥主体 32 位十六进制", len(rec["key"]) == len("sk-wb-") + 32, str(len(rec["key"])))
+check("前缀为 sk-ab-", rec["key"].startswith("sk-ab-"), rec["key"][:12])
+check("密钥主体 32 位十六进制", len(rec["key"]) == len("sk-ab-") + 32, str(len(rec["key"])))
 check("名称已保存", rec["name"] == "Sub2API")
 check("默认启用", rec["enabled"] is True)
-check("掩码只露头尾", rec["maskedKey"].startswith("sk-wb-") and "•" in rec["maskedKey"],
+check("掩码只露头尾", rec["maskedKey"].startswith("sk-ab-") and "•" in rec["maskedKey"],
       rec["maskedKey"])
 check("掩码不含完整明文", rec["maskedKey"] != rec["key"])
 check("磁盘文件已生成", KEYS_FILE.exists())
@@ -137,7 +137,7 @@ check("第二个自动名带序号", rec3["name"] == "默认密钥 2", rec3["nam
 
 print("\n=== 4. 校验关闭时：任何请求都放行 ===")
 check("无密钥放行", api_keys.authenticate(None)["ok"] is True)
-check("错误密钥也放行", api_keys.authenticate("sk-wb-deadbeef")["ok"] is True)
+check("错误密钥也放行", api_keys.authenticate("sk-ab-deadbeef")["ok"] is True)
 check("模式为 open", api_keys.authenticate(None)["mode"] == "open")
 
 print("\n=== 5. 开启校验后：缺失 / 错误 / 正确 ===")
@@ -146,7 +146,7 @@ check("配置已落盘", json.loads(KEYS_FILE.read_text(encoding="utf-8"))["requ
 bad = api_keys.authenticate(None)
 check("缺密钥被拒", bad["ok"] is False and bad["mode"] == "missing")
 check("缺密钥时有中文提示", "密钥" in bad.get("detail", ""))
-check("错误密钥被拒", api_keys.authenticate("sk-wb-0000")["mode"] == "invalid")
+check("错误密钥被拒", api_keys.authenticate("sk-ab-0000")["mode"] == "invalid")
 good = api_keys.authenticate(rec["key"])
 check("正确密钥放行", good["ok"] is True and good["mode"] == "key")
 check("返回 keyId 用于归因", good["keyId"] == rec["id"], str(good.get("keyId")))
@@ -179,7 +179,7 @@ check("外部无密钥 401", main._gateway_auth(_req("203.0.113.9"))["ok"] is Fa
 check("外部带正确密钥放行",
       main._gateway_auth(_req("203.0.113.9", rec["key"]))["ok"] is True)
 check("外部带错误密钥拒绝",
-      main._gateway_auth(_req("203.0.113.9", "sk-wb-bad"))["ok"] is False)
+      main._gateway_auth(_req("203.0.113.9", "sk-ab-bad"))["ok"] is False)
 check("x-api-key 头同样有效",
       main._gateway_auth(_Req("203.0.113.9", {"x-api-key": rec["key"]}))["ok"] is True)
 check("Bearer 大小写不敏感",
@@ -253,7 +253,7 @@ KEYS_FILE.write_text(json.dumps({"requireKey": True, "keys": "not-a-list"}), enc
 api_keys._load_locked()
 check("keys 非 list 被容忍", api_keys.get_config()["keys"] == [])
 check("合法 requireKey 仍被读取", api_keys.get_state()["requireKey"] is True)
-KEYS_FILE.write_text(json.dumps({"requireKey": True, "keys": [{"no_key": 1}, {"key": "sk-wb-x"}]}),
+KEYS_FILE.write_text(json.dumps({"requireKey": True, "keys": [{"no_key": 1}, {"key": "sk-ab-x"}]}),
                      encoding="utf-8")
 api_keys._load_locked()
 check("缺 key 字段的条目被过滤", len(api_keys.get_config()["keys"]) == 1)

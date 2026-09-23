@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-echo "=== 启动 WorkBuddy Switch & OpenAI API Gateway ==="
+echo "=== 启动 AutoBuddy & OpenAI API Gateway ==="
 
-# 只确保数据目录存在。**不要**再创建 /data/.wb-switch/rotate —— 那是 CodeBuddy CLI
+# 只确保数据目录存在。**不要**再创建 /data/.autobuddy/rotate —— 那是 CodeBuddy CLI
 # 时代的 token 轮换目录，CLI 已于 v0.3.11 彻底移除，空目录留着纯属残留。
-mkdir -p /data/.wb-switch
+mkdir -p /data/.autobuddy
 
 # 浏览器安装目录（挂载卷，参考 MoviePilot 方案：镜像不内置浏览器，容器部署时自动下载并持久化）。
-export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.wb-switch/browsers}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.autobuddy/browsers}"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
 
 # 浏览器内核由 gh_register 服务自己托管下载（见其 startup 钩子）。
@@ -20,15 +20,15 @@ else
     echo "[browsers] 未检测到持久化 Chromium，将由注册服务在后台自动下载（进度见 WebUI「账号接入」）"
 fi
 
-# 1. 启动官方 workbuddy-switch 在 57890 端口
-echo "[WorkBuddy-Switch] 正在启动底层服务..."
+# 1. 启动官方底层服务 workbuddy-switch 在 57890 端口
+echo "[AutoBuddy] 正在启动底层服务..."
 workbuddy-switch serve --no-open &
 WB_PID=$!
 
 # 等待 57890 端口就绪
 for i in $(seq 1 30); do
     if curl -s http://127.0.0.1:57890/api/status >/dev/null 2>&1; then
-        echo "[WorkBuddy-Switch] 底层服务已就绪 (57890)"
+        echo "[AutoBuddy] 底层服务已就绪 (57890)"
         break
     fi
     sleep 0.5

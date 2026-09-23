@@ -24,7 +24,7 @@ def check(name, cond, extra=""):
 
 
 tmp = Path(tempfile.mkdtemp())
-os.environ["WB_DATA_DIR"] = str(tmp)
+os.environ["AB_DATA_DIR"] = str(tmp)
 # 与 _test_model_policy.py 一致：把 gateway/ 加进 sys.path，
 # 否则 `import model_policy`（main.py 已把策略读写抽到该模块）会 ModuleNotFoundError。
 sys.path.insert(0, str(Path(__file__).parent / "gateway"))

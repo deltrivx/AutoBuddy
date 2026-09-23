@@ -60,7 +60,7 @@ sys.modules["httpx"] = _httpx
 
 # ---------- 用临时目录当 DATA_DIR ----------
 tmpdir = tempfile.mkdtemp(prefix="wbs-sel-")
-os.environ["WB_DATA_DIR"] = tmpdir
+os.environ["AB_DATA_DIR"] = tmpdir
 
 main = importlib.import_module("main")
 LOG = Path(tmpdir) / "selection_logs.json"

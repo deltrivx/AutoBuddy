@@ -44,7 +44,7 @@ except ImportError:
 
 
 # 巡检配置落盘位置（与 model_policy.json、account_pool_config.json 并列，互不覆盖）
-DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 HEALTH_CONFIG_FILE = DATA_DIR / "model_health_config.json"
 # 最近一轮结果的落盘位置。只保存摘要，用于「重启后界面仍能看到上次巡检」。
 LAST_RUN_FILE = DATA_DIR / "model_health_last.json"

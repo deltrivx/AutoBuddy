@@ -41,10 +41,10 @@ except ImportError:
 #
 # 历史上这里是与发布号平行的另一套内部版本（1.x），于是面板显示 v1.8.0、
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
-# `WB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
+# `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.4.17"
-GATEWAY_VERSION = (os.getenv("WB_VERSION") or "").strip() or VERSION_DEFAULT
+VERSION_DEFAULT = "0.5.0"
+GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
 @asynccontextmanager
@@ -65,9 +65,9 @@ async def lifespan(_app: FastAPI):
         health_task.cancel()
 
 
-app = FastAPI(title="WorkBuddy OpenAI Gateway", version=GATEWAY_VERSION, lifespan=lifespan)
+app = FastAPI(title="AutoBuddy OpenAI Gateway", version=GATEWAY_VERSION, lifespan=lifespan)
 
-DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
 SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
 # 模型级禁用策略：某些账号的个别模型会因优惠政策调整 / 时效到期而不可调用，
@@ -437,7 +437,7 @@ def selection_stats(limit: int = 20) -> Dict[str, Any]:
 def select_account(requested_id: Optional[str] = None, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """为每一个 API 请求选择账号。
 
-    - X-WorkBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
+    - X-AutoBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
     - manual 模式：固定使用配置的 manualAccountId；
     - auto 模式：在 enabledAccountIds 中轮询，每个并发请求可拿到不同账号。
 
@@ -1005,8 +1005,8 @@ def restore_account_models(payload: Dict[str, Any]):
 # 项目元信息。设置页的「关于」面板由此渲染 —— 放在环境变量里而不是写死在前端，
 # 一是保持单一出处，二是 fork 出去的人可以改成自己的仓库，
 # 不会把使用者引回上游作者的项目。
-PROJECT_URL = os.getenv("WB_PROJECT_URL", "https://github.com/deltrivx/workbuddy-switch")
-PROJECT_NAME = os.getenv("WB_PROJECT_NAME", "WorkBuddy Switch")
+PROJECT_URL = os.getenv("AB_PROJECT_URL", "https://github.com/deltrivx/autobuddy")
+PROJECT_NAME = os.getenv("AB_PROJECT_NAME", "AutoBuddy")
 
 # 容器内的 WebUI 代理与网关同容器，靠 loopback 访问。容器外的请求经 docker NAT
 # 进来源地址是网桥地址而非 127.0.0.1，所以放行 loopback 不会把外部请求放进来。
@@ -1087,7 +1087,7 @@ def _gateway_info() -> Dict[str, Any]:
         },
         "features": {
             "stream": True,
-            "accountPinHeader": "X-WorkBuddy-Account-Id",
+            "accountPinHeader": "X-AutoBuddy-Account-Id",
             "accountPinBody": "account_id",
             "aliasRouting": True,
         },
@@ -1263,7 +1263,7 @@ async def chat_completions(request: Request):
     # 请求级账号选择：显式 header/body 优先，其次按 account-pool 配置自动分配。
     # 这让多个并发请求可以并行落到多个账号，而不再全部使用 activeAccountId。
     requested_account_id = (
-        request.headers.get("x-workbuddy-account-id")
+        request.headers.get("x-autobuddy-account-id")
         or body.get("account_id")
         or body.get("_account_id")
     )

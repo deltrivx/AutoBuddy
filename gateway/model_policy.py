@@ -43,7 +43,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 MODEL_POLICY_FILE = DATA_DIR / "model_policy.json"
 
 # 来源标记。manual = 人点的，auto = 巡检写的。

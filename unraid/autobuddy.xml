@@ -1,30 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Container version="2">
-  <Name>WorkBuddy-Switch</Name>
-  <Repository>ghcr.io/deltrivx/workbuddy-switch:latest</Repository>
-  <Registry>https://ghcr.io/deltrivx/workbuddy-switch</Registry>
+  <Name>AutoBuddy</Name>
+  <Repository>ghcr.io/deltrivx/autobuddy:latest</Repository>
+  <Registry>https://ghcr.io/deltrivx/autobuddy</Registry>
   <Network>bridge</Network>
   <MyIP />
   <MyMAC />
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/deltrivx/workbuddy-switch/issues</Support>
-  <Project>https://github.com/deltrivx/workbuddy-switch</Project>
-  <ReadMe>https://raw.githubusercontent.com/deltrivx/workbuddy-switch/main/README.md</ReadMe>
-  <Overview>WorkBuddy Switch 是面向 NAS 与服务器的 WorkBuddy / CodeBuddy 多账号管理套件，内置 OpenAI 兼容网关。容器化定制 Web 控制台支持国内版与国际版账号热切换、自动签到保活、积分到期监控、实时用量图表与积分查看；内置网关将 hy4、DeepSeek 等大模型以标准 /v1 接口输出给 Sub2API 及其他 Agent 使用；内置 GitHub 账号自动化接入（容器内置 headless Chromium 直接跑注册流程，不外接 CDP，注册结果自动回灌账号池）。官方底层服务依赖桌面环境的部分已在构建期物理移除，容器内无需任何桌面程序。</Overview>
+  <Support>https://github.com/deltrivx/autobuddy/issues</Support>
+  <Project>https://github.com/deltrivx/autobuddy</Project>
+  <ReadMe>https://raw.githubusercontent.com/deltrivx/autobuddy/main/README.md</ReadMe>
+  <Overview>AutoBuddy 是面向 NAS 与服务器的 WorkBuddy / CodeBuddy 多账号管理套件，内置 OpenAI 兼容网关。容器化定制 Web 控制台支持国内版与国际版账号热切换、自动签到保活、积分到期监控、实时用量图表与积分查看；内置网关将 hy4、DeepSeek 等大模型以标准 /v1 接口输出给 Sub2API 及其他 Agent 使用；内置 GitHub 账号自动化接入（容器内置 headless Chromium 直接跑注册流程，不外接 CDP，注册结果自动回灌账号池）。官方底层服务依赖桌面环境的部分已在构建期物理移除，容器内无需任何桌面程序。</Overview>
   <Category>AI:Tools:Productivity:</Category>
   <WebUI>http://[IP]:[PORT:18090]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/deltrivx/workbuddy-switch/main/unraid/WorkBuddy-Switch.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/deltrivx/workbuddy-switch/main/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/deltrivx/autobuddy/main/unraid/AutoBuddy.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/deltrivx/autobuddy/main/icon.png</Icon>
   <ExtraParams>--restart=unless-stopped --log-opt max-size=50m --log-opt max-file=1</ExtraParams>
   <PostArgs />
   <CPUset />
   <DonateText />
   <DonateLink />
   <Requires />
-  <Config Name="WebUI 端口" Target="18090" Default="18090" Mode="tcp" Description="WorkBuddy Switch 管理面板 WebUI 端口" Type="Port" Display="always" Required="true" Mask="false">18090</Config>
+  <Config Name="WebUI 端口" Target="18090" Default="18090" Mode="tcp" Description="AutoBuddy 管理面板 WebUI 端口" Type="Port" Display="always" Required="true" Mask="false">18090</Config>
   <Config Name="OpenAI API 端口" Target="18091" Default="18091" Mode="tcp" Description="供 Sub2API / 其他 Agent 调用的 OpenAI 兼容 API 端口" Type="Port" Display="always" Required="true" Mask="false">18091</Config>
-  <Config Name="数据持久化目录" Target="/data" Default="/mnt/user/appdata/workbuddy-switch/data" Mode="rw" Description="账号 Token、自动签到记录、积分快照与统计流水持久化根目录" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/workbuddy-switch/data</Config>
+  <Config Name="数据持久化目录" Target="/data" Default="/mnt/user/appdata/autobuddy/data" Mode="rw" Description="账号 Token、自动签到记录、积分快照与统计流水持久化根目录" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/data</Config>
   <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="影响签到定时任务与统计流水的日期归属" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
   <Config Name="启用 GitHub 注册" Target="GH_REGISTER_ENABLED" Default="1" Mode="" Description="是否启动容器内置的 GitHub 账号自动化注册服务（容器内置 headless Chromium，不外接 CDP）" Type="Variable" Display="always" Required="false" Mask="false">1</Config>
   <Config Name="注册服务端口" Target="GH_REGISTER_PORT" Default="18092" Mode="" Description="注册服务内部端口（仅容器内网，由 web_proxy 转发，无需对外映射）" Type="Variable" Display="always" Required="false" Mask="false">18092</Config>
@@ -32,7 +32,7 @@
   <Config Name="Cloudflare 邮件域名" Target="CF_MAIL_DOMAINS" Default="" Mode="" Description="创建临时邮箱时随机选择的域名（逗号分隔）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="GitHub 设备验证码" Target="GH_REGISTER_SECURITY_CODE" Default="" Mode="" Description="GitHub account_verifications 拿到的设备安全码（首次注册时从 GitHub 获取）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="Google 登录密码" Target="GH_REGISTER_GOOGLE_PASSWORD" Default="" Mode="" Description="Google OAuth 登录时若弹出密码框则自动填入（可选）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  <Config Name="浏览器缓存目录" Target="/data/.wb-switch/browsers" Default="/mnt/user/appdata/workbuddy-switch/browsers" Mode="rw" Description="Playwright 浏览器内核持久化目录（参考 MoviePilot 方案：镜像不内置 Chromium，容器部署时自动下载至此目录持久化，容器升级与重建无需重下）" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/workbuddy-switch/browsers</Config>
+  <Config Name="浏览器缓存目录" Target="/data/.autobuddy/browsers" Default="/mnt/user/appdata/autobuddy/browsers" Mode="rw" Description="Playwright 浏览器内核持久化目录（参考 MoviePilot 方案：镜像不内置 Chromium，容器部署时自动下载至此目录持久化，容器升级与重建无需重下）" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/browsers</Config>
   <Config Name="OpenClash 节点切换" Target="CLASH_REST_BASE" Default="http://127.0.0.1:9090" Mode="" Description="Clash RESTful 面板地址，用于注册时切换出口节点（也可在 WebUI 配置）" Type="Variable" Display="always" Required="false" Mask="false">http://127.0.0.1:9090</Config>
   <Config Name="禁用节点切换" Target="GH_REGISTER_NO_SWITCH_PROXY" Default="0" Mode="" Description="设为 1 则注册时不切换 Clash 节点，稳定走默认出口" Type="Variable" Display="always" Required="false" Mask="false">0</Config>
   <Config Name="注册节点列表" Target="CLASH_NODES" Default="" Mode="" Description="Clash 节点名称（逗号分隔），用于轮换选择" Type="Variable" Display="hidden" Required="false" Mask="false"></Config>

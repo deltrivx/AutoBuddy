@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 ACCOUNT_POLICY_FILE = DATA_DIR / "account_policy.json"
 
 # 停用来源。manual = 人在界面上点的；auto = 可用性巡检写的。

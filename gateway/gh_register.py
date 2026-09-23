@@ -1,8 +1,8 @@
 """GitHub 自动化注册服务（配置驱动与内置浏览器版）。
 
-运行在 WorkBuddy-Switch 容器内部（loopback 18092），对外由 web_proxy 统一转发。
+运行在 AutoBuddy 容器内部（loopback 18092），对外由 web_proxy 统一转发。
 所有私有参数（邮箱 API、认证头、代理节点等）均由用户在前端「账号接入」页面自行配置，
-并持久化存储在数据目录（/data/.wb-switch/gh_register_config.json），严禁在代码中
+并持久化存储在数据目录（/data/.autobuddy/gh_register_config.json），严禁在代码中
 硬编码任何私有域名、密码或内部 IP。
 
 对外路由：
@@ -36,7 +36,7 @@ from playwright.async_api import async_playwright
 
 # ------------------------------------------------------------------ 配置持久化
 
-DATA_DIR = Path(os.getenv("WB_DATA_DIR", "/data/.wb-switch"))
+DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 CONFIG_FILE = DATA_DIR / "gh_register_config.json"
 BROWSERS_PATH = os.getenv("PLAYWRIGHT_BROWSERS_PATH", str(DATA_DIR / "browsers"))
 

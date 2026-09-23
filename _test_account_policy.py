@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp())
-os.environ["WB_DATA_DIR"] = str(TMP)
+os.environ["AB_DATA_DIR"] = str(TMP)
 sys.path.insert(0, str(Path(__file__).parent / "gateway"))
 
 import account_policy  # noqa: E402

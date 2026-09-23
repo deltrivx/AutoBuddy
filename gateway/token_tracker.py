@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-TRACKER_FILE = Path("/data/.wb-switch/token_stats_logs.json")
+TRACKER_FILE = Path("/data/.autobuddy/token_stats_logs.json")
 
 
 def extract_usage(obj: Any) -> Optional[Dict[str, int]]:

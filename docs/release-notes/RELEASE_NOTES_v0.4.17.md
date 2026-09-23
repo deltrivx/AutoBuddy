@@ -38,11 +38,11 @@ Google OAuth 登录 → 注册 GitHub → 绑定域名邮箱 → 收验证邮件
 容器新增挂载点：
 
 ```
-/data/.wb-switch/browsers
+/data/.autobuddy/browsers
 ```
 
 Unraid 模板对应新增「浏览器缓存目录」配置项（默认
-`/mnt/user/appdata/workbuddy-switch/browsers`）。这个目录持久化后，
+`/mnt/user/appdata/autobuddy/browsers`）。这个目录持久化后，
 浏览器只需下载一次。
 
 ## 升级提示

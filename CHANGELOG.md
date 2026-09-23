@@ -15,6 +15,25 @@
 
 - 暂无。
 
+## [v0.5.0] - 2026-09-23
+
+### 更名
+- 项目更名为 **AutoBuddy**（原 WorkBuddy Switch）。更名覆盖：仓库、镜像、容器名、
+  Unraid 模板、WebUI 标题与「关于」面板、README 与文档。
+- 数据目录由 `/data/.wb-switch` 迁移为 `/data/.autobuddy`；环境变量前缀由 `WB_` 改为 `AB_`
+  （`AB_DATA_DIR` / `AB_VERSION` / `AB_PROJECT_URL` / `AB_PROJECT_NAME`）。
+- Unraid 模板文件按 Unraid 要求使用全小写：`unraid/autobuddy.xml`。
+- 底层仍是官方 `workbuddy-switch` 包，仅在其之上做容器化定制，未改动官方能力边界。
+
+### 浏览器内核
+- 下载进度结构化（百分比 / 已下载字节 / 总字节 / 阶段 / 已用时），
+  进度条行不再写入日志，日志只保留关键输出。
+- 修复双进程同时下载导致 `__dirlock` 争抢、目录长期为空且进度卡死的问题：
+  内核下载统一由注册服务 startup 钩子托管，`entrypoint.sh` 不再自行调用 playwright。
+- 「账号接入」页面：未安装时显示实时进度条并自动轮询，已安装时显示持久化路径与内核目录。
+
+---
+
 ---
 
 ## [v0.4.17] - 2026-09-23
@@ -37,9 +56,9 @@
 
 ### 变更
 
-- **新增浏览器缓存挂载路径**：容器新增 `/data/.wb-switch/browsers` 挂载点，
+- **新增浏览器缓存挂载路径**：容器新增 `/data/.autobuddy/browsers` 挂载点，
   Unraid 模板对应新增「浏览器缓存目录」配置项
-  （默认 `/mnt/user/appdata/workbuddy-switch/browsers`）。
+  （默认 `/mnt/user/appdata/autobuddy/browsers`）。
 - 注册服务跑在容器内网 `18092`，由 WebUI 反代转发，**不对外映射端口**；
   对外仍只有 `18090` / `18091`。
 
@@ -466,9 +485,9 @@
 
 ### 安全
 
-- 巡检写入的就是手动禁用所用的同一份策略（`/data/.wb-switch/model_policy.json`），
+- 巡检写入的就是手动禁用所用的同一份策略（`/data/.autobuddy/model_policy.json`），
   **关掉自动巡检后已写入的禁用项继续生效**。
-- 巡检配置独立持久化在 `/data/.wb-switch/model_health_config.json`，缺失或损坏时回退为「默认关闭」。
+- 巡检配置独立持久化在 `/data/.autobuddy/model_health_config.json`，缺失或损坏时回退为「默认关闭」。
 - 巡检默认**关闭**，升级后保持升级前的手动禁用状态。
 
 ### 不改变的行为
@@ -503,7 +522,7 @@
 
 ### 安全
 
-- 禁用策略落盘 `/data/.wb-switch/model_policy.json`，与账号池配置完全分离、互不覆盖。
+- 禁用策略落盘 `/data/.autobuddy/model_policy.json`，与账号池配置完全分离、互不覆盖。
 - **只记「被禁用」的项**，未列出的一律视为可用。
 - 采用「先写临时文件再原子替换」，文件缺失、损坏或格式不对时一律回退为「全部可用」。
 
@@ -517,7 +536,7 @@
 
 - **设置 → API 接入 面板**：对外访问地址（按当前主机名自动推导，走域名或隧道时可手动改）、
   接口端点一键复制、网关状态概览、密钥校验开关、密钥管理、连通性自检、可直接使用的 `curl` 示例。
-- **API 访问密钥**：格式 `sk-wb-` + 32 位十六进制。支持 `Authorization: Bearer …` 与 `x-api-key: …`
+- **API 访问密钥**：格式 `sk-ab-` + 32 位十六进制。支持 `Authorization: Bearer …` 与 `x-api-key: …`
   两种请求头，`Bearer` 大小写不敏感，密钥首尾空格会被容忍。可新建、复制明文、停用、启用、删除、
   清空，每行显示掩码、调用次数与最近使用时间。
 - **连通性自检**：在容器内回环实测「网关健康 / 模型清单 / 密钥配置自洽性」三步。
@@ -539,7 +558,7 @@
   **最后一个**启用中的密钥，也不允许清空全部。
 - **清空全部密钥时不会顺手把校验关掉。**
 - **容器内回环免校验**：WebUI 代理与网关同容器，放行回环不会把外部请求放进来。
-- 密钥文件落盘 `/data/.wb-switch/api_keys.json`（权限 `0600`），采用原子替换写入；
+- 密钥文件落盘 `/data/.autobuddy/api_keys.json`（权限 `0600`），采用原子替换写入；
   文件损坏时回退到「未启用校验 + 空列表」。
 - 密钥比对使用常量时间算法，避免时序侧信道。
 
@@ -552,7 +571,7 @@
 ### 修复
 
 - 修复**账号卡片「已调用 N 次」在容器重建后归零**：选账号流水此前只存在进程内存里，
-  现在落盘到 `/data/.wb-switch/selection_logs.json`，跨重建连续。
+  现在落盘到 `/data/.autobuddy/selection_logs.json`，跨重建连续。
 - 修复**「清零统计」清不干净**：现在同时清内存与磁盘。
 
 ### 变更
@@ -573,7 +592,7 @@
 
 ### 移除
 
-一次性清理 CodeBuddy CLI 在数据卷里的遗留（删除前已打包备份到 `/mnt/user/appdata/workbuddy-switch/backup/`）：
+一次性清理 CodeBuddy CLI 在数据卷里的遗留（删除前已打包备份到 `/mnt/user/appdata/autobuddy/backup/`）：
 
 | 内容 | 体积 | 性质 |
 | :--- | ---: | :--- |
@@ -586,7 +605,7 @@
 
 ### 修复
 
-- 修掉唯一还在「制造」残留的源头：`/data/.wb-switch/rotate` 是一个每次容器启动都会被重建的空目录，
+- 修掉唯一还在「制造」残留的源头：`/data/.autobuddy/rotate` 是一个每次容器启动都会被重建的空目录，
   现在启动脚本不再创建它。
 
 ### 明确不动
@@ -943,44 +962,45 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.17...HEAD
-[v0.4.17]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.16...v0.4.17
-[v0.4.16]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.15...v0.4.16
-[v0.4.15]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.14...v0.4.15
-[v0.4.14]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.13...v0.4.14
-[v0.4.13]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.12...v0.4.13
-[v0.4.12]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.11...v0.4.12
-[v0.4.11]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.10...v0.4.11
-[v0.4.10]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.9...v0.4.10
-[v0.4.9]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.8...v0.4.9
-[v0.4.8]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.7...v0.4.8
-[v0.4.7]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.6...v0.4.7
-[v0.4.6]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.5...v0.4.6
-[v0.4.5]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.4...v0.4.5
-[v0.4.4]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.3...v0.4.4
-[v0.4.3]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.2...v0.4.3
-[v0.4.2]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.1...v0.4.2
-[v0.4.1]: https://github.com/deltrivx/workbuddy-switch/compare/v0.4.0...v0.4.1
-[v0.4.0]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.18...v0.4.0
-[v0.3.18]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.17...v0.3.18
-[v0.3.17]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.16...v0.3.17
-[v0.3.16]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.15...v0.3.16
-[v0.3.15]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.14...v0.3.15
-[v0.3.14]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.13...v0.3.14
-[v0.3.13]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.12...v0.3.13
-[v0.3.12]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.11...v0.3.12
-[v0.3.11]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.10...v0.3.11
-[v0.3.10]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.9...v0.3.10
-[v0.3.9]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.8...v0.3.9
-[v0.3.8]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.7...v0.3.8
-[v0.3.7]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.6...v0.3.7
-[v0.3.6]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.5...v0.3.6
-[v0.3.5]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.4...v0.3.5
-[v0.3.4]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.3...v0.3.4
-[v0.3.3]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.2...v0.3.3
-[v0.3.2]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.1...v0.3.2
-[v0.3.1]: https://github.com/deltrivx/workbuddy-switch/compare/v0.3.0...v0.3.1
-[v0.3.0]: https://github.com/deltrivx/workbuddy-switch/compare/v0.2.0...v0.3.0
-[v0.2.0]: https://github.com/deltrivx/workbuddy-switch/compare/v0.1.2...v0.2.0
-[v0.1.2]: https://github.com/deltrivx/workbuddy-switch/compare/v0.1.0...v0.1.2
-[v0.1.0]: https://github.com/deltrivx/workbuddy-switch/releases/tag/v0.1.0
+[未发布]: https://github.com/deltrivx/autobuddy/compare/v0.5.0...HEAD
+[v0.5.0]: https://github.com/deltrivx/autobuddy/compare/v0.4.17...v0.5.0
+[v0.4.17]: https://github.com/deltrivx/autobuddy/compare/v0.4.16...v0.4.17
+[v0.4.16]: https://github.com/deltrivx/autobuddy/compare/v0.4.15...v0.4.16
+[v0.4.15]: https://github.com/deltrivx/autobuddy/compare/v0.4.14...v0.4.15
+[v0.4.14]: https://github.com/deltrivx/autobuddy/compare/v0.4.13...v0.4.14
+[v0.4.13]: https://github.com/deltrivx/autobuddy/compare/v0.4.12...v0.4.13
+[v0.4.12]: https://github.com/deltrivx/autobuddy/compare/v0.4.11...v0.4.12
+[v0.4.11]: https://github.com/deltrivx/autobuddy/compare/v0.4.10...v0.4.11
+[v0.4.10]: https://github.com/deltrivx/autobuddy/compare/v0.4.9...v0.4.10
+[v0.4.9]: https://github.com/deltrivx/autobuddy/compare/v0.4.8...v0.4.9
+[v0.4.8]: https://github.com/deltrivx/autobuddy/compare/v0.4.7...v0.4.8
+[v0.4.7]: https://github.com/deltrivx/autobuddy/compare/v0.4.6...v0.4.7
+[v0.4.6]: https://github.com/deltrivx/autobuddy/compare/v0.4.5...v0.4.6
+[v0.4.5]: https://github.com/deltrivx/autobuddy/compare/v0.4.4...v0.4.5
+[v0.4.4]: https://github.com/deltrivx/autobuddy/compare/v0.4.3...v0.4.4
+[v0.4.3]: https://github.com/deltrivx/autobuddy/compare/v0.4.2...v0.4.3
+[v0.4.2]: https://github.com/deltrivx/autobuddy/compare/v0.4.1...v0.4.2
+[v0.4.1]: https://github.com/deltrivx/autobuddy/compare/v0.4.0...v0.4.1
+[v0.4.0]: https://github.com/deltrivx/autobuddy/compare/v0.3.18...v0.4.0
+[v0.3.18]: https://github.com/deltrivx/autobuddy/compare/v0.3.17...v0.3.18
+[v0.3.17]: https://github.com/deltrivx/autobuddy/compare/v0.3.16...v0.3.17
+[v0.3.16]: https://github.com/deltrivx/autobuddy/compare/v0.3.15...v0.3.16
+[v0.3.15]: https://github.com/deltrivx/autobuddy/compare/v0.3.14...v0.3.15
+[v0.3.14]: https://github.com/deltrivx/autobuddy/compare/v0.3.13...v0.3.14
+[v0.3.13]: https://github.com/deltrivx/autobuddy/compare/v0.3.12...v0.3.13
+[v0.3.12]: https://github.com/deltrivx/autobuddy/compare/v0.3.11...v0.3.12
+[v0.3.11]: https://github.com/deltrivx/autobuddy/compare/v0.3.10...v0.3.11
+[v0.3.10]: https://github.com/deltrivx/autobuddy/compare/v0.3.9...v0.3.10
+[v0.3.9]: https://github.com/deltrivx/autobuddy/compare/v0.3.8...v0.3.9
+[v0.3.8]: https://github.com/deltrivx/autobuddy/compare/v0.3.7...v0.3.8
+[v0.3.7]: https://github.com/deltrivx/autobuddy/compare/v0.3.6...v0.3.7
+[v0.3.6]: https://github.com/deltrivx/autobuddy/compare/v0.3.5...v0.3.6
+[v0.3.5]: https://github.com/deltrivx/autobuddy/compare/v0.3.4...v0.3.5
+[v0.3.4]: https://github.com/deltrivx/autobuddy/compare/v0.3.3...v0.3.4
+[v0.3.3]: https://github.com/deltrivx/autobuddy/compare/v0.3.2...v0.3.3
+[v0.3.2]: https://github.com/deltrivx/autobuddy/compare/v0.3.1...v0.3.2
+[v0.3.1]: https://github.com/deltrivx/autobuddy/compare/v0.3.0...v0.3.1
+[v0.3.0]: https://github.com/deltrivx/autobuddy/compare/v0.2.0...v0.3.0
+[v0.2.0]: https://github.com/deltrivx/autobuddy/compare/v0.1.2...v0.2.0
+[v0.1.2]: https://github.com/deltrivx/autobuddy/compare/v0.1.0...v0.1.2
+[v0.1.0]: https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0

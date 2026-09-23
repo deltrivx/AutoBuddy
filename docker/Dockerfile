@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get update && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# 全局安装 workbuddy-switch（官方底层服务 + WebUI）。
+# 全局安装官方 workbuddy-switch（底层服务 + WebUI）。本容器在其之上做定制。
 #
 # 版本必须锁定，不能用 @latest：
 # patch/patch_binary.py 的锚点依赖官方前端的具体结构，上游发版会重排 minify 变量名
@@ -83,14 +83,14 @@ RUN set -eux; \
     for b in $BINS; do python3 /app/patch/patch_binary.py "$b"; done
 
 ENV HOME=/data
-ENV WB_DATA_DIR=/data/.wb-switch
+ENV AB_DATA_DIR=/data/.autobuddy
 ENV PORT=18090
 ENV API_PORT=18091
 
 # 浏览器安装目录指向挂载卷（Unraid 模板里的「浏览器缓存目录」映射到这里）。
 # 镜像内不再打包 Chromium，改由 UI 触发 `playwright install chromium` 下载到此处；
 # 宿主机持久化后，容器重建/升级都不必重下。
-ENV PLAYWRIGHT_BROWSERS_PATH=/data/.wb-switch/browsers
+ENV PLAYWRIGHT_BROWSERS_PATH=/data/.autobuddy/browsers
 
 EXPOSE 18090 18091
 
