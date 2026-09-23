@@ -7,15 +7,25 @@ echo "=== 启动 WorkBuddy Switch & OpenAI API Gateway ==="
 # 时代的 token 轮换目录，CLI 已于 v0.3.11 彻底移除，空目录留着纯属残留。
 mkdir -p /data/.wb-switch
 
-# 浏览器安装目录（挂载卷）。镜像不再内置 Chromium，这里只建空目录；
-# 首次使用需在 UI 里点「下载浏览器」，下完后容器重建也不丢。
+# 浏览器安装目录（挂载卷，参考 MoviePilot 方案：镜像不内置浏览器，容器部署时自动下载并持久化）。
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.wb-switch/browsers}"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
-if ls -1 "$PLAYWRIGHT_BROWSERS_PATH" 2>/dev/null | grep -q '^chromium'; then
-    echo "[browsers] 已检测到内置浏览器：$(ls -1 "$PLAYWRIGHT_BROWSERS_PATH" | tr '\n' ' ')"
-else
-    echo "[browsers] 尚未下载浏览器，请到 WebUI 的「账号接入」面板点「下载浏览器」"
-fi
+
+auto_install_browsers() {
+    if ! ls -1 "$PLAYWRIGHT_BROWSERS_PATH" 2>/dev/null | grep -q '^chromium'; then
+        echo "[browsers] 首次启动未检测到持久化 Chromium，开始自动下载内核至 $PLAYWRIGHT_BROWSERS_PATH..."
+        if python3 -m playwright install chromium; then
+            echo "[browsers] Chromium 内核自动下载安装完成，已持久化于挂载卷！"
+        else
+            echo "[browsers] Chromium 自动下载失败，可在 WebUI「账号接入」页面手动重试。"
+        fi
+    else
+        echo "[browsers] 检测到持久化 Chromium 内核已就绪：$(ls -1 "$PLAYWRIGHT_BROWSERS_PATH" | tr '\n' ' ')"
+    fi
+}
+# 后台异步执行内核检测与下载，不阻塞 WebUI 与 API 网关的即时启动
+auto_install_browsers &
+
 
 # 1. 启动官方 workbuddy-switch 在 57890 端口
 echo "[WorkBuddy-Switch] 正在启动底层服务..."

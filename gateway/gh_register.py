@@ -72,8 +72,9 @@ def load_config() -> dict:
         cfg["mail_api_base"] = os.getenv("CF_MAIL_API_BASE", "")
     if not cfg["mail_domains"] and os.getenv("CF_MAIL_DOMAINS"):
         cfg["mail_domains"] = [d.strip() for d in os.getenv("CF_MAIL_DOMAINS", "").split(",") if d.strip()]
-    if not cfg["google_password"] and [密钥]"GH_REGISTER_GOOGLE_PASSWORD"):
-        cfg["google_password"] = [密钥]"GH_REGISTER_GOOGLE_PASSWORD", "")
+    g_pw = os.environ.get("GH_REGISTER_GOOGLE_PASSWORD", "")
+    if not cfg["google_password"] and g_pw:
+        cfg["google_password"] = g_pw
     return cfg
 
 
