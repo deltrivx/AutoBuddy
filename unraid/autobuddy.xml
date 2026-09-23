@@ -11,7 +11,7 @@
   <Support>https://github.com/deltrivx/AutoBuddy/issues</Support>
   <Project>https://github.com/deltrivx/AutoBuddy</Project>
   <ReadMe>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/README.md</ReadMe>
-  <Overview>AutoBuddy 是面向 NAS 与服务器的 WorkBuddy / CodeBuddy 多账号管理套件，内置 SQLite 数据库、用户安全认证与 OpenAI 兼容网关。Web 控制台支持多账号自动签到保活、积分监控与流水查看；内置网关将大模型以标准 /v1 接口输出给 Sub2API 及其他客户端；内置 GitHub 账号自动化接入（容器内置 headless Chromium 自动下载至持久化卷，配置全在 WebUI 保存至内置数据库，无需堆砌环境变量）。</Overview>
+  <Overview>AutoBuddy 是面向 NAS 与服务器打造的 WorkBuddy / CodeBuddy 多账号管理套件与 OpenAI 兼容网关。内置 SQLite 数据库持久化存储系统配置与用户认证凭据；Web 控制台支持多账号自动签到保活、积分用量监控与 Token 调用流水；内置网关将大模型以标准 /v1 接口输出给各类 Agent 客户端；内置 GitHub 账号自动化接入（容器内置 Chromium 自动下载至挂载卷，配置在 WebUI 页面直接落库）。</Overview>
   <Category>AI:Tools:Productivity:</Category>
   <WebUI>http://[IP]:[PORT:18090]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/unraid/autobuddy.xml</TemplateURL>
@@ -22,22 +22,22 @@
   <DonateText />
   <DonateLink />
   <Requires />
-  <!-- 核心端口映射 -->
-  <Config Name="WebUI 端口" Target="18090" Default="18090" Mode="tcp" Description="AutoBuddy 管理面板 WebUI 端口" Type="Port" Display="always" Required="true" Mask="false">18090</Config>
-  <Config Name="OpenAI API 端口" Target="18091" Default="18091" Mode="tcp" Description="供 Sub2API / 其他 Agent 调用的 OpenAI 兼容 API 端口" Type="Port" Display="always" Required="true" Mask="false">18091</Config>
+
+  <!-- 端口映射 -->
+  <Config Name="WebUI 端口" Target="18090" Default="18090" Mode="tcp" Description="AutoBuddy 管理面板访问端口（提供账号管理、自动签到、用量监控与 API 接入）" Type="Port" Display="always" Required="true" Mask="false">18090</Config>
+  <Config Name="OpenAI API 端口" Target="18091" Default="18091" Mode="tcp" Description="OpenAI 兼容 API 网关端口（输出标准 /v1 接口供各类 AI 客户端接入）" Type="Port" Display="always" Required="true" Mask="false">18091</Config>
   
-  <!-- 持久化挂载卷（全小写路径规范） -->
-  <Config Name="数据持久化目录" Target="/data" Default="/mnt/user/appdata/autobuddy/data" Mode="rw" Description="SQLite 数据库 (autobuddy.db)、账号 Token、系统配置与统计流水持久化根目录" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/data</Config>
-  <Config Name="浏览器缓存目录" Target="/data/.autobuddy/browsers" Default="/mnt/user/appdata/autobuddy/browsers" Mode="rw" Description="Playwright 浏览器内核持久化目录（参考 MoviePilot 方案：容器首次启动自动下载至此目录持久化，容器升级与重建无需重下）" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/browsers</Config>
+  <!-- 持久化挂载路径（遵循全小写规范） -->
+  <Config Name="数据持久化目录" Target="/data" Default="/mnt/user/appdata/autobuddy/data" Mode="rw" Description="数据根目录：存储 SQLite 数据库 (autobuddy.db)、账号 Token、系统配置与统计流水" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/data</Config>
+  <Config Name="浏览器缓存目录" Target="/data/.autobuddy/browsers" Default="/mnt/user/appdata/autobuddy/browsers" Mode="rw" Description="Playwright 浏览器内核持久化目录：首次启动自动下载并持久化，容器升级与重建无需重复下载" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/browsers</Config>
 
-  <!-- 基础环境配置 -->
-  <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="影响签到定时任务与统计流水的日期归属" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
-  <Config Name="启用 WebUI 认证" Target="AUTH_ENABLED" Default="1" Mode="" Description="是否开启 Web 控制台登录鉴权（1=开启，默认账号密码为 [密钥]）" Type="Variable" Display="always" Required="false" Mask="false">1</Config>
-  <Config Name="WebUI 登录用户名" Target="AUTH_USERNAME" Default="[密钥]" Mode="" Description="控制台管理员用户名（若未配置，默认用户名为 [密钥]）" Type="Variable" Display="always" Required="false" Mask="false">[密钥]</Config>
-  <Config Name="WebUI 登录密码" Target="AUTH_PASSWORD" Default="[密钥]" Mode="" Description="控制台管理员密码（若未配置，默认密码为 [密钥]）" Type="Variable" Display="always" Required="false" Mask="true">[密钥]</Config>
+  <!-- 用户认证凭据（强制认证，可通过环境变量覆盖或在页面修改） -->
+  <Config Name="WebUI 管理员账号" Target="AUTH_USERNAME" Default="[密钥]" Mode="" Description="控制台登录账号（未配置时默认使用 [密钥]）" Type="Variable" Display="always" Required="false" Mask="false">[密钥]</Config>
+  <Config Name="WebUI 管理员密码" Target="AUTH_PASSWORD" Default="[密钥]" Mode="" Description="控制台登录密码（未配置时默认使用 [密钥]，可在登录后于页面自行修改）" Type="Variable" Display="always" Required="false" Mask="true">[密钥]</Config>
 
-  <!-- 代理环境与精确分流规则 -->
-  <Config Name="HTTP 代理" Target="HTTP_PROXY" Default="" Mode="" Description="出网 HTTP 代理地址（例如 http://192.168.31.1:7890），用于模型上游与 GitHub 访问" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <!-- 运行环境与代理分流 -->
+  <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="容器运行时区（确保签到任务与用量统计按中国标准时间归集）" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
+  <Config Name="HTTP 代理" Target="HTTP_PROXY" Default="" Mode="" Description="出网 HTTP 代理地址（例如 http://192.168.31.1:7890，用于模型上游与 GitHub 出网）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="HTTPS 代理" Target="HTTPS_PROXY" Default="" Mode="" Description="出网 HTTPS 代理地址（例如 http://192.168.31.1:7890）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  <Config Name="代理分流绕过 (NO_PROXY)" Target="NO_PROXY" Default="localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1" Mode="" Description="不走代理的精确 IP 列表（严禁使用 CIDR 网段，Python httpx 仅认精确 IP，用于内网通信与回环接口防 502/404）" Type="Variable" Display="always" Required="false" Mask="false">localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1</Config>
+  <Config Name="代理分流绕过 (NO_PROXY)" Target="NO_PROXY" Default="localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1" Mode="" Description="不走代理的精确内网 IP 列表（Python httpx 不支持 CIDR 网段，请务必填写精确 IP 以防回环 502/404 故障）" Type="Variable" Display="always" Required="false" Mask="false">localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1</Config>
 </Container>

@@ -15,6 +15,16 @@
 
 - 暂无。
 
+## [v0.5.3] - 2026-09-23
+
+### 统计校准与修复
+- 修复 Token 统计国内版与国际版 Tab 数据混淆与 100% 重复的问题：`workbuddy` 与 `workbuddy-ai` 严格按账号 `variant`（国内版 `cn` / 国际版 `ai`）分别独立归集计算指标与趋势。
+- 修复积分统计（`/api/credits/stats`）混入已删除历史僵尸账号问题：响应层自动根据当前真实账号池过滤，校准剩余额度与用量汇总。
+
+### 模板与安全认证优化
+- 强制控制台访问认证，取消无意义的认证开关变量。
+- 优化 Unraid 容器模板各项配置的中文描述与说明。
+
 ## [v0.5.2] - 2026-09-23
 
 ### 认证增强
@@ -983,7 +993,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.3...HEAD
+[v0.5.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.2...v0.5.3
 [v0.5.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.1...v0.5.2
 [v0.5.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.0...v0.5.1
 [v0.5.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.4.17...v0.5.0

@@ -445,33 +445,152 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         "uncachedInput": max(0, total_input - total_cache_read)
     }
     
-    def make_source_obj(src_name):
+    # --------------------------------------------------------------------------
+    # 严格按版本分流聚合：
+    # workbuddy    -> 国内版账号 (variant == "cn")
+    # workbuddy-ai -> 国际版账号 (variant == "ai")
+    # 避免双 Tab 显示 100% 重复数据导致两边完全一样
+    # --------------------------------------------------------------------------
+    def aggregate_for_subset(subset_logs: List[Dict[str, Any]], src_name: str) -> Dict[str, Any]:
+        sub_daily = {}
+        sub_model = {}
+        sub_project = {}
+        sub_daily_by_model = {}
+        sub_inp = 0
+        sub_out = 0
+        sub_cr = 0
+        sub_cw = 0
+
+        for l in subset_logs:
+            d = l.get("date", "")
+            m = l.get("model", "unknown")
+            inp = l.get("input", 0)
+            out = l.get("output", 0)
+            tot = inp + out
+            cr, cw, unc = _cache_of(l)
+
+            sub_inp += inp
+            sub_out += out
+            sub_cr += cr
+            sub_cw += cw
+
+            def _sub_acc(store):
+                store["total"] += tot
+                store["input"] += inp
+                store["output"] += out
+                store["cacheRead"] += cr
+                store["cacheWrite"] += cw
+                store["uncachedInput"] += unc
+                store["records"] += 1
+
+            _bucket(sub_daily, d)
+            _sub_acc(sub_daily[d])
+
+            _bucket(sub_model, m, {"model": m})
+            _sub_acc(sub_model[m])
+
+            pname = l.get("accountName") or l.get("accountId") or "未归因"
+            _bucket(sub_project, pname)
+            _sub_acc(sub_project[pname])
+
+            per_m = sub_daily_by_model.setdefault(m, {})
+            _bucket(per_m, d)
+            _sub_acc(per_m[d])
+
+        for b in list(sub_daily.values()) + list(sub_model.values())                 + list(sub_project.values())                 + [b for per in sub_daily_by_model.values() for b in per.values()]:
+            b["cacheHitRate"] = _hit_rate(b["cacheRead"], b["input"])
+
+        d_list = sorted(list(sub_daily.values()), key=lambda x: x["key"])
+        m_list = sorted(list(sub_model.values()), key=lambda x: x["total"], reverse=True)
+        for item in m_list:
+            item.setdefault("key", item.get("model"))
+        p_list = sorted(list(sub_project.values()), key=lambda x: x["total"], reverse=True)
+        dbm_list = {k: sorted(list(v.values()), key=lambda x: x["key"]) for k, v in sub_daily_by_model.items()}
+
+        sub_sorted = sorted(subset_logs, key=lambda x: x.get("timestamp") or x.get("ts") or 0, reverse=True)
+        req_list = []
+        for l in sub_sorted[:200]:
+            req_id = str(l.get("id", "req-0"))
+            ts = l.get("timestamp") or l.get("ts") or int(time.time() * 1000)
+            inp = l.get("input", 0)
+            out = l.get("output", 0)
+            cr, cw, unc = _cache_of(l)
+            acc_name = l.get("accountName") or l.get("accountId") or "未归因"
+            req_list.append({
+                "id": req_id,
+                "sessionId": req_id,
+                "title": f"调用 #{req_id[:8]}",
+                "project": acc_name,
+                "account": acc_name,
+                "accountId": l.get("accountId") or "",
+                "timestamp": ts,
+                "time": l.get("time", ""),
+                "model": l.get("model", "unknown"),
+                "input": inp,
+                "output": out,
+                "total": inp + out,
+                "cacheRead": cr,
+                "cacheWrite": cw,
+                "uncachedInput": unc,
+                "thinking": 0,
+                "duration": l.get("duration", 1.0)
+            })
+
+        sess_list = []
+        for l in sorted(subset_logs, key=lambda x: (x.get("total") or 0), reverse=True)[:50]:
+            req_id = str(l.get("id", "req-0"))
+            acc_name = l.get("accountName") or l.get("accountId") or "未归因"
+            cr, cw, unc = _cache_of(l)
+            sess_list.append({
+                "key": req_id,
+                "sessionId": req_id,
+                "title": l.get("model", "unknown"),
+                "project": acc_name,
+                "account": acc_name,
+                "input": l.get("input", 0),
+                "output": l.get("output", 0),
+                "cacheRead": cr,
+                "cacheWrite": cw,
+                "uncachedInput": unc,
+                "records": 1,
+            })
+
+        sub_summary = {
+            "cacheHitRate": _hit_rate(sub_cr, sub_inp),
+            "cacheRead": sub_cr,
+            "cacheWrite": sub_cw,
+            "input": sub_inp,
+            "output": sub_out,
+            "records": len(subset_logs),
+            "total": sub_inp + sub_out,
+            "uncachedInput": max(0, sub_inp - sub_cr)
+        }
+
         return {
             "coverageEndAt": None,
             "coverageStartAt": None,
-            "daily": daily_list,
-            "dailyByModel": daily_by_model_list,
-            "filesScanned": records_count,
+            "daily": d_list,
+            "dailyByModel": dbm_list,
+            "filesScanned": len(subset_logs),
             "hours": [],
-            "models": models_list,
+            "models": m_list,
             "parseErrors": 0,
-            "projects": projects_list,
-            "requests": requests_list,
-            "sessions": sessions_list,
+            "projects": p_list,
+            "requests": req_list,
+            "sessions": sess_list,
             "source": src_name,
-            "summary": summary
+            "summary": sub_summary
         }
-        
+
+    # 拆分国内版(cn)与国际版(ai)
+    cn_logs = [l for l in logs if l.get("variant") == "cn"]
+    ai_logs = [l for l in logs if l.get("variant") == "ai"]
+    # 若某一边为空则兜底包含全部
+    src_cn = aggregate_for_subset(cn_logs if cn_logs else logs, "workbuddy")
+    src_ai = aggregate_for_subset(ai_logs if ai_logs else logs, "workbuddy-ai")
+
     return {
         "generatedAt": int(time.time() * 1000),
         "rangeDays": None,
-        # 只保留两条真实存在的产品线。官方前端原本还有 codebuddy-cli /
-        # codebuddy-ide 两个来源，它们对应已移除的桌面端 CLI/IDE 功能，
-        # 容器里不存在本地会话日志，属于死重，已一并去掉。
-        # 前端取用逻辑（已核对）：优先当前选中项，否则回落 workbuddy，
-        # 最后才用 sources[0] —— 因此删桶不会让页面空白。
-        "sources": [
-            make_source_obj("workbuddy"),
-            make_source_obj("workbuddy-ai")
-        ]
+        "sources": [src_cn, src_ai]
     }

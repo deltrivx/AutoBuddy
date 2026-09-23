@@ -3093,7 +3093,7 @@ def get_current_user(autobuddy_session: Optional[str] = Cookie(None)) -> Optiona
 
 @app.get("/api/auth/status")
 async def auth_status(user: Optional[str] = Depends(get_current_user)):
-    enabled = os.getenv("AUTH_ENABLED", "1") == "1"
+    enabled = True
     return {
         "enabled": enabled,
         "authenticated": bool(user) if enabled else True,
@@ -3145,6 +3145,57 @@ async def get_icon():
     async with _internal_client() as client:
         r = await client.get(f"{BACKEND_URL}/icon.png")
         return Response(content=r.content, media_type="image/png")
+
+
+@app.get("/api/credits/stats")
+async def credits_stats_proxy(request: Request):
+    """过滤官方 credits/stats 中的已删除僵尸账号，只保留当前账号池真实账号，并校准汇总指标。"""
+    try:
+        async with _internal_client(timeout=10.0) as client:
+            r = await client.get(f"{BACKEND_URL}/api/credits/stats")
+            if r.status_code != 200:
+                return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+            data = r.json()
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502, media_type="application/json")
+
+    # 读取当前有效的真实账号列表
+    valid_account_ids = set()
+    for acc_file in [DATA_DIR / "accounts.json", Path("/data/.wb-switch/accounts.json")]:
+        if acc_file.exists():
+            try:
+                with open(acc_file, "r", encoding="utf-8") as f:
+                    acc_data = json.load(f)
+                if isinstance(acc_data, list):
+                    for a in acc_data:
+                        if a.get("id"):
+                            valid_account_ids.add(str(a["id"]))
+                elif isinstance(acc_data, dict) and "accounts" in acc_data:
+                    for a in acc_data["accounts"]:
+                        if a.get("id"):
+                            valid_account_ids.add(str(a["id"]))
+                if valid_account_ids:
+                    break
+            except Exception:
+                pass
+
+    if valid_account_ids and "accounts" in data and isinstance(data["accounts"], list):
+        # 仅保留真实存在的账号
+        filtered_accounts = [a for a in data["accounts"] if str(a.get("accountId")) in valid_account_ids]
+        data["accounts"] = filtered_accounts
+
+        # 重新校准 summary
+        total_remaining = sum((a.get("currentRemaining") or 0.0) for a in filtered_accounts)
+        usage_7d = sum((a.get("usage7Days") or 0.0) for a in filtered_accounts)
+        usage_today = sum((a.get("usageToday") or 0.0) for a in filtered_accounts)
+
+        if "summary" in data and isinstance(data["summary"], dict):
+            data["summary"]["currentRemaining"] = round(total_remaining, 2)
+            data["summary"]["usage7Days"] = round(usage_7d, 2)
+            data["summary"]["usageToday"] = round(usage_today, 4)
+
+    return Response(content=json.dumps(data, ensure_ascii=False), media_type="application/json")
+
 
 @app.get("/api/token-stats")
 async def token_stats_api(request: Request):
