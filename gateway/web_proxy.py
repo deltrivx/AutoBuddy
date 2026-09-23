@@ -3076,6 +3076,7 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
 # 用户认证与配置持久化 API (SQLite 驱动)
 # ---------------------------------------------------------------------------
 from fastapi import Cookie, Depends, Response
+from pydantic import BaseModel
 
 class LoginReq(BaseModel):
     username: str
