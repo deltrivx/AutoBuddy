@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.5.2] - 2026-09-23
+
+### 认证增强
+- 支持通过环境变量 `AUTH_USERNAME`（或 `AUTH_USER`）与 `AUTH_PASSWORD`（或 `AUTH_PASS`）配置登录凭据。
+- 未配置环境变量时，默认用户名和密码均为 **`[密钥]`**。
+- Unraid 模板同步增加 `AUTH_USERNAME` 与 `AUTH_PASSWORD` 配置项。
+
 ## [v0.5.1] - 2026-09-23
 
 ### 认证与数据库
@@ -976,7 +983,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.1...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.2...HEAD
+[v0.5.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.1...v0.5.2
 [v0.5.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.0...v0.5.1
 [v0.5.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.4.17...v0.5.0
 [v0.4.17]: https://github.com/deltrivx/AutoBuddy/compare/v0.4.16...v0.4.17

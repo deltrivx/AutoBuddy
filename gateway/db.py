@@ -66,20 +66,36 @@ def init_db() -> None:
         )
         """)
         
-        # 检查是否已存在管理员
-        cursor.execute("SELECT COUNT(*) as cnt FROM users")
-        row = cursor.fetchone()
-        if row and row["cnt"] == 0:
-            default_user = os.getenv("AUTH_DEFAULT_USER", "admin")
-            default_pwd = os.getenv("AUTH_DEFAULT_PASS", "admin123")
+        # 认证用户与环境变量动态同步：
+        # 支持环境变量 AUTH_USERNAME / AUTH_USER / AUTH_DEFAULT_USER
+        # 与 AUTH_PASSWORD / AUTH_PASS / AUTH_DEFAULT_PASS。
+        # 未配置时默认用户名和密码均为 [密钥]。
+        env_user = (os.getenv("AUTH_USERNAME") or os.getenv("AUTH_USER") or os.getenv("AUTH_DEFAULT_USER") or "[密钥]").strip()
+        env_pwd = (os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "[密钥]").strip()
+
+        cursor.execute("SELECT id, username, salt FROM users WHERE username = ?", (env_user,))
+        user_row = cursor.fetchone()
+        now = time.time()
+
+        if not user_row:
+            # 用户不存在则创建（无论是默认 [密钥] 还是环境变量指定的新用户名）
             salt = secrets.token_hex(16)
-            pwd_hash = hashlib.sha256((default_pwd + salt).encode("utf-8")).hexdigest()
-            now = time.time()
+            pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
             cursor.execute(
                 "INSERT INTO users (username, password_hash, salt, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (default_user, pwd_hash, salt, "admin", now, now)
+                (env_user, pwd_hash, salt, "admin", now, now)
             )
-            print(f"[Database] 已初始化默认管理员账号：{default_user} (初始密码: admin123)")
+            print(f"[Database] 已初始化认证账号：{env_user}")
+        else:
+            # 若环境变量显式指定了密码，同步更新该账号密码
+            if os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS"):
+                salt = user_row["salt"] or secrets.token_hex(16)
+                pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
+                cursor.execute(
+                    "UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?",
+                    (pwd_hash, salt, now, user_row["id"])
+                )
+                print(f"[Database] 环境变量显式指定密码，已同步更新账号：{env_user}")
 
         # 迁移既有的 gh_register_config.json 进数据库（如存在）
         cfg_file = DATA_DIR / "gh_register_config.json"

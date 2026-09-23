@@ -32,7 +32,9 @@
 
   <!-- 基础环境配置 -->
   <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="影响签到定时任务与统计流水的日期归属" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
-  <Config Name="启用 WebUI 认证" Target="AUTH_ENABLED" Default="1" Mode="" Description="是否开启 Web 控制台登录鉴权（1=开启，默认用户: admin，默认密码: [密钥]可在 WebUI 修改并持久化至数据库）" Type="Variable" Display="always" Required="false" Mask="false">1</Config>
+  <Config Name="启用 WebUI 认证" Target="AUTH_ENABLED" Default="1" Mode="" Description="是否开启 Web 控制台登录鉴权（1=开启，默认账号密码为 [密钥]）" Type="Variable" Display="always" Required="false" Mask="false">1</Config>
+  <Config Name="WebUI 登录用户名" Target="AUTH_USERNAME" Default="[密钥]" Mode="" Description="控制台管理员用户名（若未配置，默认用户名为 [密钥]）" Type="Variable" Display="always" Required="false" Mask="false">[密钥]</Config>
+  <Config Name="WebUI 登录密码" Target="AUTH_PASSWORD" Default="[密钥]" Mode="" Description="控制台管理员密码（若未配置，默认密码为 [密钥]）" Type="Variable" Display="always" Required="false" Mask="true">[密钥]</Config>
 
   <!-- 代理环境与精确分流规则 -->
   <Config Name="HTTP 代理" Target="HTTP_PROXY" Default="" Mode="" Description="出网 HTTP 代理地址（例如 http://192.168.31.1:7890），用于模型上游与 GitHub 访问" Type="Variable" Display="always" Required="false" Mask="false"></Config>
