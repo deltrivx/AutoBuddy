@@ -1,4 +1,4 @@
-import gateway.db as db
+import db
 import json
 import os
 from pathlib import Path

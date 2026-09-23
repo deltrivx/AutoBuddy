@@ -1,4 +1,4 @@
-import gateway.db as db
+import db
 """GitHub 自动化注册服务（配置驱动与内置浏览器版）。
 
 运行在 AutoBuddy 容器内部（loopback 18092），对外由 web_proxy 统一转发。
