@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.4.17](https://github.com/deltrivx/autobuddy/releases/tag/v0.4.17)
+**当前稳定版：** [v0.7.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.0)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,7 +13,28 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v0.4.17](https://github.com/deltrivx/autobuddy/releases/tag/v0.4.17) | 2026-09-23 | 新增 GitHub 账号自动化接入，浏览器改为运行时下载到挂载卷 | — |
+| [v0.7.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.0) | 2026-09-24 | 统一账号来源：修好「按钮在、一点就报 account not found」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.0.md) |
+| [v0.6.6](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.6) | 2026-09-24 | 移除占位条目：账号池控件不再「硬加」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.6.md) |
+| [v0.6.5](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.5) | 2026-09-24 | 账号池控件改为「无论账号什么状态都完整渲染」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.5.md) |
+| [v0.6.4](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.4) | 2026-09-24 | 修复官方新加账号（如「一杯美式」）不出现在账号池控件里 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.4.md) |
+| [v0.6.3](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.3) | 2026-09-24 | 修复新账号卡片缺失账号池控件（启用/停用 · 设为首选 · 检测账号 · 调用次数） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.3.md) |
+| [v0.6.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.2) | 2026-09-24 | 修复 v0.6.1 引入的 500（缺 time 导入） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.2.md) |
+| [v0.6.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.1) | 2026-09-24 | 修复积分今日消耗恒为 0、进度闪烁、代理检测布局与轮询策略 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.1.md) |
+| [v0.6.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.6.0) | 2026-09-24 | WorkBuddy 每日成长任务（侧边栏「每日任务」） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.6.0.md) |
+| [v0.5.12](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.12) | 2026-09-24 | 注册进度可视化、日志降噪与诊断能力补强 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.12.md) |
+| [v0.5.11](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.11) | 2026-09-24 | GitHub 改为纯邮箱注册、邮箱参数 UI 可配、中止接口容错 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.11.md) |
+| [v0.5.10](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.10) | 2026-09-24 | 修复临时邮箱创建判定导致注册流程无法启动 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.10.md) |
+| [v0.5.9](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.9) | 2026-09-24 | 修复代理检测报错与任务进度丢失 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.9.md) |
+| [v0.5.8](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.8) | 2026-09-24 | 账号接入页面全面优化与 GitHub 注册全自动化 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.8.md) |
+| [v0.5.7](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.7) | 2026-09-24 | 浏览器底层升级为 Patchright 免检测驱动 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.7.md) |
+| [v0.5.6](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.6) | 2026-09-24 | 登录安全增强与配置修正 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.6.md) |
+| [v0.5.5](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.5) | 2026-09-24 | 代理架构优化与模板脱敏修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.5.md) |
+| [v0.5.4](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.4) | 2026-09-24 | 自动打码与账号闭环接入 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.4.md) |
+| [v0.5.3](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.3) | 2026-09-23 | 统计校准与修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.3.md) |
+| [v0.5.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.2) | 2026-09-23 | 认证增强 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.2.md) |
+| [v0.5.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.1) | 2026-09-23 | 认证与数据库 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.1.md) |
+| [v0.5.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.5.0) | 2026-09-23 | 更名 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.5.0.md) |
+| [v0.4.17](https://github.com/deltrivx/autobuddy/releases/tag/v0.4.17) | 2026-09-23 | 新增 GitHub 账号自动化接入，浏览器改为运行时下载到挂载卷 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.17.md) |
 | [v0.4.16](https://github.com/deltrivx/autobuddy/releases/tag/v0.4.16) | 2026-09-21 | 修正账号被拦截的判定与措辞，重扫无效的说明移到设置页 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.16.md) |
 | [v0.4.15](https://github.com/deltrivx/autobuddy/releases/tag/v0.4.15) | 2026-09-21 | 修复设为首选清空账号白名单；新增模型一键恢复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.15.md) |
 | [v0.4.14](https://github.com/deltrivx/autobuddy/releases/tag/v0.4.14) | 2026-09-20 | 异常账号的提示收成一句，详情从提示里移出 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.4.14.md) |
@@ -60,7 +81,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.4.17    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.7.0    # 锁定版本
 ```
 
 ## 部署产物

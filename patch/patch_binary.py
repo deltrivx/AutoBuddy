@@ -456,13 +456,17 @@ def patch(bin_path):
     )
 
     # --- 11. 设置页：移除所有只对宿主桌面有意义的 section ----------------------
-    # appearance(外观) 与 auto-checkin(自动签到) 是容器里真正可用的两项，保留。
+    # appearance(外观) 仍保留 —— 浅色/深色主题在容器里真实可用。
+    # auto-checkin(自动签到) 已**迁至「每日任务」页**：签到本质是每日成长任务的
+    # 一个子集（任务清单里就有「每日签到」项），调度与执行记录都在那边，
+    # 配置散在两页会让「到底哪份在生效」变得不可知。
     for section_id, label in (
         ("settings-auto-rotate", "settings: CodeBuddy CLI auto-rotate"),
         ("settings-permission", "settings: desktop permission check"),
         ("settings-rate-limit", "settings: desktop rate-limit monitor"),
         ("settings-startup", "settings: desktop startup/tray"),
         ("settings-updates", "settings: desktop auto-update"),
+        ("settings-auto-checkin", "settings: auto-checkin (moved to daily tasks)"),
     ):
         data = _nullify_section(data, section_id, label)
 

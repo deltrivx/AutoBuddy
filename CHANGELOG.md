@@ -15,6 +15,20 @@
 
 - 暂无。
 
+## [v0.7.0] - 2026-09-24
+
+### 统一账号来源：修好「按钮在、一点就报 account not found」
+- **根因**：网关侧 `main.py` 的 `_load_accounts()` 同样是「找到第一个存在的文件就 break」，只认 `/data/.autobuddy/accounts.json`（6 个）；而官方那份 `/data/.wb-switch/accounts.json` 有 8 个（含「一杯美式」）。展示用的是响应层合并后的 8 个，写操作却打到网关只认的 6 个 —— 于是卡片上控件齐全，一点停用/检测就回 `account not found`。
+- **修复**：在 `_load_accounts()` 这**一个入口**上合并两份账号文件，所有依赖它的接口（切换/检测/刷新令牌/删除/轮询选号）一并生效，而不是逐个打补丁。响应层与每日任务也改成同一出处。
+
+### 每日任务：参与账号改为自动关联，移除手动加入
+- 合交两份账号文件（与账号池同一出处），不再只读官方那一份。
+- **彻底删除** `extra_accounts`：后端配置字段、请求模型、前端输入框与保存逻辑全部清掉。账号池就是唯一权威来源，再开一个手填入口只会让「哪些账号在跑」出现两个答案。
+
+### 设置页「自动签到」迁至每日任务页
+- 签到本质是每日成长任务的一个子集（任务清单里就有「每日签到」项），配置散在两页会让「到底哪份在生效」变得不可知。
+- 二进制补丁把 `settings-auto-checkin` 加入移除清单；每日任务页接管其全部配置项：**启用自动签到**、**保活阈值（天）**、**惰性刷新（小时）**，与原有的调度间隔/执行模式/执行记录合流。
+
 ## [v0.6.6] - 2026-09-24
 
 ### 移除占位条目：账号池控件不再「硬加」
@@ -1132,7 +1146,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.6...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.0...HEAD
+[v0.7.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.6...v0.7.0
 [v0.6.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.5...v0.6.6
 [v0.6.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.4...v0.6.5
 [v0.6.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.3...v0.6.4

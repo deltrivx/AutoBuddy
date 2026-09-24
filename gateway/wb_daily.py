@@ -4,11 +4,14 @@
 功能来源：内置 vendor 化的上游开源脚本 gateway/vendor/workbuddy_daily.py
 （L0NE-6/WorkBuddy-Daily，MIT），由本服务托管执行。
 
-账号来源：AutoBuddy 账号池（/data/.wb-switch/accounts.json）中 variant=cn 的账号，
-取其 refresh_token 生成上游脚本需要的 wb_refresh_tokens.json。
+账号来源：**自动关联 AutoBuddy 账号池**——合并读取 /data/.wb-switch/accounts.json
+与 $AB_DATA_DIR/accounts.json，取其中 variant=cn 的账号，用其 refresh_token
+生成上游脚本需要的 wb_refresh_tokens.json。
+不需也不支持手动加入账号：账号池就是唯一权威来源，再开一个手填入口
+只会让「哪些账号在跑」出现两个答案。
 兼容性已实测：Keycloak 签发的 RT 可直接走上游插件的刷新接口，且刷新后旧 RT
 仍然有效（REUSABLE），因此这里**只读共用**账号池凭据，绝不写回、绝不覆盖
-accounts.json，无烧号风险。另支持在前端补充账号池之外的账号（extra_accounts）。
+accounts.json，无烧号风险。
 
 对外路由：
   GET    /api/wb-daily/config         获取配置
@@ -41,16 +44,57 @@ import db
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 CONFIG_FILE = DATA_DIR / "wb_daily_config.json"
 WORK_DIR = DATA_DIR / "wb-daily"
+# 账号池有两份文件，且内容并不一致，**必须合并读**：
+#   - /data/.wb-switch/accounts.json —— 官方维护的那份，用户新加入的账号
+#     （如「一杯美式」）先出现在这里；
+#   - $AB_DATA_DIR/accounts.json —— 容器自己的副本，字段更全。
+# 早先只读官方那一份，导致容器副本里独有的账号在每日任务里出现不了。
 ACCOUNTS_JSON = Path("/data/.wb-switch/accounts.json")
+ACCOUNTS_JSON_LOCAL = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json"
+
+
+def _load_pool_accounts() -> list:
+    """合并读取两份账号文件（按账号 ID 去重，本地副本覆盖官方）。
+
+    每日任务的参与账号、以及账号数量统计都走这里 —— 账号来源与账号池
+    其它功能保持**同一个出处**，避免「账号页看得到、每日任务里没有」。
+    """
+    merged: dict = {}
+    for path in (ACCOUNTS_JSON, ACCOUNTS_JSON_LOCAL):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            data = data.get("accounts") if isinstance(data.get("accounts"), list) else []
+        if not isinstance(data, list):
+            continue
+        for acc in data:
+            if not isinstance(acc, dict):
+                continue
+            key = str(acc.get("id") or acc.get("uid") or "")
+            if not key:
+                key = str(acc.get("nickname") or acc.get("email") or "")
+            if not key:
+                continue
+            merged[key] = {**(merged.get(key) or {}), **acc}
+    return list(merged.values())
 VENDOR_SCRIPT = Path(__file__).resolve().parent / "vendor" / "workbuddy_daily.py"
 
 DEFAULT_CONFIG = {
     "enabled": True,          # 定时调度总开关
     "interval_hours": 12,     # 每轮执行间隔（小时）
-    "extra_accounts": [],     # 账号池之外补充账号：["手机号:RT", ...]
     "run_mode": "full",       # full=完整任务（签到/玩法/领奖） | query=仅查询
     "last_run_at": None,      # 上次执行时间戳（完成后回写，重启不重跑）
+    # ---- 以下三项原属设置页的「自动签到」区块，已迁到本页统一管理 ----
+    "keepalive_days": 30,     # 保活阈值（天）；0 表示每天无条件刷新
+    "lazy_refresh_hours": 6,  # 惰性刷新（小时）
+    "checkin_enabled": True,  # 启动时核验服务端状态，未签到账号自动补签
 }
+# 参与账号**自动关联账号池**（国内版 cn 账号），不提供手动加入入口。
+# 历史上曾有过 extra_accounts（手填「手机号:RT」），已移除：账号池本身就是
+# 唯一权威来源，再开一个手填入口只会让「哪些账号在跑」出现两个答案。
 
 # 上游脚本支持的任务清单（用于面板展示「有哪些任务」）。
 # 来源：vendor 脚本里的任务常量，随上游版本变动时同步更新。
@@ -160,16 +204,12 @@ def _jwt_exp(tok: str):
 def build_account_store(cfg: dict | None = None) -> dict:
     """生成上游脚本的 token 池：{user: {"refresh_token": rt, "access_token": at}}。
 
-    只读使用账号池凭据；extra_accounts 追加其后（同名以 extra 为准）。
+    账号**自动关联账号池**（国内版 cn 账号），只读使用其凭据，不写回。
     """
     cfg = cfg or load_config()
     store: dict = {}
-    try:
-        arr = json.load(open(ACCOUNTS_JSON, encoding="utf-8"))
-    except Exception as e:
-        print(f"[wb-daily] 读账号池失败: {e}")
-        arr = []
-    for a in arr if isinstance(arr, list) else []:
+    arr = _load_pool_accounts()
+    for a in arr:
         if a.get("variant") != "cn":
             continue
         rt = (a.get("refresh_token") or "").strip()
@@ -182,27 +222,6 @@ def build_account_store(cfg: dict | None = None) -> dict:
                     or (a.get("nickname") or "").strip() or "")
         if not user:
             user = "acct-%d" % (len(store) + 1)
-        store[user] = {"refresh_token": rt, "access_token": at}
-    for item in cfg.get("extra_accounts") or []:
-        line = str(item).strip()
-        if not line:
-            continue
-        parts = line.split(":")
-        try:
-            if parts[0].startswith("eyJ"):
-                user, at, rt = "", "", parts[0]
-            elif len(parts) >= 3:
-                user, at, rt = parts[0].strip(), parts[1].strip(), parts[2].strip()
-            elif len(parts) == 2:
-                user, at, rt = parts[0].strip(), "", parts[1].strip()
-            else:
-                user, at, rt = "", "", line
-        except Exception:
-            continue
-        if not rt:
-            continue
-        if not user:
-            user = _jwt_user(at) if at else "extra-%d" % (len(store) + 1)
         store[user] = {"refresh_token": rt, "access_token": at}
     return store
 
@@ -218,13 +237,8 @@ def accounts_preview(cfg: dict | None = None) -> dict:
             "has_at": bool(ent.get("access_token")),
             "exp": _jwt_exp(ent.get("access_token") or "") or None,
         })
-    cn_total = 0
-    try:
-        arr = json.load(open(ACCOUNTS_JSON, encoding="utf-8"))
-        cn_total = sum(1 for a in arr
-                       if isinstance(a, dict) and a.get("variant") == "cn")
-    except Exception:
-        pass
+    cn_total = sum(1 for a in _load_pool_accounts()
+                   if isinstance(a, dict) and a.get("variant") == "cn")
     return {"accounts": accounts, "total": len(accounts), "cn_total": cn_total}
 
 
@@ -556,8 +570,10 @@ async def get_config_api():
 class ConfigBody(BaseModel):
     enabled: bool | None = None
     interval_hours: float | None = None
-    extra_accounts: list[str] | None = None
     run_mode: str | None = None
+    keepalive_days: int | None = None
+    lazy_refresh_hours: int | None = None
+    checkin_enabled: bool | None = None
 
 
 @app.post("/api/wb-daily/config")

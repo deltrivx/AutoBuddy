@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.6.6"
+VERSION_DEFAULT = "0.7.0"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1465,15 +1465,52 @@ def _rotate_state_snapshot() -> Dict[str, Any]:
 
 
 def _load_accounts() -> List[Dict[str, Any]]:
-    accounts_file = DATA_DIR / "accounts.json"
-    if not accounts_file.exists():
-        return []
-    try:
-        with open(accounts_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
+    """读账号池，**合并两份账号文件**（按账号 ID 去重，字段互补）。
+
+    为什么必须合并：容器里同时存在两份账号文件，且内容并不一致 ——
+      - ``DATA_DIR / accounts.json``（``/data/.autobuddy/accounts.json``）
+        容器自己的副本，通常条目较少（实测 6 个）；
+      - ``/data/.wb-switch/accounts.json``
+        官方维护的那份，**用户新加入的账号先出现在这里**（实测 8 个）。
+
+    早先这里只读自己那份，造成一个很难查的故障：新账号（如「一杯美式」）
+    能出现在账号池列表里（响应层另有一份合并逻辑供展示），卡片控件也齐全，
+    但一点「停用 / 检测」就回报 ``account not found`` —— 因为**写操作打到网关时，
+    网关自己的账号集合里没有这个账号**。展示与操作用了两个不同的账号来源，
+    才是「按钮在但功能全失效」的真正原因。
+
+    修在**这个唯一入口**上，所有依赖它的接口（切换/检测/刷新令牌/删除/
+    轮询选号…）一并修好，而不是在每个接口各自打补丁。
+
+    合并原则：先官方后本地覆盖，同 ID 以本地为准（本地字段更全，含 variant 等）；
+    读不到就返回空列表，绝不因账号文件异常而让网关崩溃。
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    sources = [Path("/data/.wb-switch/accounts.json"), DATA_DIR / "accounts.json"]
+    for accounts_file in sources:
+        if not accounts_file.exists():
+            continue
+        try:
+            with open(accounts_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            data = data.get("accounts") if isinstance(data.get("accounts"), list) else []
+        if not isinstance(data, list):
+            continue
+        for acc in data:
+            if not isinstance(acc, dict):
+                continue
+            key = str(_account_id(acc) or acc.get("id") or acc.get("uid") or "")
+            if not key:
+                # 没 ID 的条目按昵称/邮箱兜底，总比整条丢掉强。
+                key = str(acc.get("nickname") or acc.get("email") or "")
+            if not key:
+                continue
+            # 后遍历的（本地那份）覆盖先遍历的（官方那份）—— 本地字段更全。
+            merged[key] = {**(merged.get(key) or {}), **acc}
+    return list(merged.values())
 
 
 def _write_active_account(account_id: str) -> None:

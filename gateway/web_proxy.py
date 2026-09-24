@@ -3529,8 +3529,8 @@ COLLAPSE_SCRIPT = r"""
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div class="wb-api-label">调度与执行</div>' +
-              '<div class="wb-api-desc">按间隔自动执行一轮；「仅查询」模式只读积分/用量/成长，不产生任何任务状态变更。</div>' +
+              '<div class="wb-api-label">自动签到与调度</div>' +
+              '<div class="wb-api-desc">签到的唯一配置入口（原在设置页，已并入本页）。按间隔自动执行一轮；「仅查询」模式只读积分/用量/成长，不产生任何任务状态变更。</div>' +
             '</div>' +
           '</div>' +
           '<div class="wb-api-row wb-api-row-stack">' +
@@ -3550,8 +3550,20 @@ COLLAPSE_SCRIPT = r"""
                   '<option value="query">仅查询（只读）</option>' +
                 '</select>' +
               '</div>' +
+              '<div style="display:flex;align-items:center;gap:8px">' +
+                '<input id="wb-dl-checkin" type="checkbox" style="width:16px;height:16px">' +
+                '<span class="wb-api-label" style="margin:0" title="启动时立即核验服务端状态，未签到账号会自动补签">启用自动签到</span>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">保活阈值（天）</div>' +
+                '<input id="wb-dl-keep" type="number" min="0" max="90" class="wb-api-input" style="width:100%;margin-top:4px" value="30" title="0 表示每天无条件刷新">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">惰性刷新（小时）</div>' +
+                '<input id="wb-dl-lazy" type="number" min="1" max="72" class="wb-api-input" style="width:100%;margin-top:4px" value="6">' +
+              '</div>' +
             '</div>' +
-          '</div>' +
+          '</div>' + +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-desc">上次执行：<span id="wb-dl-lastrun" class="wb-api-mono">—</span>　下次到期：<span id="wb-dl-nextdue" class="wb-api-mono">—</span></div>' +
@@ -3579,15 +3591,11 @@ COLLAPSE_SCRIPT = r"""
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-label">参与账号</div>' +
-              '<div class="wb-api-desc">账号池国内版（cn）账号自动参与；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。如需追加账号池外账号，每行一条「手机号:RT」或「手机号:AT:RT」。</div>' +
+              '<div class="wb-api-desc">自动关联账号池里的国内版（cn）账号，新增账号无需在此登记；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。</div>' +
             '</div>' +
           '</div>' +
           '<div id="wb-dl-accounts" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
-          '<div class="wb-api-row wb-api-row-stack">' +
-            '<div class="wb-api-label">补充账号（每行一条，仅保存在本地容器）</div>' +
-            '<textarea id="wb-dl-extra" class="wb-api-input" rows="3" style="width:100%;font-family:monospace" placeholder="13800000000:eyJraWQiOi..."></textarea>' +
-          '</div>' +
-        '</div>' +
+        '</div>' + +
 
         '<!-- 执行记录（SQLite 持久化，保留最近 200 轮） -->' +
         '<div class="wb-api-card">' +
@@ -3624,7 +3632,9 @@ COLLAPSE_SCRIPT = r"""
       el = document.getElementById("wb-dl-enabled"); if (el) el.checked = cfg.enabled !== false;
       el = document.getElementById("wb-dl-interval"); if (el) el.value = cfg.interval_hours != null ? cfg.interval_hours : 12;
       el = document.getElementById("wb-dl-mode"); if (el) el.value = cfg.run_mode === "query" ? "query" : "full";
-      el = document.getElementById("wb-dl-extra"); if (el) el.value = (cfg.extra_accounts || []).join("\n");
+      el = document.getElementById("wb-dl-checkin"); if (el) el.checked = cfg.checkin_enabled !== false;
+      el = document.getElementById("wb-dl-keep"); if (el) el.value = cfg.keepalive_days != null ? cfg.keepalive_days : 30;
+      el = document.getElementById("wb-dl-lazy"); if (el) el.value = cfg.lazy_refresh_hours != null ? cfg.lazy_refresh_hours : 6;
     }).catch(function() {});
     fetch("/api/wb-daily/health").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
       var badge = document.getElementById("wb-dl-state");
@@ -3818,12 +3828,14 @@ COLLAPSE_SCRIPT = r"""
   }
 
   function wbDailySaveConfig() {
-    var extra = document.getElementById("wb-dl-extra").value.split("\n").map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+    // 参与账号自动关联账号池，不再有手填入口。
     var payload = {
       enabled: document.getElementById("wb-dl-enabled").checked,
       interval_hours: parseFloat(document.getElementById("wb-dl-interval").value) || 12,
       run_mode: document.getElementById("wb-dl-mode").value,
-      extra_accounts: extra
+      checkin_enabled: document.getElementById("wb-dl-checkin").checked,
+      keepalive_days: parseInt(document.getElementById("wb-dl-keep").value, 10) || 0,
+      lazy_refresh_hours: parseInt(document.getElementById("wb-dl-lazy").value, 10) || 6
     };
     fetch("/api/wb-daily/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
