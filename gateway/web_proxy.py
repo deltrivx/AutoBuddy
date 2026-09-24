@@ -4156,6 +4156,19 @@ async def credits_stats_proxy(request: Request):
 
     _reconcile_official_usage(data, valid_account_ids)
 
+    # 口径兜底的产物必须自己校验一遍：反代层发的 Response 不像 FastAPI 路由那样
+    # 有框架兜底，一旦这里抛异常就会变成非 JSON 响应，前端只会拿到一句
+    # "The string did not match the expected pattern"，看不出真因。
+    # 所以出问题就把事故点带回日志，而不是顺着官方响应一起发给前端。
+    if os.getenv("AB_DEBUG_RESPONSE", "").strip() in ("1", "true", "yes"):
+        try:
+            _chk = json.loads(json.dumps(data, ensure_ascii=False))
+            _ou = ((_chk.get("officialUsage") or {}).get("summary") or {}).get("usageToday")
+            _top = (_chk.get("summary") or {}).get("usageToday")
+            logging.info("[credits] 口径对账 顶层=%s officialUsage=%s", _top, _ou)
+        except Exception as exc:  # noqa: BLE001 - 自检不得反过来打断主流程
+            logging.exception("[credits] 响应自检失败: %s", exc)
+
     return Response(content=json.dumps(data, ensure_ascii=False), media_type="application/json")
 
 

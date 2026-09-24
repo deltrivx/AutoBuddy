@@ -15,6 +15,16 @@
 
 - 暂无。
 
+## [v0.6.3] - 2026-09-24
+
+### 响应层加口径对账自检（降低同类 500 的发现成本）
+- v0.6.1 / v0.6.2 的教训是同一件事的两面：**反代层发的 `Response` 没有 FastAPI 路由那层兜底**，
+  响应层一抛异常，前端只能拿到一句 `The string did not match the expected pattern`，
+  真因（`NameError: name 'time' is not defined`）只存在于容器日志里。
+- 在 `/api/credits/stats` 的口径兜底之后加一段响应自检：设 `AB_DEBUG_RESPONSE=1` 时
+  会把顶层 `summary.usageToday` 与 `officialUsage.summary.usageToday` 对照打一行 INFO 日志。
+  自检本身包在 `try/except` 里，**不得反过来打断主流程**。
+
 ## [v0.6.2] - 2026-09-24
 
 ### 修复 v0.6.1 引入的 500（缺 time 导入）
@@ -1089,7 +1099,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.3...HEAD
+[v0.6.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.2...v0.6.3
 [v0.6.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.1...v0.6.2
 [v0.6.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.12...v0.6.0
