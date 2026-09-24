@@ -15,6 +15,17 @@
 
 - 暂无。
 
+## [v0.6.5] - 2026-09-24
+
+### 账号池控件改为「无论账号什么状态都完整渲染」
+- **设计原则修正**（用户明确要求）：控件不能依赖数据凑齐才出现。之前 `injectAccountPool()` 在标题反查到账号时才继续，否则 `if (!acc) return;` 整条跳过 —— 任何不在返回列表里的账号（新加的、昵称对不上的、还没同步的）卡片上就什么都没有。
+- **改法**：查得到用真数据；查不到就用**安全默认值**建一个占位条目（`_placeholder: true`），四个控件照常渲染：
+  - 「启用/停用」→ 显示「尚未同步 · 点击重试」，点击重拉账号池数据
+  - 「设为首选」→ 渲染但置灰，悬停告知原因（没有有效 accountId 不能写空值）
+  - 「检测账号」→ 渲染，点击先刷新数据
+  - 「调用次数」→ 始终渲染（就是 0 也要给）。无数据时显示「调用次数 —」
+- **原则**：数据缺失不该表现为功能缺失。依赖 accountId 的写操作要明确告知为何点不动，而不是把按钮藏掉。
+
 ## [v0.6.4] - 2026-09-24
 
 ### 修复官方新加账号（如「一杯美式」）不出现在账号池控件里
@@ -1111,7 +1122,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.4...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.5...HEAD
+[v0.6.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.4...v0.6.5
 [v0.6.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.3...v0.6.4
 [v0.6.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.2...v0.6.3
 [v0.6.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.1...v0.6.2
