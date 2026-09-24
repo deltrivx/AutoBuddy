@@ -1453,18 +1453,35 @@ COLLAPSE_SCRIPT = r"""
 
     function render(data) {
       if (!data || !data.accounts) return;
+      // 多重索引：卡片标题是账号昵称，而新账号常常没有昵称，
+      // 只能回退成账号 ID（如 a75e21b0-3ec4-...）。
+      // 只按昵称建索引的话，这些卡片在账号池控制条上完全空 —— 启用/停用、
+      // 设为首选、检测账号、调用次数四个控件都不出现，看上去像「功能缺失」。
+      // 所以 name / id / 昵称与邮箱都要注。
       var byName = {};
-      data.accounts.forEach(function (a) { if (a.name) byName[a.name] = a; });
+      data.accounts.forEach(function (a) {
+        if (!a) return;
+        [a.name, a.id, a.nickname, a.email].forEach(function (key) {
+          if (key) byName[String(key)] = a;
+        });
+      });
 
       // 各账号被分摊到的请求次数（网关进程启动后累计）。
       var counts = {};
       (data.selectionCounts || []).forEach(function (c) { counts[c.accountId] = c.count; });
 
-      pending.forEach(function (card) {
+      var pendingIds = data.accounts.map(function (a) { return a && a.id; }).filter(Boolean);
+
+      pending.forEach(function (card, cardIndex) {
         if (card.querySelector(".wb-pool-bar")) return;
         var h3 = card.querySelector("h3");
         if (!h3) return;
         var acc = byName[(h3.textContent || "").trim()];
+        // 标题对不上时（账号无昵称、昵称被格式化过）按位置兜底，
+        // 不轻易放弃 —— 否则那张卡片就成了一块没有仸何控件的死区。
+        if (!acc && cardIndex < pendingIds.length) {
+          acc = byName[pendingIds[cardIndex]];
+        }
         if (!acc) return;
 
         var bar = document.createElement("div");
@@ -4183,9 +4200,14 @@ GATEWAY_BASE_URL = os.getenv("AB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
 GATEWAY_MODELS_URL = os.getenv("AB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")
 
 
-@app.get("/api/account-pool")
-async def account_pool_get():
-    """转发到网关的账号池状态（WebUI 控制台用）。"""
+@app.get("/api/account-pool-official")
+async def account_pool_get_official():
+    """向官方网关直取的原始账号池状态（保留作为回退与排查对比入口）。
+
+    注意：真正的 `/api/account-pool` 由下方 `account_pool_status_api()` 提供（带字段补充）。
+    路由同名会让 FastAPI 只认先注册的那个，所以官方原始转发必须换个路径，
+    否则补字段的逻辑永远不会生效。
+    """
     try:
         async with _internal_client(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
@@ -4194,6 +4216,115 @@ async def account_pool_get():
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)}), status_code=502,
                         media_type="application/json")
+
+
+@app.get("/api/account-pool-legacy")
+async def account_pool_get_legacy():
+    """官方账号池状态的原始转发（保留作为回退入口，供排查对比）。"""
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.get("/api/account-pool")
+async def account_pool_get_v2():
+    """替官方账号池状态补上“新账号”所需的展示字段（昵称/邮箱与账号级停用状态）。
+
+    背景：官方 `/api/account-pool` 只在 `selectionCounts` 里回已有调用记录的
+    账号名，新账号（未调用过）在那里既无昵称也无邮箱；前端只能拿账号 ID 去填
+    卡片标题，而卡片标题一旦对不上任何键，启用/停用、设为首选、检测账号、
+    调用次数四个控件就整块不渲染 —— 看上去就是「功能缺失」。
+
+    这里只**补充**字段（nickname / email / disabled / disabledSource），
+    原样保留官方的 mode / enabledAccountIds / selectionCounts 等，
+    不动任何业务语义。同时把未入池的新账号补进 accounts 列表，
+    让它们与已入池账号一样能被渲染。
+    """
+    try:
+        async with _internal_client(timeout=8.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
+            if r.status_code != 200:
+                return Response(content=r.content, status_code=r.status_code,
+                                media_type="application/json")
+            data = r.json() or {}
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+    # 账号池白名单（官方的 enabledAccountIds；空数组 + allEnabledByDefault=false
+    # 在业务上等于“全部启用”，这里不重新解释，只原样透传）。
+    accounts = data.get("accounts")
+    if not isinstance(accounts, list):
+        accounts = []
+    data["accounts"] = accounts
+
+    # 账号池真实条目（昵称/邮箱的唯一来源）
+    pool_accounts = {}
+    for acc in _load_accounts_for_models():
+        aid = str(acc.get("id") or acc.get("uid") or "")
+        if aid:
+            pool_accounts[aid] = acc
+
+    # 账号级停用策略（手动/巡检），供卡片区分渲染
+    disabled_map = {}
+    try:
+        disabled_map = account_policy.load_policy() or {}
+    except Exception as e:
+        print(f"[account-pool] 读账号停用策略失败: {e}")
+
+    enabled_ids = set(str(x) for x in (data.get("enabledAccountIds") or []))
+    all_default = bool(data.get("allEnabledByDefault"))
+
+    # 已有的账号条目：补 nickname / email / disabled / disabledSource / enabled
+    seen = set()
+    for item in accounts:
+        if not isinstance(item, dict):
+            continue
+        aid = str(item.get("id") or item.get("accountId") or "")
+        if aid:
+            seen.add(aid)
+        src = pool_accounts.get(aid) or {}
+        if not item.get("nickname"):
+            item["nickname"] = (src.get("nickname") or src.get("email")
+                                or item.get("name") or aid or None)
+        if not item.get("email"):
+            item["email"] = src.get("email") or None
+        if not item.get("id") and aid:
+            item["id"] = aid
+        # 账号级停用（普通正常账号也有 disabled=false，前端据此渲染启用态）
+        item["disabled"] = aid in disabled_map
+        item["disabledSource"] = disabled_map.get(aid)
+        # 是否入池：给前端一个明确的布尔值，不必自己推白名单语义
+        if all_default:
+            item["enabled"] = not item["disabled"]
+        else:
+            item["enabled"] = (aid in enabled_ids) and not item["disabled"]
+
+    # 未出现在账号池列表里的新账号（未入池、未调用过）全部补进去，
+    # 否则它们的卡片永远拿不到昵称/邮箱，控制条也永远不出现。
+    for aid, src in pool_accounts.items():
+        if aid in seen:
+            continue
+        accounts.append({
+            "id": aid,
+            "accountId": aid,
+            "name": src.get("nickname") or src.get("email") or aid,
+            "nickname": src.get("nickname") or src.get("email") or aid,
+            "email": src.get("email"),
+            "variant": src.get("variant"),
+            "enabled": (all_default or aid in enabled_ids) and aid not in disabled_map,
+            "disabled": aid in disabled_map,
+            "disabledSource": disabled_map.get(aid),
+            "count": 0,
+        })
+
+    return Response(content=json.dumps(data, ensure_ascii=False),
+                    media_type="application/json")
 
 
 @app.put("/api/account-pool")

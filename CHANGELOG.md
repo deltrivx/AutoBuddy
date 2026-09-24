@@ -17,6 +17,12 @@
 
 ## [v0.6.3] - 2026-09-24
 
+### 修复新账号卡片缺失账号池控件（启用/停用 · 设为首选 · 检测账号 · 调用次数）
+- **根因**：注入的账号池控制条用**卡片标题文字**（账号昵称）去官方 `/api/account-pool` 返回的列表里反查条目。官方只在 `selectionCounts` 里回**已有调用记录**的账号名，新账号（未调用过）在那里既无昵称也无邮箱，标题对不上任何键 → 整条控制条不渲染，看上去就是「功能缺失」。
+- **后端补字段**：`/api/account-pool` 改为在官方原始响应上**补充** `nickname` / `email` / `disabled` / `disabledSource` / `enabled`，并把账号池里未出现在官方列表的新账号一并补进去；名字兜底用 `nickname → email → 账号 ID`。业务语义（`mode` / `enabledAccountIds` / `selectionCounts`）原样透传，不改动。官方原始响应保留在 `/api/account-pool-official`。
+- **前端多重索引**：`name` / `id` / `nickname` / `email` 四个键都注，标题仍对不上时按卡片位置兜底，不再轻易放弃。
+- ⚠️ **踩过的坑**：先补的路由与原有 `/api/account-pool` **同名**，FastAPI 只认先注册的那个，补字段的逻辑静默失效（语法检查与面板测试都发现不了）。已改为官方原始转发换路径，并全文检查确认无重复路由。
+
 ### 响应层加口径对账自检（降低同类 500 的发现成本）
 - v0.6.1 / v0.6.2 的教训是同一件事的两面：**反代层发的 `Response` 没有 FastAPI 路由那层兜底**，
   响应层一抛异常，前端只能拿到一句 `The string did not match the expected pattern`，

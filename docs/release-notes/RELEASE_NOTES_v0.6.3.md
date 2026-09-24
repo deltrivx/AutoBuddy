@@ -1,31 +1,30 @@
 # AutoBuddy v0.6.3
 
-> 在 `/api/credits/stats` 的响应层加一段口径对账自检，降低同类故障的发现成本。
+> 修复新账号卡片上「参与调用 · 点击停用 / 设为首选 / 检测账号 / 已调用 N 次」整条控件不出现的问题。
 
-## 背景
+## 问题
 
-v0.6.1 引入口径兜底、v0.6.2 补 `import time`，其实是同一件事的两面：
+注入的账号池控制条用**卡片标题文字**（账号昵称）去官方 `/api/account-pool` 的返回列表里反查条目。而官方只在 `selectionCounts` 里返回**已有调用记录**的账号名——新账号（刚添加、从未被调用过）在那里既没有昵称也没有邮箱。
 
-**反代层（`gateway/web_proxy.py`）自己 `return Response(...)` 的那些路由，没有 FastAPI 路由函数那层框架兜底。**
-响应层一旦抛异常（如未定义名、序列化失败），前端拿到的不是 JSON 而是一段 HTML/错误页，
-浏览器里只表现为一句 `The string did not match the expected pattern`，
-真因（`NameError: name 'time' is not defined`）只留在容器日志里——排查只能靠 `docker logs` 翻栈。
+标题对不上任何键 → 那张卡片的整条控制条不渲染 → 用户看到的就是「新账号缺失功能按钮」。
 
-## 变更
+## 修复
 
-- 在 `_reconcile_official_usage()` 之后追加响应自检：设 `AB_DEBUG_RESPONSE=1` 时，
-  把顶层 `summary.usageToday` 与 `officialUsage.summary.usageToday` 对照打一行 INFO 日志
-  （`[credits] 口径对账 顶层=… officialUsage=…`）。
-- 自检整体包在 `try/except` 内，**不得反过来打断主流程**——自检本身出错只记日志，不影响响应。
+### 后端：`/api/account-pool` 补字段
+在官方原始响应上**补充**（不改动原有字段）：
 
-## 验收提醒
+- `nickname` / `email`：名字兜底顺序 `nickname → email → 账号 ID`
+- `disabled` / `disabledSource`：账号级停用状态与来源（manual / auto）
+- `enabled`：是否参与调用的明确布尔值
+- 把账号池里**未出现在官方列表**的新账号一并补进 `accounts`
 
-本版仍需按第 12 节纪律做**真实接口请求**验收：
+业务语义（`mode` / `enabledAccountIds` / `selectionCounts` / `allEnabledByDefault`）原样透传。官方原始响应保留在 `/api/account-pool-official` 供排查对比。
 
-```bash
-docker exec AutoBuddy curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18090/api/credits/stats
-docker exec AutoBuddy curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18090/api/account-models
-```
+### 前端：多重索引 + 位置兜底
+`name` / `id` / `nickname` / `email` 四个键都建立索引；标题仍对不上时按卡片位置取账号，不再轻易放弃渲染。
 
-期待两行都是 `200`。CI 的 11 个 `_test_*.py` 与 `py_compile` 都**拦不住运行期 NameError**，
-所以「构建绿了」不等于「接口能打开」。
+## 踩过的坑（值得记住）
+
+先写的补字段路由与原有的 `/api/account-pool` **同名**。FastAPI 对同名路由只认**先注册**的那个，于是补字段逻辑静默失效——`py_compile` 语法检查通过、61 项面板测试全绿，**没有一个能在改前发现它**。
+
+教训：改响应层路由后必须**实际请求一次**确认新版逻辑生效（本版已按此验收）；路由同名属于静默覆盖，不报错、不告警。
