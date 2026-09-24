@@ -15,6 +15,14 @@
 
 - 暂无。
 
+## [v0.5.6] - 2026-09-24
+
+### 登录安全增强与配置修正
+- **默认凭据调整**：控制台默认密码由 `admin123` 调整为 `password`，模板与后端保持一致。
+- **登录框去预填与去提示**：账号、密码输入框不再预填任何默认值，也不再显示默认账号/密码提示文案，避免敏感信息泄露。
+- **新增滑动验证**：参考 Octop 登录页交互，增加内联 SVG 拖拽滑块验证（纯前端实现，无外部依赖），未完成滑动校验无法提交登录。
+- **Clash REST API 地址修正**：前端表单默认值与回填逻辑统一校正为 `http://192.168.31.10:9090`，不再指向不存在的 `127.0.0.1:9090` / `192.168.31.1:9090`。
+
 ## [v0.5.5] - 2026-09-24
 
 ### 代理架构优化与模板脱敏修复
@@ -1007,7 +1015,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.5...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.6...HEAD
+[v0.5.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.5...v0.5.6
 [v0.5.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.4...v0.5.5
 [v0.5.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.3...v0.5.4
 [v0.5.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.2...v0.5.3

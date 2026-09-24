@@ -15,22 +15,22 @@ class TestDB(unittest.TestCase):
         shutil.rmtree(os.environ["AB_DATA_DIR"], ignore_errors=True)
 
     def test_default_user_and_verify(self):
-        # 默认用户名和密码是 [密钥]
-        self.assertTrue(db.verify_user("[密钥]", "[密钥]"))
-        self.assertFalse(db.verify_user("[密钥]", "wrong_pwd"))
-        self.assertFalse(db.verify_user("nonexist", "[密钥]"))
+        # 默认用户名 admin / 默认密码 password
+        self.assertTrue(db.verify_user("admin", "password"))
+        self.assertFalse(db.verify_user("admin", "wrong_pwd"))
+        self.assertFalse(db.verify_user("nonexist", "password"))
 
     def test_session_lifecycle(self):
-        token = db.create_session("[密钥]")
+        token = db.create_session("admin")
         self.assertIsNotNone(token)
-        self.assertEqual(db.validate_session(token), "[密钥]")
+        self.assertEqual(db.validate_session(token), "admin")
         db.destroy_session(token)
         self.assertIsNone(db.validate_session(token))
 
     def test_password_change(self):
-        self.assertTrue(db.change_password("[密钥]", "new_secure_pwd!"))
-        self.assertFalse(db.verify_user("[密钥]", "[密钥]"))
-        self.assertTrue(db.verify_user("[密钥]", "new_secure_pwd!"))
+        self.assertTrue(db.change_password("admin", "new_secure_pwd!"))
+        self.assertFalse(db.verify_user("admin", "password"))
+        self.assertTrue(db.verify_user("admin", "new_secure_pwd!"))
 
     def test_system_config_kv(self):
         db.set_config("cf_mail_api", "https://mail.example.com/v1", category="mail")

@@ -652,16 +652,25 @@ COLLAPSE_SCRIPT = r"""
       '<div style="text-align:center;margin-bottom:20px;">' +
         '<img src="/icon.png" style="width:56px;height:56px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,0.12);margin:0 auto 12px;display:block;" />' +
         '<div style="font-size:18px;font-weight:700;letter-spacing:-0.02em;">AutoBuddy 控制台</div>' +
-        '<div style="font-size:12px;color:var(--muted-foreground,#64748b);margin-top:4px;">访问受限 · 请输入管理员密码</div>' +
+        '<div style="font-size:12px;color:var(--muted-foreground,#64748b);margin-top:4px;">&nbsp;</div>' +
       '</div>' +
       '<div style="display:flex;flex-direction:column;gap:12px;">' +
         '<div>' +
           '<label style="font-size:12px;font-weight:500;display:block;margin-bottom:4px;">账号</label>' +
-          '<input id="wb-login-user" type="text" placeholder="默认 admin" value="admin" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border,rgba(120,120,120,0.3));background:var(--background,#ffffff);color:inherit;font-size:13px;box-sizing:border-box;" />' +
+          '<input id="wb-login-user" type="text" autocomplete="off" placeholder="" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border,rgba(120,120,120,0.3));background:var(--background,#ffffff);color:inherit;font-size:13px;box-sizing:border-box;" />' +
         '</div>' +
         '<div>' +
           '<label style="font-size:12px;font-weight:500;display:block;margin-bottom:4px;">密码</label>' +
-          '<input id="wb-login-pass" type="password" placeholder="默认 [密钥]" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border,rgba(120,120,120,0.3));background:var(--background,#ffffff);color:inherit;font-size:13px;box-sizing:border-box;" />' +
+          '<input id="wb-login-pass" type="password" autocomplete="new-password" placeholder="" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border,rgba(120,120,120,0.3));background:var(--background,#ffffff);color:inherit;font-size:13px;box-sizing:border-box;" />' +
+        '</div>' +
+        '<div id="wb-login-slider-wrap" style="margin-top:4px;">' +
+          '<div id="wb-login-slider" style="position:relative;height:38px;border-radius:8px;background:var(--muted,rgba(120,120,120,0.12));overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none;">' +
+            '<div id="wb-login-slider-fill" style="position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,rgba(59,130,246,0.18),rgba(59,130,246,0.32));"></div>' +
+            '<div id="wb-login-slider-text" style="position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:12.5px;color:var(--muted-foreground,#64748b);pointer-events:none;letter-spacing:0.02em;">按住滑块，拖动到最右侧</div>' +
+            '<div id="wb-login-slider-handle" style="position:absolute;left:2px;top:2px;width:44px;height:34px;border-radius:6px;background:#ffffff;box-shadow:0 1px 4px rgba(0,0,0,0.18);display:flex;align-items:center;justify-content:center;cursor:grab;transition:background 0.15s;">' +
+              '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
         '<div id="wb-login-err" style="color:#ef4444;font-size:12px;display:none;margin-top:2px;"></div>' +
         '<button id="wb-login-submit" style="margin-top:6px;width:100%;padding:9px;border-radius:8px;background:#3b82f6;color:#ffffff;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background 0.2s;">登 录</button>' +
@@ -675,11 +684,81 @@ COLLAPSE_SCRIPT = r"""
     var passIn = document.getElementById("wb-login-pass");
     var errEl = document.getElementById("wb-login-err");
 
+    var sliderOk = false;
+    var sliderBox = document.getElementById("wb-login-slider");
+    var sliderHandle = document.getElementById("wb-login-slider-handle");
+    var sliderFill = document.getElementById("wb-login-slider-fill");
+    var sliderText = document.getElementById("wb-login-slider-text");
+    var sliderDragging = false;
+    var sliderStartX = 0;
+
+    function sliderMax() {
+      return Math.max(0, sliderBox.clientWidth - sliderHandle.offsetWidth - 4);
+    }
+
+    function sliderMove(clientX) {
+      var max = sliderMax();
+      var delta = clientX - sliderStartX;
+      var left = Math.min(max, Math.max(0, delta + 2));
+      sliderHandle.style.left = left + "px";
+      sliderFill.style.width = left + "px";
+      if (left >= max - 1) {
+        sliderOk = true;
+        sliderFill.style.background = "linear-gradient(90deg,rgba(16,185,129,0.22),rgba(16,185,129,0.42))";
+        sliderHandle.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        sliderText.textContent = "验证通过";
+        sliderText.style.color = "#10b981";
+      }
+    }
+
+    function sliderReset() {
+      sliderOk = false;
+      sliderDragging = false;
+      sliderHandle.style.left = "2px";
+      sliderFill.style.width = "0px";
+      sliderFill.style.background = "linear-gradient(90deg,rgba(59,130,246,0.18),rgba(59,130,246,0.32))";
+      sliderHandle.style.cursor = "grab";
+      sliderHandle.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+      sliderText.textContent = "按住滑块，拖动到最右侧";
+      sliderText.style.color = "var(--muted-foreground,#64748b)";
+    }
+
+    sliderHandle.addEventListener("pointerdown", function(e) {
+      if (sliderOk) return;
+      sliderDragging = true;
+      sliderStartX = e.clientX;
+      sliderHandle.style.cursor = "grabbing";
+      try { sliderHandle.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+    sliderHandle.addEventListener("pointermove", function(e) {
+      if (!sliderDragging || sliderOk) return;
+      sliderMove(e.clientX);
+    });
+    sliderHandle.addEventListener("pointerup", function(e) {
+      if (!sliderDragging) return;
+      sliderDragging = false;
+      sliderHandle.style.cursor = "grab";
+      try { sliderHandle.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (!sliderOk) sliderReset();
+    });
+    sliderHandle.addEventListener("pointercancel", function() {
+      if (!sliderOk) sliderReset();
+    });
+    window.addEventListener("resize", function() {
+      if (document.getElementById("wb-login-overlay")) sliderReset();
+    });
+
     function doLogin() {
       var u = (userIn.value || "").trim();
       var p = (passIn.value || "").trim();
       if (!u || !p) {
         errEl.textContent = "请输入账号和密码";
+        errEl.style.display = "block";
+        return;
+      }
+      if (!sliderOk) {
+        errEl.textContent = "请先完成滑动验证";
         errEl.style.display = "block";
         return;
       }
@@ -706,6 +785,7 @@ COLLAPSE_SCRIPT = r"""
         } else {
           errEl.textContent = res.error || "账号或密码错误";
           errEl.style.display = "block";
+          sliderReset();
         }
       })
       .catch(function() {
@@ -713,6 +793,7 @@ COLLAPSE_SCRIPT = r"""
         subBtn.textContent = "登 录";
         errEl.textContent = "登录请求失败，请检查网络";
         errEl.style.display = "block";
+        sliderReset();
       });
     }
 
@@ -2594,7 +2675,7 @@ COLLAPSE_SCRIPT = r"""
               '</div>' +
 '<div>' +
                 '<div class="wb-api-label">Clash REST API 地址</div>' +
-                '<input id="wb-cfg-clash-base" class="wb-api-input" style="width:100%;margin-top:4px" value="http://127.0.0.1:9090">' +
+                '<input id="wb-cfg-clash-base" class="wb-api-input" style="width:100%;margin-top:4px" value="http://192.168.31.10:9090">' +
               '</div>' +
               '<div>' +
                 '<div class="wb-api-label">Google 登录密码 (可选)</div>' +
@@ -2680,7 +2761,7 @@ COLLAPSE_SCRIPT = r"""
         mail_create_path: (v.querySelector("#wb-cfg-create-path").value || "/new").trim(),
         mail_fetch_path: (v.querySelector("#wb-cfg-fetch-path").value || "/mails?address={email}").trim(),
         register_proxy: (v.querySelector("#wb-cfg-reg-proxy").value || "").trim(),
-        clash_rest_base: (v.querySelector("#wb-cfg-clash-base").value || "http://127.0.0.1:9090").trim(),
+        clash_rest_base: (v.querySelector("#wb-cfg-clash-base").value || "http://192.168.31.10:9090").trim(),
         google_password: (v.querySelector("#wb-cfg-google-pw").value || "").trim(),
         captcha_provider: (v.querySelector("#wb-cfg-captcha-prov").value || "capsolver").trim(),
         captcha_api_key: (v.querySelector("#wb-cfg-captcha-key").value || "").trim(),
@@ -2917,7 +2998,7 @@ COLLAPSE_SCRIPT = r"""
           setVal("wb-cfg-create-path", cfg.mail_create_path || "/new");
           setVal("wb-cfg-fetch-path", cfg.mail_fetch_path || "/mails?address={email}");
           setVal("wb-cfg-reg-proxy", cfg.register_proxy || "http://192.168.31.10:7890");
-          setVal("wb-cfg-clash-base", cfg.clash_rest_base || "http://127.0.0.1:9090");
+          setVal("wb-cfg-clash-base", cfg.clash_rest_base || "http://192.168.31.10:9090");
           setVal("wb-cfg-google-pw", cfg.google_password || "");
           setVal("wb-cfg-captcha-prov", cfg.captcha_provider || "capsolver");
           setVal("wb-cfg-captcha-key", cfg.captcha_api_key || "");

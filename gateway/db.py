@@ -69,16 +69,16 @@ def init_db() -> None:
         # 认证用户与环境变量动态同步：
         # 支持环境变量 AUTH_USERNAME / AUTH_USER / AUTH_DEFAULT_USER
         # 与 AUTH_PASSWORD / AUTH_PASS / AUTH_DEFAULT_PASS。
-        # 未配置时默认用户名和密码均为 [密钥]。
-        env_user = (os.getenv("AUTH_USERNAME") or os.getenv("AUTH_USER") or os.getenv("AUTH_DEFAULT_USER") or "[密钥]").strip()
-        env_pwd = (os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "[密钥]").strip()
+        # 未配置环境变量时，默认用户名 admin、默认密码 password。
+        env_user = (os.getenv("AUTH_USERNAME") or os.getenv("AUTH_USER") or os.getenv("AUTH_DEFAULT_USER") or "admin").strip()
+        env_pwd = (os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "password").strip()
 
         cursor.execute("SELECT id, username, salt FROM users WHERE username = ?", (env_user,))
         user_row = cursor.fetchone()
         now = time.time()
 
         if not user_row:
-            # 用户不存在则创建（无论是默认 [密钥] 还是环境变量指定的新用户名）
+            # 用户不存在则创建（无论是默认 admin 还是环境变量指定的新用户名）
             salt = secrets.token_hex(16)
             pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
             cursor.execute(

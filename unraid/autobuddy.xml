@@ -33,7 +33,7 @@
 
   <!-- 用户认证凭据（强制认证，可通过环境变量覆盖或在页面修改） -->
   <Config Name="WebUI 管理员账号" Target="AUTH_USERNAME" Default="admin" Mode="" Description="控制台登录账号（未配置时默认使用 admin）" Type="Variable" Display="always" Required="false" Mask="false">admin</Config>
-  <Config Name="WebUI 管理员密码" Target="AUTH_PASSWORD" Default="admin123" Mode="" Description="控制台登录密码（未配置时默认使用 admin123，可在登录后于页面自行修改）" Type="Variable" Display="always" Required="false" Mask="true">admin123</Config>
+  <Config Name="WebUI 管理员密码" Target="AUTH_PASSWORD" Default="password" Mode="" Description="控制台登录密码（未配置时默认使用 password，可在登录后于页面自行修改）" Type="Variable" Display="always" Required="false" Mask="true">password</Config>
   <!-- 运行环境 -->
   <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="容器运行时区（确保签到任务与用量统计按中国标准时间归集）" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
 </Container>
