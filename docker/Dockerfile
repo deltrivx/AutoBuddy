@@ -37,13 +37,13 @@ RUN npm i -g "workbuddy-switch@${WB_SWITCH_VERSION}"
 # 打进镜像会让每次构建都多背一份、推拉都变慢。改为运行时从 UI 手动下载到挂载目录
 # （挂载点见下方 PLAYWRIGHT_BROWSERS_PATH），一次下载多容器复用、升级不重建。
 #
-# 注意必须是 `playwright` 而不是 `playwright[chromium]`：后者会在 pip 阶段
-# 就把浏览器拉下来，正是要避免的。浏览器改由 UI 触发 `playwright install chromium`。
+# 注意必须是 `patchright` 而不是内置浏览器：采用免检测底层自动化后者会在 pip 阶段
+# 就把浏览器拉下来，正是要避免的。浏览器改由 UI 触发 `patchright install chromium`。
 RUN pip3 install --no-cache-dir --break-system-packages \
     fastapi \
     uvicorn \
     httpx \
-    playwright
+    patchright
 
 # Chromium 的运行时系统库（headless 下的共享库依赖）。
 # 这些是 apt 包、体积可控，且不随 Playwright 版本变化，留在镜像里比运行时再装可靠 ——

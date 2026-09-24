@@ -34,7 +34,7 @@ from pydantic import BaseModel
 
 import httpx
 import uvicorn
-from playwright.async_api import async_playwright
+from patchright.async_api import async_playwright
 
 # ------------------------------------------------------------------ 配置持久化
 
@@ -196,7 +196,7 @@ async def _download_browser():
     env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=BROWSERS_PATH)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "python3", "-m", "playwright", "install", "chromium",
+            "python3", "-m", "patchright", "install", "chromium",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=env,
@@ -220,7 +220,7 @@ async def _download_browser():
             _DL["phase"] = "安装完成"
         else:
             _DL["status"] = "failed"
-            _DL["error"] = f"playwright install 退出码 {code}"
+            _DL["error"] = f"patchright install 退出码 {code}"
             _DL["phase"] = "安装失败"
     except Exception as e:
         _DL["status"] = "failed"
@@ -912,7 +912,7 @@ async def browser_status():
 async def _autostart_download_if_missing():
     """容器部署时自动补内核：未安装且没有下载在跑，就由本服务托管下载。
 
-    这是**唯一**的自动触发点。entrypoint.sh 不再自己拉 playwright，
+    这是**唯一**的自动触发点。entrypoint.sh 不再自己拉 patchright，
     避免两个进程同时下载、互相抢 __dirlock（表现为目录一直空、进度不动）。
     """
     if browser_installed():

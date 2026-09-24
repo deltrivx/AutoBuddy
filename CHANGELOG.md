@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.5.7] - 2026-09-24
+
+### 浏览器底层升级为 Patchright 免检测驱动
+- **底层驱动迁移**：将 Playwright 升级为 Patchright（Undetected Python Automation），专用于绕过自动化风控探测与反爬检测。
+- **免内置自动下载架构**：镜像仅安装 Patchright 核心驱动，浏览器内核保持动态下载至持久化挂载卷，容器启动时自动拉取 Patchright 专用 Chromium 内核。
+- **前端 UI 零破坏保持**：前端保持原样下载交互与进度条展示，底层执行 `python3 -m patchright install chromium`。
+
 ## [v0.5.6] - 2026-09-24
 
 ### 登录安全增强与配置修正
@@ -1015,7 +1022,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.6...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.7...HEAD
+[v0.5.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.6...v0.5.7
 [v0.5.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.5...v0.5.6
 [v0.5.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.4...v0.5.5
 [v0.5.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.3...v0.5.4
