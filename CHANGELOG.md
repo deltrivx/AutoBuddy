@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.5.4] - 2026-09-24
+
+### 自动打码与账号闭环接入
+- **自动打码平台集成**：集成主流打码服务（CapSolver / 2Captcha / 自定义端点），在 GitHub 注册触发 Arkose FunCaptcha 旋转拼图验证码时自动异步求解并注入 Token 完成提交。
+- **配置持久化与 WebUI 交互**：在 Web 控制台「账号接入」面板新增打码平台类型、Client Key 与自定义 API 端点配置，数据入库 SQLite 持久化存储。
+- **WorkBuddy OAuth 自动化入库**：GitHub 注册完成后自动拉起 WorkBuddy AI 国际版授权流，自动点击 Authorize 确认并将生成的凭据自动存入 `accounts.json` 账号池。
+
 ## [v0.5.3] - 2026-09-23
 
 ### 统计校准与修复
@@ -993,7 +1000,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.3...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.4...HEAD
+[v0.5.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.3...v0.5.4
 [v0.5.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.2...v0.5.3
 [v0.5.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.1...v0.5.2
 [v0.5.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.0...v0.5.1

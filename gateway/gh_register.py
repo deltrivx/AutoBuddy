@@ -1,3 +1,4 @@
+from typing import Optional, List, Dict, Any
 import db
 """GitHub 自动化注册服务（配置驱动与内置浏览器版）。
 
@@ -49,10 +50,13 @@ DEFAULT_CONFIG = {
     "mail_domains": [],
     "mail_auth_header_name": "",
     "mail_auth_header_value": "",
-    "clash_rest_base": "http://127.0.0.1:9090",
+    "clash_rest_base": "http://192.168.31.1:9090",
     "clash_nodes": [],
     "no_switch_proxy": True,
     "google_password": "",
+    "captcha_provider": "capsolver",      # capsolver | 2captcha | custom
+    "captcha_api_key": "",
+    "captcha_api_url": "",                 # 自定义打码服务基础地址
 }
 
 
@@ -268,6 +272,133 @@ def switch_clash_next_node(cfg: dict):
         print(f"[gh-register] 节点切换跳过或失败: {e}")
 
 
+
+# ------------------------------------------------------------------ 自动打码平台接口 (Arkose FunCaptcha)
+
+GITHUB_SIGNUP_URL = "https://github.com/signup"
+GITHUB_ARKOSE_PUBLIC_KEY = "E55627E5-6C66-48BE-B587-1FA65D9BE55B"  # GitHub Arkose 官方公共 Client ID
+
+async def solve_arkose_captcha(http_client: httpx.AsyncClient, cfg: dict, page_url: str = GITHUB_SIGNUP_URL, public_key: str = GITHUB_ARKOSE_PUBLIC_KEY) -> Optional[str]:
+    """对接主流验证码破解平台 (CapSolver / 2Captcha / 自建)，自动求解 GitHub FunCaptcha。"""
+    provider = (cfg.get("captcha_provider") or "capsolver").lower().strip()
+    api_key = (cfg.get("captcha_api_key") or "").strip()
+    if not api_key:
+        print("[captcha] 未配置打码平台 API Key，跳过自动打码")
+        return None
+
+    print(f"[captcha] 正在向 {provider} 提交 Arkose FunCaptcha 解题任务...")
+
+    try:
+        if provider == "capsolver":
+            base_url = (cfg.get("captcha_api_url") or "https://api.capsolver.com").rstrip("/")
+            task_payload = {
+                "clientKey": api_key,
+                "task": {
+                    "type": "FunCaptchaTaskProxyLess",
+                    "websiteURL": page_url,
+                    "websitePublicKey": public_key,
+                    "data": json.dumps({"blob": ""})
+                }
+            }
+            res = await http_client.post(f"{base_url}/createTask", json=task_payload, timeout=20.0)
+            data = res.json()
+            if data.get("errorId", 0) != 0:
+                print(f"[captcha] CapSolver 创建任务失败: {data.get('errorDescription')}")
+                return None
+            task_id = data.get("taskId")
+            if not task_id:
+                return None
+
+            deadline = time.time() + 120
+            while time.time() < deadline:
+                await asyncio.sleep(3)
+                r = await http_client.post(f"{base_url}/getTaskResult", json={"clientKey": api_key, "taskId": task_id}, timeout=15.0)
+                r_data = r.json()
+                status = r_data.get("status")
+                if status == "ready":
+                    solution = r_data.get("solution", {})
+                    token = solution.get("token") or solution.get("userToken")
+                    print(f"[captcha] CapSolver 成功解题！Token 长度: {len(token) if token else 0}")
+                    return token
+                elif status == "failed":
+                    print(f"[captcha] CapSolver 解题失败: {r_data.get('errorDescription')}")
+                    return None
+
+        elif provider in ("2captcha", "twocaptcha"):
+            base_url = (cfg.get("captcha_api_url") or "https://api.2captcha.com").rstrip("/")
+            task_payload = {
+                "clientKey": api_key,
+                "task": {
+                    "type": "FunCaptchaTaskProxyless",
+                    "websiteURL": page_url,
+                    "websitePublicKey": public_key
+                }
+            }
+            res = await http_client.post(f"{base_url}/createTask", json=task_payload, timeout=20.0)
+            data = res.json()
+            if data.get("errorId", 0) != 0:
+                print(f"[captcha] 2Captcha 创建任务失败: {data.get('errorDescription')}")
+                return None
+            task_id = data.get("taskId")
+            if not task_id:
+                return None
+
+            deadline = time.time() + 120
+            while time.time() < deadline:
+                await asyncio.sleep(4)
+                r = await http_client.post(f"{base_url}/getTaskResult", json={"clientKey": api_key, "taskId": task_id}, timeout=15.0)
+                r_data = r.json()
+                if r_data.get("status") == "ready":
+                    solution = r_data.get("solution", {})
+                    token = solution.get("token")
+                    print(f"[captcha] 2Captcha 成功解题！Token 长度: {len(token) if token else 0}")
+                    return token
+                elif r_data.get("errorId", 0) != 0:
+                    print(f"[captcha] 2Captcha 报错: {r_data.get('errorDescription')}")
+                    return None
+
+    except Exception as e:
+        print(f"[captcha] 请求打码平台异常: {e}")
+    return None
+
+
+async def inject_arkose_token(page, token: str) -> bool:
+    """将打码平台返回的 Arkose Token 注入到页面表单并触发验证通过回调。"""
+    if not token:
+        return False
+    try:
+        injected = await page.evaluate("""(tok) => {
+            let ok = false;
+            const selectors = [
+                'input[name="octocaptcha-token"]',
+                'input#octocaptcha-token',
+                'input[name="captcha_token"]',
+                'input[name="verification_token"]'
+            ];
+            for (const s of selectors) {
+                const el = document.querySelector(s);
+                if (el) {
+                    el.value = tok;
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    ok = true;
+                }
+            }
+            if (window.Arkose && window.Arkose.run) {
+                try { window.Arkose.onCompleted({token: tok}); ok = true; } catch(e){}
+            }
+            if (typeof window.setupOctocaptcha === 'function') {
+                try { window.setupOctocaptcha(tok); ok = true; } catch(e){}
+            }
+            return ok;
+        }""", token)
+        print(f"[captcha] Arkose Token 注入结果: {injected}")
+        await page.wait_for_timeout(2000)
+        return True
+    except Exception as e:
+        print(f"[captcha] 注入 Arkose Token 失败: {e}")
+        return False
+
 # ------------------------------------------------------------------ 邮箱接口
 
 async def create_email(http_client, cfg: dict):
@@ -465,7 +596,7 @@ async def google_oauth_login(page, google_password: str):
     return False
 
 
-async def register_github(page, security_code: str):
+async def register_github(page, security_code: str, cfg: dict = None, http_client = None):
     if "/signup" not in page.url:
         return await get_username(page)
 
@@ -491,6 +622,31 @@ async def register_github(page, security_code: str):
             continue
 
     await handle_security_code(page, security_code)
+
+    # 尝试自动识别并破解 Arkose 验证码（若页面存在验证码元素且配置了打码 API）
+    try:
+        has_captcha = await page.evaluate("""() => {
+            return !!(
+                document.querySelector('input[name="octocaptcha-token"]') ||
+                document.querySelector('#octocaptcha') ||
+                document.querySelector('iframe[src*="arkoselabs"]') ||
+                document.querySelector('iframe[src*="octocaptcha"]')
+            );
+        }""")
+        if has_captcha and cfg and cfg.get("captcha_api_key") and http_client:
+            print("[gh-register] 检测到页面存在 Arkose 验证码，启动打码...")
+            token = await solve_arkose_captcha(http_client, cfg, page_url=page.url)
+            if token:
+                await inject_arkose_token(page, token)
+                for sel in ['button:has-text("Create account")', 'button:has-text("Create Account")', 'button[type="submit"]']:
+                    btn = page.locator(sel).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        await btn.click(timeout=5000)
+                        break
+                await page.wait_for_timeout(3000)
+    except Exception as e:
+        print(f"[gh-register] 自动打码执行异常: {e}")
+
     url = page.url
     if "github.com/" in url and "/signup" not in url:
         return await get_username(page) or username
@@ -632,7 +788,7 @@ async def _run_job(job: Job):
                 return
 
             job.step("填写注册表单")
-            username = await register_github(page, job.security_code)
+            username = await register_github(page, job.security_code, cfg=cfg, http_client=http_client)
             if not username:
                 job.status = "failed"
                 job.result = "GitHub 注册未完成，请检查验证码是否有效"
@@ -645,6 +801,31 @@ async def _run_job(job: Job):
 
             job.step("绑定域名邮箱并收取验证邮件")
             await manage_emails(page, http_client, new_email, cfg)
+
+            # ----------------------------------------------------------
+            # 自动化 WorkBuddy AI 国际版 OAuth 接入并落库
+            # ----------------------------------------------------------
+            job.step("正在执行 WorkBuddy OAuth 授权接入...")
+            try:
+                oauth_res = await http_client.post("http://127.0.0.1:57890/api/oauth/start", json={"platform": "workbuddy"}, timeout=15.0)
+                if oauth_res.status_code == 200:
+                    oauth_data = oauth_res.json()
+                    verify_uri = oauth_data.get("verificationUri")
+                    login_id = oauth_data.get("loginId")
+                    if verify_uri:
+                        job.step(f"访问授权页: {verify_uri[:45]}...")
+                        await page.goto(verify_uri, wait_until="domcontentloaded", timeout=45000)
+                        await page.wait_for_timeout(3000)
+                        for btn_name in ["Authorize", "授权", "同意", "Allow"]:
+                            btn = page.get_by_role("button", name=re.compile(btn_name, re.I)).first
+                            if await btn.count() > 0 and await btn.is_visible():
+                                await btn.click(timeout=5000)
+                                job.step("已点击 WorkBuddy 授权按钮")
+                                break
+                        await page.wait_for_timeout(4000)
+                        job.step(f"WorkBuddy 账号接入成功 (ID: {login_id})")
+            except Exception as e:
+                job.step(f"OAuth 自动接入跳过或异常: {e}")
 
             job.progress = "100%"
             job.status = "done"

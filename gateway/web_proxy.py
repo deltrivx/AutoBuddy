@@ -2596,6 +2596,22 @@ COLLAPSE_SCRIPT = r"""
                 '<div class="wb-api-label">Google 登录密码 (可选)</div>' +
                 '<input id="wb-cfg-google-pw" type="password" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="遇密码框时自动填入">' +
               '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">自动打码平台 (Arkose 拼图破解)</div>' +
+                '<select id="wb-cfg-captcha-prov" class="wb-api-input" style="width:100%;margin-top:4px">' +
+                  '<option value="capsolver">CapSolver (推荐)</option>' +
+                  '<option value="2captcha">2Captcha</option>' +
+                  '<option value="custom">自建/自定义端点</option>' +
+                '</select>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">打码平台 Client Key / API Key</div>' +
+                '<input id="wb-cfg-captcha-key" type="password" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="输入打码平台密钥">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">打码 API 基础地址 (仅自定义时需填)</div>' +
+                '<input id="wb-cfg-captcha-url" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 https://api.capsolver.com">' +
+              '</div>' +
             '</div>' +
             '<div style="margin-top:10px;display:flex;align-items:center;gap:6px">' +
               '<input id="wb-cfg-no-proxy" type="checkbox" style="cursor:pointer">' +
@@ -2661,6 +2677,9 @@ COLLAPSE_SCRIPT = r"""
         mail_fetch_path: (v.querySelector("#wb-cfg-fetch-path").value || "/mails?address={email}").trim(),
         clash_rest_base: (v.querySelector("#wb-cfg-clash-base").value || "http://127.0.0.1:9090").trim(),
         google_password: (v.querySelector("#wb-cfg-google-pw").value || "").trim(),
+        captcha_provider: (v.querySelector("#wb-cfg-captcha-prov").value || "capsolver").trim(),
+        captcha_api_key: (v.querySelector("#wb-cfg-captcha-key").value || "").trim(),
+        captcha_api_url: (v.querySelector("#wb-cfg-captcha-url").value || "").trim(),
         no_switch_proxy: !!v.querySelector("#wb-cfg-no-proxy").checked
       };
       saveBtn.disabled = true;
@@ -2894,6 +2913,9 @@ COLLAPSE_SCRIPT = r"""
           setVal("wb-cfg-fetch-path", cfg.mail_fetch_path || "/mails?address={email}");
           setVal("wb-cfg-clash-base", cfg.clash_rest_base || "http://127.0.0.1:9090");
           setVal("wb-cfg-google-pw", cfg.google_password || "");
+          setVal("wb-cfg-captcha-prov", cfg.captcha_provider || "capsolver");
+          setVal("wb-cfg-captcha-key", cfg.captcha_api_key || "");
+          setVal("wb-cfg-captcha-url", cfg.captcha_api_url || "");
           var noProxy = document.getElementById("wb-cfg-no-proxy");
           if (noProxy) noProxy.checked = !!cfg.no_switch_proxy;
         })
