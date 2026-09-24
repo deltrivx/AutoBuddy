@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.5.5] - 2026-09-24
+
+### 代理架构优化与模板脱敏修复
+- **取消全局代理环境导出**：容器环境及 entrypoint 彻底移除全局 HTTP_PROXY / HTTPS_PROXY 导出，模型网关（18091）与官方后端直连上游，根除代理连接拒绝引起的 ConnectTimeout 异常。
+- **代理配置收敛至注册页面**：在 WebUI「账号接入」面板增加「注册专用出网代理 (register_proxy)」配置项，Playwright 自动化注册时按需挂载代理，默认指向 OpenClash 节点 `http://[IP]:7890`，Clash REST API 校准为 `http://[IP]:9090`。
+- **Unraid 模板全面脱敏与代理清理**：Unraid 容器模板取消 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 变量；管理员账号密码严格使用占位默认值 `admin` / `admin123`，彻底消除脱敏替换标记和覆盖用户本地配置的问题。
+
 ## [v0.5.4] - 2026-09-24
 
 ### 自动打码与账号闭环接入
@@ -1000,7 +1007,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.4...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.5...HEAD
+[v0.5.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.4...v0.5.5
 [v0.5.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.3...v0.5.4
 [v0.5.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.2...v0.5.3
 [v0.5.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.1...v0.5.2

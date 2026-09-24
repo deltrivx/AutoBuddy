@@ -2588,7 +2588,11 @@ COLLAPSE_SCRIPT = r"""
                 '<div class="wb-api-label">提取邮件路径</div>' +
                 '<input id="wb-cfg-fetch-path" class="wb-api-input" style="width:100%;margin-top:4px" value="/mails?address={email}">' +
               '</div>' +
-              '<div>' +
+                            '<div>' +
+                '<div class="wb-api-label">注册专用出网代理 (HTTP / SOCKS5)</div>' +
+                '<input id="wb-cfg-reg-proxy" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 http://192.168.31.10:7890">' +
+              '</div>' +
+'<div>' +
                 '<div class="wb-api-label">Clash REST API 地址</div>' +
                 '<input id="wb-cfg-clash-base" class="wb-api-input" style="width:100%;margin-top:4px" value="http://127.0.0.1:9090">' +
               '</div>' +
@@ -2675,6 +2679,7 @@ COLLAPSE_SCRIPT = r"""
         mail_auth_header_value: (v.querySelector("#wb-cfg-auth-val").value || "").trim(),
         mail_create_path: (v.querySelector("#wb-cfg-create-path").value || "/new").trim(),
         mail_fetch_path: (v.querySelector("#wb-cfg-fetch-path").value || "/mails?address={email}").trim(),
+        register_proxy: (v.querySelector("#wb-cfg-reg-proxy").value || "").trim(),
         clash_rest_base: (v.querySelector("#wb-cfg-clash-base").value || "http://127.0.0.1:9090").trim(),
         google_password: (v.querySelector("#wb-cfg-google-pw").value || "").trim(),
         captcha_provider: (v.querySelector("#wb-cfg-captcha-prov").value || "capsolver").trim(),
@@ -2911,6 +2916,7 @@ COLLAPSE_SCRIPT = r"""
           setVal("wb-cfg-auth-val", cfg.mail_auth_header_value);
           setVal("wb-cfg-create-path", cfg.mail_create_path || "/new");
           setVal("wb-cfg-fetch-path", cfg.mail_fetch_path || "/mails?address={email}");
+          setVal("wb-cfg-reg-proxy", cfg.register_proxy || "http://192.168.31.10:7890");
           setVal("wb-cfg-clash-base", cfg.clash_rest_base || "http://127.0.0.1:9090");
           setVal("wb-cfg-google-pw", cfg.google_password || "");
           setVal("wb-cfg-captcha-prov", cfg.captcha_provider || "capsolver");

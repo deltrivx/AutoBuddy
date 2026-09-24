@@ -32,12 +32,8 @@
   <Config Name="浏览器缓存目录" Target="/data/.autobuddy/browsers" Default="/mnt/user/appdata/autobuddy/browsers" Mode="rw" Description="Playwright 浏览器内核持久化目录：首次启动自动下载并持久化，容器升级与重建无需重复下载" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/browsers</Config>
 
   <!-- 用户认证凭据（强制认证，可通过环境变量覆盖或在页面修改） -->
-  <Config Name="WebUI 管理员账号" Target="AUTH_USERNAME" Default="[密钥]" Mode="" Description="控制台登录账号（未配置时默认使用 [密钥]）" Type="Variable" Display="always" Required="false" Mask="false">[密钥]</Config>
-  <Config Name="WebUI 管理员密码" Target="AUTH_PASSWORD" Default="[密钥]" Mode="" Description="控制台登录密码（未配置时默认使用 [密钥]，可在登录后于页面自行修改）" Type="Variable" Display="always" Required="false" Mask="true">[密钥]</Config>
-
-  <!-- 运行环境与代理分流 -->
+  <Config Name="WebUI 管理员账号" Target="AUTH_USERNAME" Default="admin" Mode="" Description="控制台登录账号（未配置时默认使用 admin）" Type="Variable" Display="always" Required="false" Mask="false">admin</Config>
+  <Config Name="WebUI 管理员密码" Target="AUTH_PASSWORD" Default="admin123" Mode="" Description="控制台登录密码（未配置时默认使用 admin123，可在登录后于页面自行修改）" Type="Variable" Display="always" Required="false" Mask="true">admin123</Config>
+  <!-- 运行环境 -->
   <Config Name="容器时区" Target="TZ" Default="Asia/Shanghai" Mode="" Description="容器运行时区（确保签到任务与用量统计按中国标准时间归集）" Type="Variable" Display="always" Required="false" Mask="false">Asia/Shanghai</Config>
-  <Config Name="HTTP 代理" Target="HTTP_PROXY" Default="" Mode="" Description="出网 HTTP 代理地址（例如 http://192.168.31.1:7890，用于模型上游与 GitHub 出网）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  <Config Name="HTTPS 代理" Target="HTTPS_PROXY" Default="" Mode="" Description="出网 HTTPS 代理地址（例如 http://192.168.31.1:7890）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  <Config Name="代理分流绕过 (NO_PROXY)" Target="NO_PROXY" Default="localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1" Mode="" Description="不走代理的精确内网 IP 列表（Python httpx 不支持 CIDR 网段，请务必填写精确 IP 以防回环 502/404 故障）" Type="Variable" Display="always" Required="false" Mask="false">localhost,127.0.0.1,::1,192.168.31.2,192.168.31.1</Config>
 </Container>

@@ -59,18 +59,9 @@ else
     export no_proxy="$DEFAULT_NO_PROXY"
 fi
 
-if [ -n "$HTTP_PROXY" ]; then
-    export http_proxy="$HTTP_PROXY"
-    echo "[Proxy] 已加载 HTTP 代理: $HTTP_PROXY"
-fi
-if [ -n "$HTTPS_PROXY" ]; then
-    export https_proxy="$HTTPS_PROXY"
-    echo "[Proxy] 已加载 HTTPS 代理: $HTTPS_PROXY"
-fi
-if [ -n "$ALL_PROXY" ]; then
-    export all_proxy="$ALL_PROXY"
-    echo "[Proxy] 已加载全局 SOCKS/ALL 代理: $ALL_PROXY"
-fi
+# 全局服务直连国内上游与局域网，不导出代理到环境变量，防止模型网关 18091 误走代理导致 ConnectTimeout
+# 代理仅在 WebUI「账号接入」由用户配置 register_proxy，专用于 GitHub 注册流程
+unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy 2>/dev/null || true
 echo "[Proxy] 精确分流 NO_PROXY: $NO_PROXY"
 
 # 初始化数据库

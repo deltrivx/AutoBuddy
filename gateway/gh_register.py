@@ -50,9 +50,10 @@ DEFAULT_CONFIG = {
     "mail_domains": [],
     "mail_auth_header_name": "",
     "mail_auth_header_value": "",
-    "clash_rest_base": "http://192.168.31.1:9090",
+    "clash_rest_base": "http://192.168.31.10:9090",
     "clash_nodes": [],
     "no_switch_proxy": True,
+    "register_proxy": "http://192.168.31.10:7890",
     "google_password": "",
     "captcha_provider": "capsolver",      # capsolver | 2captcha | custom
     "captcha_api_key": "",
@@ -770,7 +771,25 @@ async def _run_job(job: Job):
 
         job.step("启动内置 Headless Chromium")
         async with async_playwright() as p:
-            job.browser = await p.chromium.launch(headless=True)
+            exec_path = None
+            try:
+                import glob
+                cands = glob.glob(f"{BROWSERS_PATH}/**/chrome", recursive=True)
+                if cands:
+                    exec_path = cands[0]
+            except Exception:
+                pass
+
+            launch_kwargs = {"headless": True, "args": ["--no-sandbox", "--disable-setuid-sandbox"]}
+            if exec_path:
+                launch_kwargs["executable_path"] = exec_path
+
+            reg_proxy = (cfg.get("register_proxy") or "").strip()
+            if reg_proxy:
+                launch_kwargs["proxy"] = {"server": reg_proxy}
+                job.step(f"注册使用专用代理: {reg_proxy}")
+
+            job.browser = await p.chromium.launch(**launch_kwargs)
             ctx = await job.browser.new_context()
             page = await ctx.new_page()
 
