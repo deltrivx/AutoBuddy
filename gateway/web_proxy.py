@@ -2600,8 +2600,8 @@ COLLAPSE_SCRIPT = r"""
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div class="wb-api-label">浏览器环境 (Playwright Headless Chromium)</div>' +
-              '<div class="wb-api-desc">容器内置 Playwright 驱动，按需下载 Chromium 至持久化挂载卷，不外接 CDP。</div>' +
+              '<div class="wb-api-label">浏览器环境 (Patchright Headless Chromium · 免检测)</div>' +
+              '<div class="wb-api-desc">容器内置 Patchright 免检测驱动，按需下载 Chromium 内核至持久化挂载卷，不外接 CDP。</div>' +
             '</div>' +
             '<div id="wb-ac-browser-pill" class="wb-api-badge">检测中…</div>' +
           '</div>' +
@@ -2669,14 +2669,15 @@ COLLAPSE_SCRIPT = r"""
                 '<div class="wb-api-label">提取邮件路径</div>' +
                 '<input id="wb-cfg-fetch-path" class="wb-api-input" style="width:100%;margin-top:4px" value="/mails?address={email}">' +
               '</div>' +
-                            '<div>' +
+              '<div>' +
                 '<div class="wb-api-label">注册专用出网代理 (HTTP / SOCKS5)</div>' +
-                '<input id="wb-cfg-reg-proxy" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 http://192.168.31.10:7890">' +
+                '<div style="display:flex;gap:8px;align-items:center;margin-top:4px">' +
+                  '<input id="wb-cfg-reg-proxy" class="wb-api-input" style="flex:1;min-width:0" placeholder="例如 http://192.168.31.10:7890">' +
+                  '<button id="wb-cfg-proxy-test" class="wb-api-btn" style="white-space:nowrap">检测代理</button>' +
+                '</div>' +
+                '<div id="wb-cfg-proxy-result" class="wb-api-desc" style="margin-top:4px"></div>' +
               '</div>' +
-'<div>' +
-                '<div class="wb-api-label">Clash REST API 地址</div>' +
-                '<input id="wb-cfg-clash-base" class="wb-api-input" style="width:100%;margin-top:4px" value="http://192.168.31.10:9090">' +
-              '</div>' +
+
               '<div>' +
                 '<div class="wb-api-label">Google 登录密码 (可选)</div>' +
                 '<input id="wb-cfg-google-pw" type="password" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="遇密码框时自动填入">' +
@@ -2697,11 +2698,16 @@ COLLAPSE_SCRIPT = r"""
                 '<div class="wb-api-label">打码 API 基础地址 (仅自定义时需填)</div>' +
                 '<input id="wb-cfg-captcha-url" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 https://api.capsolver.com">' +
               '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">打码最大重试轮数</div>' +
+                '<input id="wb-cfg-captcha-retries" type="number" min="0" max="10" class="wb-api-input" style="width:100%;margin-top:4px" value="2">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">表单填充节流基数 (秒)</div>' +
+                '<input id="wb-cfg-bot-wait" type="number" min="0" step="0.5" class="wb-api-input" style="width:100%;margin-top:4px" value="3">' +
+              '</div>' +
             '</div>' +
-            '<div style="margin-top:10px;display:flex;align-items:center;gap:6px">' +
-              '<input id="wb-cfg-no-proxy" type="checkbox" style="cursor:pointer">' +
-              '<label for="wb-cfg-no-proxy" style="font-size:12px;color:var(--muted-foreground,#64748b);cursor:pointer">禁用自动切换 Clash 节点（稳定走默认网络出口）</label>' +
-            '</div>' +
+
           '</div>' +
         '</div>' +
 
@@ -2710,17 +2716,11 @@ COLLAPSE_SCRIPT = r"""
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-label">执行注册任务</div>' +
-              '<div class="wb-api-desc">在 GitHub 注册流程中触发设备安全校验时，在此填入验证码启动任务。</div>' +
+              '<div class="wb-api-desc">全自动完成 GitHub 注册：设备验证码由后端自动收信提取并回填，无需人工介入。</div>' +
             '</div>' +
             '<div style="display:flex;gap:8px">' +
               '<button id="wb-ac-job-abort" class="wb-api-btn wb-api-btn-danger" style="display:none">中止任务</button>' +
               '<button id="wb-ac-job-start" class="wb-api-btn wb-api-btn-primary">开始注册</button>' +
-            '</div>' +
-          '</div>' +
-          '<div class="wb-api-row">' +
-            '<div style="width:100%">' +
-              '<div class="wb-api-label">GitHub 设备验证码 (Launch Code)</div>' +
-              '<input id="wb-ac-sec-code" class="wb-api-input" style="width:100%;margin-top:6px" placeholder="输入从验证邮件或页面获取的验证码，例如 41238998">' +
             '</div>' +
           '</div>' +
           '<div id="wb-ac-task-box" class="wb-api-row wb-api-row-stack" style="display:none">' +
@@ -2749,6 +2749,53 @@ COLLAPSE_SCRIPT = r"""
         });
     });
 
+    var proxyTestBtn = v.querySelector("#wb-cfg-proxy-test");
+    if (proxyTestBtn) {
+      proxyTestBtn.addEventListener("click", function() {
+        var resultEl = v.querySelector("#wb-cfg-proxy-result");
+        var proxyVal = (v.querySelector("#wb-cfg-reg-proxy").value || "").trim();
+        if (!proxyVal) {
+          if (resultEl) {
+            resultEl.textContent = "请先填写代理地址";
+            resultEl.style.color = "#ef4444";
+          }
+          return;
+        }
+        proxyTestBtn.disabled = true;
+        proxyTestBtn.textContent = "检测中…";
+        if (resultEl) {
+          resultEl.textContent = "正在通过该代理访问 GitHub…";
+          resultEl.style.color = "var(--muted-foreground,#64748b)";
+        }
+        fetch("/api/gh-register/proxy/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proxy: proxyVal })
+        })
+          .then(function(r) { return r.json(); })
+          .then(function(res) {
+            proxyTestBtn.disabled = false;
+            proxyTestBtn.textContent = "检测代理";
+            if (!resultEl) return;
+            if (res && res.ok) {
+              resultEl.textContent = "✅ 代理可用 · " + (res.detail || "") + (res.latency_ms ? " · " + res.latency_ms + "ms" : "");
+              resultEl.style.color = "#10b981";
+            } else {
+              resultEl.textContent = "❌ 代理不可用 · " + ((res && res.detail) || "未知原因");
+              resultEl.style.color = "#ef4444";
+            }
+          })
+          .catch(function(e) {
+            proxyTestBtn.disabled = false;
+            proxyTestBtn.textContent = "检测代理";
+            if (resultEl) {
+              resultEl.textContent = "❌ 检测请求失败: " + e;
+              resultEl.style.color = "#ef4444";
+            }
+          });
+      });
+    }
+
     var saveBtn = v.querySelector("#wb-ac-cfg-save");
     saveBtn.addEventListener("click", function() {
       var domainsStr = (v.querySelector("#wb-cfg-mail-domains").value || "").trim();
@@ -2761,12 +2808,12 @@ COLLAPSE_SCRIPT = r"""
         mail_create_path: (v.querySelector("#wb-cfg-create-path").value || "/new").trim(),
         mail_fetch_path: (v.querySelector("#wb-cfg-fetch-path").value || "/mails?address={email}").trim(),
         register_proxy: (v.querySelector("#wb-cfg-reg-proxy").value || "").trim(),
-        clash_rest_base: (v.querySelector("#wb-cfg-clash-base").value || "http://192.168.31.10:9090").trim(),
         google_password: (v.querySelector("#wb-cfg-google-pw").value || "").trim(),
         captcha_provider: (v.querySelector("#wb-cfg-captcha-prov").value || "capsolver").trim(),
         captcha_api_key: (v.querySelector("#wb-cfg-captcha-key").value || "").trim(),
         captcha_api_url: (v.querySelector("#wb-cfg-captcha-url").value || "").trim(),
-        no_switch_proxy: !!v.querySelector("#wb-cfg-no-proxy").checked
+        max_captcha_retries: parseInt(v.querySelector("#wb-cfg-captcha-retries").value, 10) || 0,
+        bot_protection_wait: parseFloat(v.querySelector("#wb-cfg-bot-wait").value) || 0
       };
       saveBtn.disabled = true;
       fetch("/api/gh-register/config", {
@@ -2792,12 +2839,7 @@ COLLAPSE_SCRIPT = r"""
     var startBtn = v.querySelector("#wb-ac-job-start");
     var abortBtn = v.querySelector("#wb-ac-job-abort");
     startBtn.addEventListener("click", function() {
-      var code = (v.querySelector("#wb-ac-sec-code").value || "").trim();
       var googlePw = (v.querySelector("#wb-cfg-google-pw").value || "").trim();
-      if (!code) {
-        wbToast("请填写 GitHub 设备验证码 (Launch Code)", "warn");
-        return;
-      }
       startBtn.disabled = true;
       var taskBox = v.querySelector("#wb-ac-task-box");
       if (taskBox) taskBox.style.display = "flex";
@@ -2998,13 +3040,12 @@ COLLAPSE_SCRIPT = r"""
           setVal("wb-cfg-create-path", cfg.mail_create_path || "/new");
           setVal("wb-cfg-fetch-path", cfg.mail_fetch_path || "/mails?address={email}");
           setVal("wb-cfg-reg-proxy", cfg.register_proxy || "http://192.168.31.10:7890");
-          setVal("wb-cfg-clash-base", cfg.clash_rest_base || "http://192.168.31.10:9090");
           setVal("wb-cfg-google-pw", cfg.google_password || "");
           setVal("wb-cfg-captcha-prov", cfg.captcha_provider || "capsolver");
           setVal("wb-cfg-captcha-key", cfg.captcha_api_key || "");
           setVal("wb-cfg-captcha-url", cfg.captcha_api_url || "");
-          var noProxy = document.getElementById("wb-cfg-no-proxy");
-          if (noProxy) noProxy.checked = !!cfg.no_switch_proxy;
+          setVal("wb-cfg-captcha-retries", (cfg.max_captcha_retries === undefined || cfg.max_captcha_retries === null) ? 2 : cfg.max_captcha_retries);
+          setVal("wb-cfg-bot-wait", (cfg.bot_protection_wait === undefined || cfg.bot_protection_wait === null) ? 3 : cfg.bot_protection_wait);
         })
         .catch(function() {});
     }

@@ -50,10 +50,9 @@ DEFAULT_CONFIG = {
     "mail_domains": [],
     "mail_auth_header_name": "",
     "mail_auth_header_value": "",
-    "clash_rest_base": "http://192.168.31.10:9090",
-    "clash_nodes": [],
-    "no_switch_proxy": True,
     "register_proxy": "http://192.168.31.10:7890",
+    "max_captcha_retries": 2,          # 打码失败后的额外重试轮数
+    "bot_protection_wait": 3.0,        # 表单填充节流基数（秒），降低风控命中
     "google_password": "",
     "captcha_provider": "capsolver",      # capsolver | 2captcha | custom
     "captcha_api_key": "",
@@ -247,33 +246,6 @@ def random_local(length=12):
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 
-def switch_clash_next_node(cfg: dict):
-    """节点切换，用户未配置或禁用时直接跳过。"""
-    if cfg.get("no_switch_proxy") or not cfg.get("clash_nodes"):
-        return
-    base = cfg.get("clash_rest_base")
-    if not base:
-        return
-    try:
-        with httpx.Client(timeout=5.0) as c:
-            r = c.get(f"{base}/api/config")
-            data = r.json().get("data", {})
-            proxies = data.get("proxies", {})
-            current = proxies.get("now")
-            candidates = [n for n, info in proxies.items() if info.get("type") in ("ss", "vmess", "trojan")]
-            if not candidates:
-                return
-            if current in candidates:
-                target = candidates[(candidates.index(current) + 1) % len(candidates)]
-            else:
-                target = cfg["clash_nodes"][0] if cfg["clash_nodes"] else candidates[0]
-            c.put(f"{base}/api/proxies/{target}", timeout=5.0)
-            print(f"[gh-register] 已切换代理节点: {target}")
-    except Exception as e:
-        print(f"[gh-register] 节点切换跳过或失败: {e}")
-
-
-
 # ------------------------------------------------------------------ 自动打码平台接口 (Arkose FunCaptcha)
 
 GITHUB_SIGNUP_URL = "https://github.com/signup"
@@ -425,6 +397,63 @@ async def create_email(http_client, cfg: dict):
     if data.get("success") or data.get("ok"):
         return email
     raise RuntimeError(f"创建临时邮箱失败: {data}")
+
+
+async def wait_for_device_code(http_client, email: str, cfg: dict, timeout: int = 180) -> Optional[str]:
+    """轮询注册邮箱，从 GitHub 验证邮件正文里提取 8 位设备验证码 (Launch Code)。
+
+    GitHub 的 launch code 邮件正文形如：
+        ... your verification code is 12345678 ...
+        ... 你的验证码为 12345678 ...
+    这里只做纯正则提取，不依赖任何第三方打码平台。
+    """
+    api_base = (cfg.get("mail_api_base") or "").rstrip("/")
+    if not api_base:
+        return None
+
+    headers = {}
+    auth_name = cfg.get("mail_auth_header_name")
+    auth_val = cfg.get("mail_auth_header_value")
+    if auth_name and auth_val:
+        headers[auth_name] = auth_val
+
+    fetch_path = cfg.get("mail_fetch_path") or "/mails?address={email}"
+    deadline = time.time() + timeout
+
+    # 8 位数字，且上下文里出现 code / verification / 验证码 等关键词才算数，
+    # 避免把邮件里的年份、订单号、CSS 尺寸之类的数字误当验证码。
+    code_re = re.compile(
+        r"(?:code|verification|verify|验证码|校验码)[^0-9]{0,40}(\d{8})|(\d{8})[^0-9]{0,40}(?:code|verification|验证码)",
+        re.IGNORECASE,
+    )
+
+    while time.time() < deadline:
+        try:
+            req_path = fetch_path.replace("{email}", email)
+            resp = await http_client.get(f"{api_base}{req_path}", headers=headers, timeout=30)
+            data = resp.json()
+            mails = data.get("results", data.get("mails", data.get("result", [])))
+            if isinstance(mails, list):
+                for mail in sorted(mails, key=lambda m: m.get("created_at", ""), reverse=True):
+                    raw = mail.get("raw", "")
+                    if not raw:
+                        continue
+                    try:
+                        decoded = quopri.decodestring(raw).decode("utf-8", errors="replace")
+                    except Exception:
+                        decoded = raw
+                    # 去掉 HTML 标签与实体，避免标签名干扰正则
+                    plain = re.sub(r"<[^>]+>", " ", decoded)
+                    plain = plain.replace("&nbsp;", " ").replace("&amp;", "&")
+                    m = code_re.search(plain)
+                    if m:
+                        code = m.group(1) or m.group(2)
+                        if code:
+                            return code
+        except Exception as e:
+            print(f"[gh-register] 轮询设备验证码等待中: {e}")
+        await asyncio.sleep(8)
+    return None
 
 
 async def wait_for_verify_link(http_client, email: str, cfg: dict):
@@ -597,7 +626,7 @@ async def google_oauth_login(page, google_password: str):
     return False
 
 
-async def register_github(page, security_code: str, cfg: dict = None, http_client = None):
+async def register_github(page, security_code: str, cfg: dict = None, http_client = None, email: str = None):
     if "/signup" not in page.url:
         return await get_username(page)
 
@@ -612,7 +641,10 @@ async def register_github(page, security_code: str, cfg: dict = None, http_clien
         return true;
     }})()""")
 
-    await page.wait_for_timeout(1000)
+    # 表单填充节流：部分风控会对「瞬间填完并提交」打高风险分，
+    # 这里按配置的基数拉长提交前的停顿（默认 3 秒量级）。
+    pause_ms = int(float((cfg or {}).get("bot_protection_wait") or 3.0) * 1000)
+    await page.wait_for_timeout(max(800, pause_ms))
     for sel in ['button:has-text("Create account")', 'button:has-text("Create Account")', 'button[type="submit"]']:
         try:
             btn = page.locator(sel).first
@@ -621,6 +653,17 @@ async def register_github(page, security_code: str, cfg: dict = None, http_clien
                 break
         except Exception:
             continue
+
+    # 设备验证码：用户若在启动任务时填了就用用户的；否则自动从注册邮箱收信提取。
+    # 正常情况下无需人工介入 —— GitHub 的 launch code 就发到本次注册的临时邮箱里。
+    if not security_code and email and http_client and cfg:
+        try:
+            print("[gh-register] 未提供设备验证码，改为自动收信提取...")
+            security_code = await wait_for_device_code(http_client, email, cfg) or ""
+            if security_code:
+                print(f"[gh-register] 已自动提取设备验证码: {security_code}")
+        except Exception as e:
+            print(f"[gh-register] 自动提取设备验证码异常: {e}")
 
     await handle_security_code(page, security_code)
 
@@ -635,9 +678,13 @@ async def register_github(page, security_code: str, cfg: dict = None, http_clien
             );
         }""")
         if has_captcha and cfg and cfg.get("captcha_api_key") and http_client:
-            print("[gh-register] 检测到页面存在 Arkose 验证码，启动打码...")
-            token = await solve_arkose_captcha(http_client, cfg, page_url=page.url)
-            if token:
+            retries = int(cfg.get("max_captcha_retries") or 2)
+            for attempt in range(retries + 1):
+                print(f"[gh-register] 检测到 Arkose 验证码，启动打码 (第 {attempt + 1}/{retries + 1} 轮)...")
+                token = await solve_arkose_captcha(http_client, cfg, page_url=page.url)
+                if not token:
+                    await page.wait_for_timeout(2000)
+                    continue
                 await inject_arkose_token(page, token)
                 for sel in ['button:has-text("Create account")', 'button:has-text("Create Account")', 'button[type="submit"]']:
                     btn = page.locator(sel).first
@@ -645,6 +692,16 @@ async def register_github(page, security_code: str, cfg: dict = None, http_clien
                         await btn.click(timeout=5000)
                         break
                 await page.wait_for_timeout(3000)
+                # 提交后若验证码区块已消失，说明通过，不必再重试
+                still = await page.evaluate("""() => !!(document.querySelector('input[name="octocaptcha-token"]') || document.querySelector('#octocaptcha') || document.querySelector('iframe[src*="arkoselabs"]') || document.querySelector('iframe[src*="octocaptcha"]'))""")
+                if not still:
+                    break
+                # 换题重试前先刷新，避免拿到同一张已失败的图
+                try:
+                    await page.reload(wait_until="domcontentloaded", timeout=30000)
+                    await page.wait_for_timeout(1500)
+                except Exception:
+                    pass
     except Exception as e:
         print(f"[gh-register] 自动打码执行异常: {e}")
 
@@ -769,7 +826,11 @@ async def _run_job(job: Job):
             job.step("中止：邮箱参数未配置")
             return
 
-        job.step("启动内置 Headless Chromium")
+        job.step("生成临时域名邮箱")
+        new_email = await create_email(http_client, cfg)
+        job.step(f"临时邮箱: {new_email}")
+
+        job.step("启动内置 Headless Chromium (Patchright 免检测)")
         async with async_playwright() as p:
             exec_path = None
             try:
@@ -807,16 +868,14 @@ async def _run_job(job: Job):
                 return
 
             job.step("填写注册表单")
-            username = await register_github(page, job.security_code, cfg=cfg, http_client=http_client)
+            username = await register_github(
+                page, job.security_code, cfg=cfg, http_client=http_client, email=new_email
+            )
             if not username:
                 job.status = "failed"
                 job.result = "GitHub 注册未完成，请检查验证码是否有效"
                 return
             job.step(f"注册成功，用户名: {username}")
-
-            job.step("生成临时域名邮箱")
-            new_email = await create_email(http_client, cfg)
-            job.step(f"临时邮箱: {new_email}")
 
             job.step("绑定域名邮箱并收取验证邮件")
             await manage_emails(page, http_client, new_email, cfg)
@@ -851,8 +910,6 @@ async def _run_job(job: Job):
             job.result = {"username": username, "email": new_email}
             job.step("全部流程执行完成！")
 
-            # 切换节点（若配置）
-            switch_clash_next_node(cfg)
     except Exception as e:
         job.status = "failed"
         job.result = f"{type(e).__name__}: {e}"
@@ -922,6 +979,45 @@ async def _autostart_download_if_missing():
         return
     if _DL["status"] != "running":
         asyncio.create_task(_download_browser())
+
+
+class ProxyTestReq(BaseModel):
+    proxy: str = ""
+
+
+@app.post("/api/gh-register/proxy/test")
+async def proxy_test(req: ProxyTestReq):
+    """检测出网代理是否可用：用该代理访问 GitHub 与一个轻量探针。
+
+    返回结构刻意保持简单（ok / latency_ms / detail），前端直接展示徽章即可，
+    不把 httpx 的原始异常堆栈抛给用户。
+    """
+    proxy = (req.proxy or "").strip()
+    if not proxy:
+        return {"ok": False, "detail": "未填写代理地址"}
+
+    targets = [
+        ("https://github.com", "GitHub"),
+        ("https://api.github.com", "GitHub API"),
+    ]
+    last_err = ""
+    for url, label in targets:
+        started = time.time()
+        try:
+            async with httpx.AsyncClient(proxy=proxy, timeout=12.0, follow_redirects=True) as c:
+                r = await c.get(url)
+            latency = int((time.time() - started) * 1000)
+            if r.status_code < 400:
+                return {
+                    "ok": True,
+                    "detail": f"{label} 可达 (HTTP {r.status_code})",
+                    "latency_ms": latency,
+                    "target": url,
+                }
+            last_err = f"{label} 返回 HTTP {r.status_code}"
+        except Exception as e:
+            last_err = f"{label} 连接失败: {type(e).__name__}: {e}"
+    return {"ok": False, "detail": last_err or "代理不可用"}
 
 
 @app.post("/api/gh-register/browser/install")

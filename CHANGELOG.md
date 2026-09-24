@@ -15,6 +15,15 @@
 
 - 暂无。
 
+## [v0.5.8] - 2026-09-24
+
+### 账号接入页面全面优化与 GitHub 注册全自动化
+- **浏览器环境标识修正**：界面文案由 Playwright 更正为 Patchright 免检测驱动，与实际底层一致。
+- **代理配置去重**：删除冗余的「Clash REST API 地址」输入框与「禁用自动切换 Clash 节点」复选框，后端同步移除节点自动切换逻辑与相关配置项，配置只保留「注册专用出网代理」一项。
+- **新增代理检测**：在代理配置旁增加「检测代理」按钮，通过该代理实测 GitHub 与 GitHub API 可达性，实时返回可用状态与延迟。
+- **设备验证码全自动化**：新增邮件正文 8 位 Launch Code 提取逻辑，注册流程改为「先建临时邮箱 → 再注册 → 自动收信取码回填」，前端「GitHub 设备验证码」输入框已移除，无需人工介入。
+- **补齐风控对抗配置**：新增「打码最大重试轮数」与「表单填充节流基数」两项配置，前者支持验证码多轮换题重试，后者降低表单瞬间提交带来的风控评分。
+
 ## [v0.5.7] - 2026-09-24
 
 ### 浏览器底层升级为 Patchright 免检测驱动
@@ -1022,7 +1031,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.7...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.8...HEAD
+[v0.5.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.7...v0.5.8
 [v0.5.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.6...v0.5.7
 [v0.5.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.5...v0.5.6
 [v0.5.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.4...v0.5.5
