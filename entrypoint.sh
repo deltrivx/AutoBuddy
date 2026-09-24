@@ -99,6 +99,15 @@ if [ "${GH_REGISTER_ENABLED:-1}" = "1" ]; then
   GH_PID=$!
 fi
 
-trap "kill -TERM $WB_PID $PROXY_PID $GW_PID ${GH_PID:-0} 2>/dev/null || true" SIGTERM SIGINT
+# 5. 启动 WorkBuddy 每日成长任务服务 (内部端口: ${WB_DAILY_PORT:-18093})
+#    仅跑在容器内网（loopback），由 web_proxy 转发；托管 vendor 版签到脚本，
+#    账号池国内版账号只读共用凭据，定时调度在服务内实现。
+if [ "${WB_DAILY_ENABLED:-1}" = "1" ]; then
+  echo "[wb-daily] 正在启动每日任务服务 (端口: ${WB_DAILY_PORT:-18093})..."
+  python3 /app/gateway/wb_daily.py &
+  DAILY_PID=$!
+fi
+
+trap "kill -TERM $WB_PID $PROXY_PID $GW_PID ${GH_PID:-0} ${DAILY_PID:-0} 2>/dev/null || true" SIGTERM SIGINT
 
 wait -n

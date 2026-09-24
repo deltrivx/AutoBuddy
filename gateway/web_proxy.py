@@ -3281,8 +3281,9 @@ COLLAPSE_SCRIPT = r"""
       wbLoadAcData();
     } else {
       if (acView) acView.style.display = "none";
+      var onDaily = window.location.hash === "#/wb-daily";
       Array.prototype.slice.call(main.children).forEach(function(child) {
-        if (child !== acView && child.style.display === "none") {
+        if (child !== acView && child.id !== "wb-daily-view" && !onDaily && child.style.display === "none") {
           child.style.display = "";
         }
       });
@@ -3290,6 +3291,311 @@ COLLAPSE_SCRIPT = r"""
   }
 
   window.addEventListener("hashchange", wbUpdateAccountConnectView);
+
+  // ---------------- 侧边栏「每日任务」入口与专属视图 ----------------
+  // WorkBuddy 成长中心自动化（内置 vendor 版 WorkBuddy-Daily 脚本）：
+  // 调度配置、参与账号、执行记录与实时日志。与「账号接入」同用 hash 路由范式，
+  // 两个自定义视图互相跳过对方的隐藏状态，避免互相对齐时打架。
+  function wbFmtTs(ts) {
+    if (!ts) return "—";
+    try { return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }); } catch (e) { return String(ts); }
+  }
+
+  function injectWbDaily() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var nav = aside.querySelector("nav");
+    if (!nav) return;
+
+    var navLink = document.getElementById("wb-nav-wb-daily");
+    if (!navLink) {
+      navLink = document.createElement("a");
+      navLink.id = "wb-nav-wb-daily";
+      navLink.href = "#/wb-daily";
+      navLink.className = "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground cursor-pointer";
+      navLink.innerHTML = '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M9 16l2 2 4-4"></path></svg><span class="wb-nav-label">每日任务</span>';
+
+      var acLink = nav.querySelector("#wb-nav-account-connect");
+      var settingsA = nav.querySelector('a[href="/settings"]') || nav.lastElementChild;
+      if (acLink) {
+        nav.insertBefore(navLink, acLink);
+      } else if (settingsA) {
+        nav.insertBefore(navLink, settingsA);
+      } else {
+        nav.appendChild(navLink);
+      }
+
+      navLink.addEventListener("click", function(e) {
+        e.preventDefault();
+        window.location.hash = "#/wb-daily";
+        wbUpdateWbDailyView();
+      });
+
+      nav.querySelectorAll("a:not(#wb-nav-wb-daily)").forEach(function(a) {
+        a.addEventListener("click", function() {
+          if (window.location.hash === "#/wb-daily") {
+            window.location.hash = "";
+            setTimeout(wbUpdateWbDailyView, 20);
+          }
+        });
+      });
+    }
+
+    wbUpdateWbDailyView();
+  }
+
+  function wbUpdateWbDailyView() {
+    var isDaily = window.location.hash === "#/wb-daily";
+    var navLink = document.getElementById("wb-nav-wb-daily");
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+
+    if (navLink) {
+      if (isDaily) {
+        navLink.classList.add("bg-foreground/[0.06]", "font-medium", "text-foreground");
+        navLink.classList.remove("text-muted-foreground");
+        var otherLinks = aside.querySelectorAll("nav a:not(#wb-nav-wb-daily)");
+        otherLinks.forEach(function(link) {
+          link.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
+          link.classList.add("text-muted-foreground");
+        });
+      } else {
+        navLink.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
+        navLink.classList.add("text-muted-foreground");
+      }
+    }
+
+    var main = document.querySelector("main");
+    if (!main) return;
+
+    var dailyView = document.getElementById("wb-daily-view");
+    if (isDaily) {
+      if (!dailyView) {
+        dailyView = wbCreateWbDailyView();
+        main.appendChild(dailyView);
+      }
+      dailyView.style.display = "block";
+      Array.prototype.slice.call(main.children).forEach(function(child) {
+        if (child !== dailyView) child.style.display = "none";
+      });
+      wbLoadWbDailyData();
+    } else {
+      if (dailyView) dailyView.style.display = "none";
+      var onAc = window.location.hash === "#/account-connect";
+      Array.prototype.slice.call(main.children).forEach(function(child) {
+        if (child !== dailyView && child.id !== "wb-account-connect-view" && !onAc && child.style.display === "none") {
+          child.style.display = "";
+        }
+      });
+    }
+  }
+
+  window.addEventListener("hashchange", wbUpdateWbDailyView);
+
+  function wbCreateWbDailyView() {
+    var v = document.createElement("div");
+    v.id = "wb-daily-view";
+    v.style.display = "none";
+    v.innerHTML =
+      '<div style="max-width:960px;margin:0 auto;padding:24px 20px;display:flex;flex-direction:column;gap:20px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border,rgba(120,120,120,.2));padding-bottom:14px">' +
+          '<div>' +
+            '<h1 style="font-size:20px;font-weight:700;margin:0;color:var(--foreground,#0f172a)">每日任务</h1>' +
+            '<p style="font-size:13px;margin:4px 0 0 0;color:var(--muted-foreground,#64748b)">WorkBuddy 成长中心自动化：积分查询、成长任务、互动玩法与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
+          '</div>' +
+          '<div id="wb-dl-state" class="wb-api-badge">加载中…</div>' +
+        '</div>' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">调度与执行</div>' +
+              '<div class="wb-api-desc">按间隔自动执行一轮；「仅查询」模式只读积分/用量/成长，不产生任何任务状态变更。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wb-api-row wb-api-row-stack">' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;width:100%">' +
+              '<div style="display:flex;align-items:center;gap:8px">' +
+                '<input id="wb-dl-enabled" type="checkbox" style="width:16px;height:16px">' +
+                '<span class="wb-api-label" style="margin:0">启用定时调度</span>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">执行间隔（小时）</div>' +
+                '<input id="wb-dl-interval" type="number" min="1" max="72" class="wb-api-input" style="width:100%;margin-top:4px" value="12">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">执行模式</div>' +
+                '<select id="wb-dl-mode" class="wb-api-input" style="width:100%;margin-top:4px">' +
+                  '<option value="full">完整任务（签到/玩法/领奖）</option>' +
+                  '<option value="query">仅查询（只读）</option>' +
+                '</select>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-desc">上次执行：<span id="wb-dl-lastrun" class="wb-api-mono">—</span>　下次到期：<span id="wb-dl-nextdue" class="wb-api-mono">—</span></div>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px">' +
+              '<button id="wb-dl-abort" class="wb-api-btn wb-api-btn-danger" style="display:none">中止</button>' +
+              '<button id="wb-dl-save" class="wb-api-btn">保存配置</button>' +
+              '<button id="wb-dl-run" class="wb-api-btn wb-api-btn-primary">立即执行</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">参与账号</div>' +
+              '<div class="wb-api-desc">账号池国内版（cn）账号自动参与；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。如需追加账号池外账号，每行一条「手机号:RT」或「手机号:AT:RT」。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div id="wb-dl-accounts" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
+          '<div class="wb-api-row wb-api-row-stack">' +
+            '<div class="wb-api-label">补充账号（每行一条，仅保存在本地容器）</div>' +
+            '<textarea id="wb-dl-extra" class="wb-api-input" rows="3" style="width:100%;font-family:monospace" placeholder="13800000000:eyJraWQiOi..."></textarea>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">执行记录</div>' +
+              '<div class="wb-api-desc">最近 8 轮执行状态；任务执行期间下方实时滚动日志。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div id="wb-dl-jobs" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
+          '<div id="wb-dl-log" class="wb-api-code" style="max-height:220px;overflow-y:auto;white-space:pre-wrap;display:none"></div>' +
+        '</div>' +
+      '</div>';
+
+    v.querySelector("#wb-dl-save").addEventListener("click", wbDailySaveConfig);
+    v.querySelector("#wb-dl-run").addEventListener("click", wbDailyRunJob);
+    v.querySelector("#wb-dl-abort").addEventListener("click", wbDailyAbort);
+    return v;
+  }
+
+  function wbLoadWbDailyData() {
+    fetch("/api/wb-daily/config").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var cfg = (d && d.config) || {};
+      var el;
+      el = document.getElementById("wb-dl-enabled"); if (el) el.checked = cfg.enabled !== false;
+      el = document.getElementById("wb-dl-interval"); if (el) el.value = cfg.interval_hours != null ? cfg.interval_hours : 12;
+      el = document.getElementById("wb-dl-mode"); if (el) el.value = cfg.run_mode === "query" ? "query" : "full";
+      el = document.getElementById("wb-dl-extra"); if (el) el.value = (cfg.extra_accounts || []).join("\n");
+    }).catch(function() {});
+    fetch("/api/wb-daily/health").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var badge = document.getElementById("wb-dl-state");
+      var runBtn = document.getElementById("wb-dl-run");
+      var abortBtn = document.getElementById("wb-dl-abort");
+      if (badge) {
+        if (d && d.running) {
+          badge.textContent = "执行中";
+          badge.style.background = "rgba(59,130,246,.14)"; badge.style.color = "#1d4ed8";
+        } else {
+          badge.textContent = d && d.enabled === false ? "调度已停用" : "待机";
+          badge.style.background = "rgba(16,185,129,.14)"; badge.style.color = "#047857";
+        }
+      }
+      if (runBtn) runBtn.disabled = !!(d && d.running);
+      if (abortBtn) abortBtn.style.display = d && d.running ? "" : "none";
+      var lr = document.getElementById("wb-dl-lastrun"); if (lr) lr.textContent = wbFmtTs(d && d.last_run_at);
+      var nd = document.getElementById("wb-dl-nextdue"); if (nd) nd.textContent = d && d.enabled ? wbFmtTs(d.next_due_at) : "—（调度停用）";
+      if (d && d.running && d.running_job_id) wbDailyPoll(d.running_job_id);
+    }).catch(function() {});
+    fetch("/api/wb-daily/accounts").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var box = document.getElementById("wb-dl-accounts");
+      if (!box) return;
+      var accs = (d && d.accounts) || [];
+      if (!accs.length) {
+        box.innerHTML = '<div class="wb-api-desc">暂无参与账号（账号池无国内版账号，也未配置补充账号）</div>';
+        return;
+      }
+      var html = "";
+      accs.forEach(function(a) {
+        html += '<div class="wb-api-row" style="padding:6px 0">' +
+          '<div class="wb-api-main"><span class="wb-api-mono">' + String(a.user || "?") + '</span></div>' +
+          '<span class="wb-api-badge">' + (a.has_rt ? "凭据就绪" : "缺刷新令牌") + '</span></div>';
+      });
+      box.innerHTML = html;
+    }).catch(function() {});
+    wbLoadWbDailyJobs();
+  }
+
+  function wbLoadWbDailyJobs() {
+    fetch("/api/wb-daily/jobs").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var box = document.getElementById("wb-dl-jobs");
+      if (!box) return;
+      var jobs = (d && d.jobs) || [];
+      if (!jobs.length) { box.innerHTML = '<div class="wb-api-desc">暂无执行记录</div>'; return; }
+      var html = "";
+      jobs.slice(0, 8).forEach(function(j) {
+        var tone = j.status === "done" ? "#047857" : (j.status === "running" ? "#1d4ed8" : "#b45309");
+        var label = j.status === "done" ? "✅ 完成" : j.status === "running" ? "⏳ 执行中 " + (j.progress || "") : j.status === "aborted" ? "⛔ 已中止" : "❌ 失败";
+        html += '<div class="wb-api-row" style="padding:6px 0">' +
+          '<div class="wb-api-main"><span class="wb-api-mono">' + String(j.id) + '</span>' +
+          '<span class="wb-api-desc" style="margin-left:8px">' + wbFmtTs(j.created_at) + ' · ' + (j.mode === "scheduled" ? "自动" : "手动") + '</span></div>' +
+          '<span style="font-size:12px;font-weight:600;color:' + tone + '">' + label + '</span></div>';
+      });
+      box.innerHTML = html;
+    }).catch(function() {});
+  }
+
+  function wbDailySaveConfig() {
+    var extra = document.getElementById("wb-dl-extra").value.split("\n").map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+    var payload = {
+      enabled: document.getElementById("wb-dl-enabled").checked,
+      interval_hours: parseFloat(document.getElementById("wb-dl-interval").value) || 12,
+      run_mode: document.getElementById("wb-dl-mode").value,
+      extra_accounts: extra
+    };
+    fetch("/api/wb-daily/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function() { wbToast("配置已保存", "ok"); })
+      .catch(function(e) { wbToast("保存失败: " + (e && e.message || e), "err"); });
+  }
+
+  function wbDailyRunJob() {
+    var btn = document.getElementById("wb-dl-run");
+    if (btn) btn.disabled = true;
+    fetch("/api/wb-daily/run", { method: "POST" }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.job_id) throw new Error((d && d.detail) || "启动失败");
+      wbToast("每日任务已启动", "ok");
+      wbDailyPoll(d.job_id);
+    }).catch(function(e) {
+      wbToast("启动失败: " + (e && e.message || e), "err");
+      if (btn) btn.disabled = false;
+    });
+  }
+
+  function wbDailyPoll(jobId) {
+    if (window.__wbDailyPoll) clearInterval(window.__wbDailyPoll);
+    var logBox = document.getElementById("wb-dl-log");
+    if (logBox) logBox.style.display = "";
+    window.__wbDailyPoll = setInterval(function() {
+      fetch("/api/wb-daily/status/" + jobId).then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+        if (!d) return;
+        if (logBox) {
+          logBox.textContent = (d.log || []).join("\n");
+          logBox.scrollTop = logBox.scrollHeight;
+        }
+        if (d.status !== "running") {
+          clearInterval(window.__wbDailyPoll);
+          window.__wbDailyPoll = null;
+          wbToast(d.status === "done" ? "每日任务执行完成" : "每日任务结束（" + d.status + "）", d.status === "done" ? "ok" : "warn");
+          wbLoadWbDailyData();
+        }
+      }).catch(function() {});
+    }, 2000);
+  }
+
+  function wbDailyAbort() {
+    fetch("/api/wb-daily/health").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var id = d && d.running_job_id;
+      if (!id) { wbToast("当前没有执行中的任务", "info"); return; }
+      fetch("/api/wb-daily/abort/" + id, { method: "DELETE" }).then(function() {
+        wbToast("已发送中止请求", "info");
+      }).catch(function() { wbToast("中止请求失败", "err"); });
+    }).catch(function() { wbToast("中止失败", "err"); });
+  }
 
   function run() {
     sanitizeSidebarBrand();
@@ -3305,6 +3611,7 @@ COLLAPSE_SCRIPT = r"""
     injectAbout();
     wbPinAboutLast();
     injectAccountConnect();
+    injectWbDaily();
   }
 
   const observer = new MutationObserver(() => run());
@@ -4008,6 +4315,10 @@ _QUIET_SUBSTRINGS = (
     "/api/gh-register/status/",
     "/api/gh-register/jobs",
     "/api/gh-register/browser",
+    "/api/wb-daily/status/",
+    "/api/wb-daily/jobs",
+    "/api/wb-daily/health",
+    "/api/wb-daily/accounts",
     "/api/auth/status",
     "/api/account-models",
     "/api/account-pool",
@@ -4075,6 +4386,74 @@ async def gh_register_status(job_id: str):
 async def gh_register_abort(job_id: str):
     async with _gh_register_client() as client:
         r = await client.delete(f"{GH_REGISTER_INTERNAL}/api/gh-register/abort/{job_id}")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+# ---------------------------------------------------------------------------
+# WorkBuddy 每日成长任务服务转发（由容器内网 loopback 18093 提供，不对外暴露端口）。
+# 由 wb_daily.py 托管 vendor 版签到脚本；账号池 cn 账号只读共用凭据，无烧号风险。
+# ---------------------------------------------------------------------------
+WB_DAILY_INTERNAL = os.getenv("WB_DAILY_INTERNAL", "http://127.0.0.1:18093")
+
+
+def _wb_daily_client(timeout: float = 30.0) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout, trust_env=False)
+
+
+@app.get("/api/wb-daily/config")
+async def wb_daily_config_get():
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/config")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/wb-daily/config")
+async def wb_daily_config_post(request: Request):
+    body = await request.body()
+    async with _wb_daily_client() as client:
+        r = await client.post(f"{WB_DAILY_INTERNAL}/api/wb-daily/config", content=body, headers={"Content-Type": "application/json"})
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/accounts")
+async def wb_daily_accounts():
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/accounts")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/wb-daily/run")
+async def wb_daily_run():
+    async with _wb_daily_client() as client:
+        r = await client.post(f"{WB_DAILY_INTERNAL}/api/wb-daily/run")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/jobs")
+async def wb_daily_jobs():
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/jobs")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/status/{job_id}")
+async def wb_daily_status(job_id: str):
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/status/{job_id}")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.delete("/api/wb-daily/abort/{job_id}")
+async def wb_daily_abort(job_id: str):
+    async with _wb_daily_client() as client:
+        r = await client.delete(f"{WB_DAILY_INTERNAL}/api/wb-daily/abort/{job_id}")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/health")
+async def wb_daily_health():
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/health")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 

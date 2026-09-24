@@ -21,6 +21,10 @@ services:
       # 注册服务跑在容器内网 18092，由 web_proxy 转发，不对外映射端口。
       GH_REGISTER_ENABLED: "1"
       GH_REGISTER_PORT: "18092"
+      # WorkBuddy 每日成长任务（vendor 版签到脚本，账号池 cn 账号只读共用凭据）。
+      # 服务跑在容器内网 18093，由 web_proxy 转发，不对外映射端口。
+      WB_DAILY_ENABLED: "1"
+      WB_DAILY_PORT: "18093"
       # 浏览器安装目录（与上面的挂载点保持一致）。
       PLAYWRIGHT_BROWSERS_PATH: "/data/.autobuddy/browsers"
       # 邮箱 API 与代理配置可直接在 WebUI「账号接入」页面填写并持久化，

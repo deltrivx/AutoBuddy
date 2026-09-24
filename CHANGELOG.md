@@ -15,6 +15,15 @@
 
 - 暂无。
 
+## [v0.6.0] - 2026-09-24
+
+### WorkBuddy 每日成长任务（侧边栏「每日任务」）
+- **侧边栏新增「每日任务」入口与专属面板**：基于内置 vendor 化的上游开源脚本 [WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)（MIT，单文件自包含），在 WebUI 内一站式管理 WorkBuddy 成长中心自动化：积分/用量/成长查询、成长任务、互动玩法、开学季任务、小程序任务与自动领奖。
+- **账号凭据只读共用，无烧号风险**：直接复用账号池国内版（cn）账号的刷新令牌，实测 Keycloak 签发的 RT 可直接走上游插件的续期接口，且续期后旧令牌仍有效（只读共用，绝不写回、不覆盖 accounts.json）。另支持在面板补充账号池外账号（每行「手机号:RT」或「手机号:AT:RT」，本地容器持久化）。
+- **调度与执行模式可配**：启用/停用定时调度、执行间隔（1–72 小时）、执行模式（完整任务 / 仅查询只读）；上次执行与下次到期时间一目了然；last_run_at 持久化，容器重启不重跑。
+- **执行可视化**：实时滚动日志、按阶段推进的进度百分比、最近 8 轮执行记录、执行中一键中止；子进程托管 vendor 脚本，30 分钟超时强制回收。
+- **服务链路**：新服务跑在容器内网 loopback 18093（`WB_DAILY_PORT`，`WB_DAILY_ENABLED=0` 可停用），由 web_proxy 八条 `/api/wb-daily/*` 路由转发（均定义在通配转发之前），高频轮询接口接入访问日志降噪；Dockerfile 补装 `requests`（vendor 脚本唯一依赖）。
+
 ## [v0.5.12] - 2026-09-24
 
 ### 注册进度可视化、日志降噪与诊断能力补强
@@ -1062,7 +1071,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.12...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.0...HEAD
+[v0.6.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.12...v0.6.0
 [v0.5.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.11...v0.5.12
 [v0.5.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.10...v0.5.11
 [v0.5.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.9...v0.5.10

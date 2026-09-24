@@ -43,6 +43,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     fastapi \
     uvicorn \
     httpx \
+    requests \
     patchright
 
 # Chromium 的运行时系统库（headless 下的共享库依赖）。
