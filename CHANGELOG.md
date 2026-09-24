@@ -15,6 +15,14 @@
 
 - 暂无。
 
+## [v0.5.11] - 2026-09-24
+
+### GitHub 改为纯邮箱注册、邮箱参数 UI 可配、中止接口容错
+- **注册路径改为纯邮箱注册**：移除 Google OAuth 环节，直接打开 `github.com/signup` 填表注册，设备验证码由后端自动收信提取。此前的 OAuth 路径依赖额外 Google 凭据，且判定过松（仅凭 URL 含 `login` 即返回成功），会把真实失败状态掩盖为「验证码无效」。
+- **失败提示精确化**：注册未完成时区分「未进入注册页（代理或风控问题）」与「表单提交后未完成（验证码或人机验证）」，不再一律归因于验证码。
+- **邮箱参数 UI 可配**：新增「邮箱名前缀」与「邮箱名随机长度」两项配置，可在「账号接入」页面直接调整，无需改代码或重建镜像。
+- **中止接口容错**：中止任务请求补充响应类型校验与错误提示，接口异常时明确报错而非静默失败。
+
 ## [v0.5.10] - 2026-09-24
 
 ### 修复临时邮箱创建判定导致注册流程无法启动
@@ -1045,7 +1053,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.10...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.11...HEAD
+[v0.5.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.10...v0.5.11
 [v0.5.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.9...v0.5.10
 [v0.5.9]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.8...v0.5.9
 [v0.5.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.7...v0.5.8

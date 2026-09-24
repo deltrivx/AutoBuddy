@@ -2654,6 +2654,14 @@ COLLAPSE_SCRIPT = r"""
                 '<input id="wb-cfg-mail-domains" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 example.com, mail.example.com">' +
               '</div>' +
               '<div>' +
+                '<div class="wb-api-label">邮箱名前缀 (可留空)</div>' +
+                '<input id="wb-cfg-mail-prefix" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 ab，留空则纯随机">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">邮箱名随机长度</div>' +
+                '<input id="wb-cfg-mail-len" type="number" min="4" max="32" class="wb-api-input" style="width:100%;margin-top:4px" value="10">' +
+              '</div>' +
+              '<div>' +
                 '<div class="wb-api-label">邮箱 API 认证头名称 (可选)</div>' +
                 '<input id="wb-cfg-auth-name" class="wb-api-input" style="width:100%;margin-top:4px" placeholder="例如 x-admin-auth">' +
               '</div>' +
@@ -2811,6 +2819,8 @@ COLLAPSE_SCRIPT = r"""
       var payload = {
         mail_api_base: (v.querySelector("#wb-cfg-mail-base").value || "").trim(),
         mail_domains: domains,
+        mail_local_prefix: (v.querySelector("#wb-cfg-mail-prefix").value || "").trim(),
+        mail_local_length: parseInt(v.querySelector("#wb-cfg-mail-len").value, 10) || 10,
         mail_auth_header_name: (v.querySelector("#wb-cfg-auth-name").value || "").trim(),
         mail_auth_header_value: (v.querySelector("#wb-cfg-auth-val").value || "").trim(),
         mail_create_path: (v.querySelector("#wb-cfg-create-path").value || "/new").trim(),
@@ -2893,12 +2903,31 @@ COLLAPSE_SCRIPT = r"""
     });
 
     abortBtn.addEventListener("click", function() {
-      if (!window.__wbAcJobId) return;
+      if (!window.__wbAcJobId) {
+        wbToast("当前没有运行中的任务", "warn");
+        return;
+      }
       abortBtn.disabled = true;
       fetch("/api/gh-register/abort/" + window.__wbAcJobId, { method: "DELETE" })
+        .then(function(r) {
+          // 与其它接口同样校验响应类型：路由未命中会返回 HTML，
+          // 直接按 JSON 处理会抛出难以理解的语法错误。
+          var ct = (r.headers.get("content-type") || "");
+          if (ct.indexOf("application/json") === -1) {
+            throw new Error("中止接口返回了非 JSON 响应 (HTTP " + r.status + ")");
+          }
+          if (!r.ok) {
+            throw new Error("中止请求失败 (HTTP " + r.status + ")");
+          }
+          return r.json().catch(function() { return {}; });
+        })
         .then(function() {
           wbToast("已请求中止任务", "warn");
           abortBtn.disabled = false;
+        })
+        .catch(function(e) {
+          abortBtn.disabled = false;
+          wbToast("中止失败: " + ((e && e.message) ? e.message : e), "error");
         });
     });
 
@@ -3085,6 +3114,8 @@ COLLAPSE_SCRIPT = r"""
           var setVal = function(id, v) { var el = document.getElementById(id); if (el) el.value = v || ""; };
           setVal("wb-cfg-mail-base", cfg.mail_api_base);
           setVal("wb-cfg-mail-domains", (cfg.mail_domains || []).join(", "));
+          setVal("wb-cfg-mail-prefix", (cfg.mail_local_prefix === undefined || cfg.mail_local_prefix === null) ? "ab" : cfg.mail_local_prefix);
+          setVal("wb-cfg-mail-len", (cfg.mail_local_length === undefined || cfg.mail_local_length === null) ? 10 : cfg.mail_local_length);
           setVal("wb-cfg-auth-name", cfg.mail_auth_header_name);
           setVal("wb-cfg-auth-val", cfg.mail_auth_header_value);
           setVal("wb-cfg-create-path", cfg.mail_create_path || "/new");

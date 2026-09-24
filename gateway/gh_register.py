@@ -48,6 +48,8 @@ DEFAULT_CONFIG = {
     "mail_fetch_path": "/mails?address={email}",
     "mail_verify_keyword": "github",
     "mail_domains": [],
+    "mail_local_prefix": "ab",         # 随机邮箱名前缀，空则纯随机
+    "mail_local_length": 10,           # 随机部分的长度
     "mail_auth_header_name": "",
     "mail_auth_header_value": "",
     "register_proxy": "http://192.168.31.10:7890",
@@ -383,7 +385,16 @@ async def create_email(http_client, cfg: dict):
         raise RuntimeError("未配置邮箱 API 基础地址，请在「账号接入」配置页面填写")
 
     domain = random.choice(domains)
-    email = f"{random_local(12)}@{domain}"
+    # 邮箱名规则由「账号接入」页面配置：前缀（可空）+ 指定长度随机串。
+    # 前缀做成可配置而非写死，是为了换服务/换风格时不必改代码重建。
+    prefix = str(cfg.get("mail_local_prefix") or "").strip().lower()
+    prefix = "".join(ch for ch in prefix if ch.isalnum())
+    try:
+        body_len = int(cfg.get("mail_local_length") or 10)
+    except Exception:
+        body_len = 10
+    body_len = max(4, min(32, body_len))
+    email = f"{prefix}{random_local(body_len)}@{domain}"
     headers = {}
     auth_name = cfg.get("mail_auth_header_name")
     auth_val = cfg.get("mail_auth_header_value")
@@ -879,13 +890,17 @@ async def _run_job(job: Job):
             if removed:
                 job.step(f"清理 {removed} 个 GitHub Cookie 保持环境隔离")
 
-            job.step("执行 Google OAuth 授权")
-            pwd = job.google_password or cfg.get("google_password", "")
-            logged_in = await google_oauth_login(page, pwd)
-            if not logged_in:
-                job.status = "failed"
-                job.result = "Google OAuth 登录未自动完成，可能需要人工确认"
-                return
+            # GitHub 注册走纯邮箱路径：直接打开 /signup 填表，
+            # 邮箱验证码由本服务自动收信提取（见 wait_for_device_code）。
+            # 不再经过 Google OAuth —— 那条路径需要额外的 Google 账号凭据，
+            # 且失败时会因判定过松而掩盖真实状态。
+            job.step("打开 GitHub 注册页")
+            try:
+                await page.goto("https://github.com/signup", wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(3000)
+            except Exception as e:
+                job.step(f"打开注册页失败: {e}")
+            job.step(f"当前页面: {page.url}")
 
             job.step("填写注册表单")
             username = await register_github(
@@ -893,7 +908,11 @@ async def _run_job(job: Job):
             )
             if not username:
                 job.status = "failed"
-                job.result = "GitHub 注册未完成，请检查验证码是否有效"
+                cur = page.url
+                if "/signup" not in cur:
+                    job.result = f"未进入 GitHub 注册页（当前: {cur}），可能是代理不可达或页面被风控拦截"
+                else:
+                    job.result = "注册表单提交后未完成，可能是验证码未取到或触发了人机验证"
                 return
             job.step(f"注册成功，用户名: {username}")
 
