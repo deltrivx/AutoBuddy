@@ -1482,25 +1482,11 @@ COLLAPSE_SCRIPT = r"""
         if (!acc && cardIndex < pendingIds.length) {
           acc = byName[pendingIds[cardIndex]];
         }
-
-        // ⚠️ 关键：**无论能不能在后端数据里找到这个账号，控件都要完整渲染**。
-        //
-        // 历史上这里写的是 `if (!acc) return;` —— 查不到就整条跳过，
-        // 于是任何不在返回列表里的账号（新加的、昵称对不上的、官方池里没有的）
-        // 卡片上就什么都没有，看上去像「功能没做」。
-        //
-        // 正确做法是：查得到就用真数据，查不到就用**安全默认值**建一个占位条目，
-        // 控件照常出现、按钮照常可点 —— 数据缺失不该表现为功能缺失。
-        // 此时 accountId 取不到，个别依赖它的按钮会自行降级为提示而不是消失。
+        // 后端已保证账号池里每个账号都带完整字段（id/enabled/disabled/…），
+        // 这里拿不到就是**数据真的缺了**，不该用占位数据把它遮住。
         if (!acc) {
-          acc = {
-            id: (cardIndex < pendingIds.length) ? pendingIds[cardIndex] : null,
-            name: cardTitle,
-            enabled: false,
-            disabled: false,
-            disabledSource: null,
-            _placeholder: true,   // 标记：让提示文案说明「尚未同步到账号池」
-          };
+          console.warn("[AutoBuddy] 账号卡片在后端账号池数据里找不到条目:", cardTitle);
+          return;
         }
 
         var bar = document.createElement("div");
@@ -1513,15 +1499,7 @@ COLLAPSE_SCRIPT = r"""
         var inPool = !!acc.enabled;
 
         var toggle = document.createElement("button");
-        if (acc._placeholder) {
-          // 占位账号（后端数据里还没同步到）：仍然给出按钮，
-          // 但文案说明现状，并在点击时把「为什么点不动」讲清楚，
-          // 而不是把按钮藏掉让人以为功能不存在。
-          toggle.className = "wb-pool-btn";
-          toggle.textContent = "尚未同步 · 点击重试";
-          toggle.title = "这个账号还没同步到账号池（通常是刚添加或后端缓存未刷新）。"
-            + "\n点击会重新拉取账号池数据。";
-        } else if (accDisabled) {
+        if (accDisabled) {
           // 来源不同措辞不同。巡检停用用琥珀色（.wb-pool-btn-auto），
           // 与手动停用的灰底区分开，让人一眼看出「这不是我点的」。
           var autoOff = acc.disabledSource === "auto";
@@ -1540,13 +1518,6 @@ COLLAPSE_SCRIPT = r"""
           toggle.title = "点击后这个账号不再参与自动轮询（显式指定它的请求仍可用）。";
         }
         toggle.onclick = function () {
-          // 占位账号：重拉一次账号池数据即可，不拿空 id 去调接口。
-          if (acc._placeholder) {
-            wbPoolCache = null;
-            refreshPool();
-            wbToast("已重新拉取账号池数据", "ok");
-            return;
-          }
           // 账号级停用优先：红/灰状态点一下就恢复。
           if (accDisabled) {
             wbToggleAccount(acc.id, false, function () { wbPoolCache = null; refreshPool(); });
@@ -1564,23 +1535,11 @@ COLLAPSE_SCRIPT = r"""
           savePool(next, function () { wbPoolCache = null; refreshPool(); });
         };
 
-        var pinned = !acc._placeholder && data.mode === "manual" && data.manualAccountId === acc.id;
+        var pinned = data.mode === "manual" && data.manualAccountId === acc.id;
         var pin = document.createElement("button");
         pin.className = "wb-pool-btn" + (pinned ? " wb-pool-btn-primary" : "");
         pin.textContent = pinned ? "首选账号 · 点击改回自动分配" : "设为首选";
-        if (acc._placeholder) {
-          // 占位账号没有有效 id，设为首选会写进一个空值。
-          // 按钮仍然存在（功能不能“没有”），但会明确告知为何点不了。
-          pin.disabled = true;
-          pin.title = "这个账号还没同步到账号池，暂时无法设为首选。请先刷新账号数据。";
-        }
         pin.onclick = function () {
-          if (acc._placeholder) {
-            wbPoolCache = null;
-            refreshPool();
-            wbToast("账号数据尚未同步，请稍后重试", "warn");
-            return;
-          }
           // 必须**连 enabledAccountIds 一起提交**。
           //
           // 早先这里只发 {mode, manualAccountId}，后端又把「缺字段」读成空数组，
@@ -1605,18 +1564,7 @@ COLLAPSE_SCRIPT = r"""
         probe.className = "wb-pool-btn";
         probe.textContent = "检测账号";
         probe.title = "发一次轻量鉴权请求验证凭据是否有效，不消耗额度";
-        if (acc._placeholder) {
-          // 没有有效 accountId 就没法针对性探测，但仍保留按钮，
-          // 点击后先把账号数据重新拉一次。
-          probe.title = "这个账号还没同步到账号池，点击先刷新数据。";
-        }
         probe.onclick = function () {
-          if (acc._placeholder) {
-            wbPoolCache = null;
-            refreshPool();
-            wbToast("账号数据尚未同步，请稍后重试", "warn");
-            return;
-          }
           if (probe.dataset.wbBusy === "1") return;
           probe.dataset.wbBusy = "1";
           probe.disabled = true;
@@ -1672,8 +1620,8 @@ COLLAPSE_SCRIPT = r"""
         var n = counts[acc.id] || 0;
         count.className = "wb-pool-count" + (n > 0 ? " wb-pool-count-hot" : "");
         // 计数标签**始终渲染**（即使是 0）——「没有调用过」本身就是有效信息，
-        // 没这个标签用户无法区分「从没调用」与「这功能不存在」。没数据时显示占位符。
-        count.textContent = acc._placeholder ? "调用次数 —" : ("已调用 " + n + " 次");
+        // 没这个标签用户无法区分「从没调用」与「这功能不存在」。
+        count.textContent = "已调用 " + n + " 次";
 
         bar.appendChild(toggle);
         bar.appendChild(pin);

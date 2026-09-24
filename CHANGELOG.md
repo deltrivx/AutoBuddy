@@ -15,6 +15,16 @@
 
 - 暂无。
 
+## [v0.6.6] - 2026-09-24
+
+### 移除占位条目：账号池控件不再「硬加」
+- **设计纠错**（用户明确指正）：v0.6.5 引入的 `_placeholder` 占位条目本身就是「硬写填加」—— 它编造了「尚未同步 · 点击重试」这种现实中并不存在的状态文案，只是把「按钮不渲染」换成了「按钮渲染但内容是编的」。
+- **改法**：彻底删掉 `_placeholder` 全套分支（共 9 处），回到一套渲染逻辑走到底：
+  - 后端负责**把数据补全**（每个账号都有真实的 id / nickname / email / enabled / disabled / disabledSource）
+  - 前端取得到就用，取不到就 `console.warn` 并跳过，**不再用假数据把缺口遮住**
+  - 调用次数恢复为直接显示真实值（0 也显示「已调用 0 次」）
+- **原则**：字段完整性是后端的责任，前端的责任是忠实渲染。用占位数据掩盖后端缺口，会让「数据缺了」这个真问题永远发不现。
+
 ## [v0.6.5] - 2026-09-24
 
 ### 账号池控件改为「无论账号什么状态都完整渲染」
@@ -1122,7 +1132,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.5...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.6...HEAD
+[v0.6.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.5...v0.6.6
 [v0.6.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.4...v0.6.5
 [v0.6.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.3...v0.6.4
 [v0.6.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.2...v0.6.3
