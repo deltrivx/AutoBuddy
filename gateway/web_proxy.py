@@ -1,5 +1,6 @@
 import db
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -602,6 +603,62 @@ COLLAPSE_SCRIPT = r"""
 <script>
 (function() {
 
+  /* ------------------- 右上角实时注册进度指示器 -------------------
+     参考 OutlookRegister 的做法：把「当前正在跑什么、到哪一步、进度百分之几」
+     常驻在右上角，切到别的页面也能看到。注册流程动辄数分钟，
+     只把进度埋在「账号接入」页面里，用户切走后就完全失去反馈。 */
+  function wbEnsureProgressPill() {
+    if (document.getElementById("wb-progress-pill")) return document.getElementById("wb-progress-pill");
+    var el = document.createElement("div");
+    el.id = "wb-progress-pill";
+    el.style.cssText = [
+      "position:fixed", "top:14px", "right:16px", "z-index:99998",
+      "display:none", "align-items:center", "gap:8px",
+      "padding:6px 12px", "border-radius:999px",
+      "background:var(--card,#ffffff)", "color:var(--foreground,#0f172a)",
+      "border:1px solid var(--border,rgba(120,120,120,0.28))",
+      "box-shadow:0 4px 14px rgba(15,23,42,0.14)",
+      "font-size:12px", "line-height:1.5", "max-width:min(320px,60vw)",
+      "cursor:pointer"
+    ].join(";");
+    el.innerHTML =
+      '<span id="wb-progress-spin" style="width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:#3b82f6;box-shadow:0 0 0 0 rgba(59,130,246,0.6);"></span>' +
+      '<span id="wb-progress-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">准备中…</span>' +
+      '<span id="wb-progress-pct" style="font-variant-numeric:tabular-nums;font-weight:600;flex:0 0 auto;">0%</span>';
+    // 点击回到「账号接入」并展开日志，便于排查
+    el.onclick = function () {
+      try { window.location.hash = "#/settings"; } catch (e) {}
+    };
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function wbRenderProgressPill(status, progress, stepText) {
+    var el = wbEnsureProgressPill();
+    if (!el) return;
+    var running = (status === "running" || status === "pending");
+    if (status === "idle" || status === "none") {
+      el.style.display = "none";
+      return;
+    }
+    el.style.display = "inline-flex";
+    var pctEl = document.getElementById("wb-progress-pct");
+    var txtEl = document.getElementById("wb-progress-text");
+    var dotEl = document.getElementById("wb-progress-spin");
+    if (pctEl) pctEl.textContent = progress || "0%";
+    if (txtEl) txtEl.textContent = stepText || "注册进行中";
+    if (dotEl) {
+      if (running) { dotEl.style.background = "#3b82f6"; }
+      else if (status === "done") { dotEl.style.background = "#10b981"; }
+      else { dotEl.style.background = "#f59e0b"; }
+    }
+    // 结束后 6 秒自动淡出，避免长期占位
+    if (!running) {
+      if (window.__wbPillFadeTimer) clearTimeout(window.__wbPillFadeTimer);
+      window.__wbPillFadeTimer = setTimeout(function () { el.style.display = "none"; }, 6000);
+    }
+  }
+
   /* ------------------- 侧边栏左上角品牌文字实时校准 ------------------- */
   function sanitizeSidebarBrand() {
     var aside = document.querySelector("aside");
@@ -643,7 +700,10 @@ COLLAPSE_SCRIPT = r"""
     if (document.getElementById("wb-login-overlay")) return;
     var overlay = document.createElement("div");
     overlay.id = "wb-login-overlay";
-    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.78);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;";
+    // 遮罩必须真正挡住后面的内容：此前 0.78 透明度 + 6px 模糊，
+    // 在高对比度主题下仍能辨认出底层文字与卡片，登录框看起来像「浮在内容上面」。
+    // 这里同时提高底色不透明度与模糊半径，并保留 -webkit- 前缀兼容 Safari。
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);backdrop-filter:blur(18px) saturate(120%);-webkit-backdrop-filter:blur(18px) saturate(120%);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;";
     
     var card = document.createElement("div");
     card.style.cssText = "background:var(--card,#ffffff);color:var(--foreground,#0f172a);border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,0.25);width:100%;max-width:380px;padding:28px 24px;border:1px solid var(--border,rgba(120,120,120,0.2));font-family:inherit;";
@@ -3024,13 +3084,21 @@ COLLAPSE_SCRIPT = r"""
   function wbPollJobStatus() {
     if (!window.__wbAcJobId) return;
     fetch("/api/gh-register/status/" + window.__wbAcJobId)
-      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        var ct = (r.headers.get("content-type") || "");
+        if (ct.indexOf("application/json") === -1) return null;
+        return r.json();
+      })
       .then(function(s) {
         var statusBadge = document.getElementById("wb-ac-task-status");
         var logEl = document.getElementById("wb-ac-task-log");
         var startBtn = document.getElementById("wb-ac-job-start");
         var abortBtn = document.getElementById("wb-ac-job-abort");
         if (!s || s.status === "not_found") return;
+
+        // 同步到右上角常驻指示器：切到别的页面也能看到注册进行到哪一步。
+        var lastStep = (s.steps && s.steps.length) ? s.steps[s.steps.length - 1] : "";
+        wbRenderProgressPill(s.status, s.progress || "0%", lastStep);
 
         if (statusBadge) {
           statusBadge.textContent = s.status + " (" + (s.progress || "0%") + ")";
@@ -3049,6 +3117,10 @@ COLLAPSE_SCRIPT = r"""
           if (wbAcJobTimer) clearInterval(wbAcJobTimer);
           if (startBtn) startBtn.disabled = false;
           if (abortBtn) abortBtn.style.display = "none";
+          if (s.status === "failed") {
+            // 失败时把最后一步也顶到指示器上，用户不点开日志也能知道卡在哪。
+            wbRenderProgressPill("failed", s.progress || "0%", lastStep || "注册失败");
+          }
           if (s.status === "done") wbToast("GitHub 账号自动化接入成功！", "ok");
           else wbToast("任务结束：" + (s.result || s.status), "warn");
         }
@@ -3921,6 +3993,41 @@ async def gh_register_browser_install():
     async with _gh_register_client() as client:
         r = await client.post(f"{GH_REGISTER_INTERNAL}/api/gh-register/browser/install")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+# ---------------------------------------------------------------------------
+# 访问日志降噪
+#
+# 前端会以 2 秒间隔轮询任务状态，加上浏览器下载进度、认证状态检查等
+# 高频只读接口，日志里绝大多数行都是这些重复的 GET。
+# 它们既淹没真正的错误，也让容器日志迅速膨胀。
+#
+# 这里只压制「高频只读轮询」这一类，写操作与其它接口照常记录 ——
+# 出问题时最需要的恰恰是 POST/DELETE 与异常响应，不能一起静音。
+_QUIET_SUBSTRINGS = (
+    "/api/gh-register/status/",
+    "/api/gh-register/jobs",
+    "/api/gh-register/browser",
+    "/api/auth/status",
+    "/api/account-models",
+    "/api/account-pool",
+    "/health",
+)
+
+
+class _QuietAccessFilter(logging.Filter):
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        # 只静音 2xx/3xx 的只读轮询；4xx/5xx 必须留下，否则排障无从下手。
+        if " 200 OK" not in msg and " 304 " not in msg:
+            return True
+        return not any(s in msg for s in _QUIET_SUBSTRINGS)
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
 
 
 @app.post("/api/gh-register/proxy/test")

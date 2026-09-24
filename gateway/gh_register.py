@@ -684,6 +684,53 @@ async def register_github(page, security_code: str, cfg: dict = None, http_clien
         except Exception:
             continue
 
+    # ----------------------------------------------------------
+    # 提交后诊断快照
+    #
+    # 提交按钮点下之后，页面会跳到哪里、是否弹出人机验证，此前完全没有记录，
+    # 失败时只能看到一句笼统的结论。这里抓取最小必要信息：
+    #   - 当前 URL 与标题（判断是否跳出了 /signup）
+    #   - 是否出现 Arkose / FunCaptcha / 验证码容器
+    #   - 是否存在错误提示文本（GitHub 会明确说哪个字段不合规）
+    # 只打日志、截图存盘，不改变控制流 —— 诊断不能反过来影响判定。
+    async def _dump_page_diag(tag):
+        try:
+            info = await page.evaluate("""() => {
+                const q = (s) => document.querySelector(s);
+                const txt = (el) => (el && el.innerText ? el.innerText.trim().slice(0, 200) : '');
+                const captchaSel = [
+                    'iframe[src*="arkoselabs"]', 'iframe[src*="funcaptcha"]',
+                    'iframe[src*="octocaptcha"]', '#octocaptcha',
+                    'input[name="octocaptcha-token"]', '[data-testid*="captcha"]'
+                ];
+                const captchaHit = captchaSel.filter(s => q(s));
+                const errEls = Array.from(document.querySelectorAll(
+                    '.flash-error, [role="alert"], .error, .js-error, [data-testid*="error"]'
+                )).map(txt).filter(Boolean).slice(0, 4);
+                return {
+                    url: location.href,
+                    title: document.title,
+                    captcha: captchaHit,
+                    errors: errEls,
+                    hasLoginField: !!q('input#user_login, input[name="user[login]"]'),
+                    hasEmailField: !!q('input#email, input[name="user[email]"]'),
+                    bodyLen: (document.body ? document.body.innerText.length : 0)
+                };
+            }""")
+            print(f"[gh-register][diag:{tag}] {info}")
+            try:
+                shot = f"/tmp/gh-signup-{tag}.png"
+                await page.screenshot(path=shot, full_page=False)
+                print(f"[gh-register][diag:{tag}] 截图已保存: {shot}")
+            except Exception as se:
+                print(f"[gh-register][diag:{tag}] 截图失败: {se}")
+            return info
+        except Exception as e:
+            print(f"[gh-register][diag:{tag}] 诊断失败: {e}")
+            return None
+
+    await _dump_page_diag("after_submit")
+
     # 设备验证码：用户若在启动任务时填了就用用户的；否则自动从注册邮箱收信提取。
     # 正常情况下无需人工介入 —— GitHub 的 launch code 就发到本次注册的临时邮箱里。
     if not security_code and email and http_client and cfg:
@@ -832,10 +879,43 @@ class Job:
         self.browser = None
         self.created_at = time.time()
 
+    # 进度权重表：把流程按「实际耗时占比」而非「步骤条数」分配百分比。
+    # 早先进度条只有 0% 与 100% 两档，中途长时间停在 0% 会让用户误以为卡死。
+    # 这里给每个阶段一个到达即生效的百分比，随步骤推进单调递增。
+    PROGRESS_MARKS = [
+        ("生成临时域名邮箱", 5),
+        ("临时邮箱:", 12),
+        ("启动内置 Headless Chromium", 18),
+        ("清理", 22),
+        ("打开 GitHub 注册页", 28),
+        ("当前页面", 32),
+        ("填写注册表单", 40),
+        ("注册成功", 62),
+        ("绑定域名邮箱", 70),
+        ("WorkBuddy", 82),
+        ("账号接入成功", 95),
+        ("全部流程执行完成", 100),
+    ]
+
+    def _calc_progress(self, msg):
+        pct = 0
+        for keyword, mark in self.PROGRESS_MARKS:
+            if keyword in msg:
+                pct = mark
+        return pct
+
     def step(self, msg):
         self.steps.append(msg)
         self.log.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
         print(f"[gh-register] {msg}")
+        # 进度只前进不回退：同一阶段多次输出日志时保持已达成的最高值。
+        new_pct = self._calc_progress(msg)
+        try:
+            cur = int(str(self.progress).rstrip("%") or 0)
+        except Exception:
+            cur = 0
+        if new_pct > cur:
+            self.progress = f"{new_pct}%"
 
 
 JOBS: dict = {}

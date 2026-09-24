@@ -15,6 +15,15 @@
 
 - 暂无。
 
+## [v0.5.12] - 2026-09-24
+
+### 注册进度可视化、日志降噪与诊断能力补强
+- **右上角实时进度指示器**：新增常驻右上角的进度胶囊，显示当前阶段与百分比，切换页面仍可见；任务结束后 6 秒自动淡出。
+- **进度百分比按阶段推进**：任务进度由固定 0%/100% 两档改为按阶段加权递增（建邮箱 5% → 浏览器 18% → 注册页 28% → 表单 40% → 注册成功 62% → 接入 82% → 完成 100%），杜绝长时间停在 0% 的误导。
+- **容器日志降噪**：对高频只读轮询接口（任务状态、jobs、browser、auth 状态、健康检查）的 2xx 访问日志做过滤，保留全部写操作与 4xx/5xx，避免有用信息被淹没。
+- **登录遮罩不透明度与模糊度提高**：底色由 0.78 提升至 0.92，模糊由 6px 提升至 18px 并补充 Safari 前缀，登录框不再透出底层内容。
+- **提交后页面诊断快照**：注册表单提交后自动记录 URL、标题、人机验证元素与错误提示文本，并保存截图，便于定位卡点。
+
 ## [v0.5.11] - 2026-09-24
 
 ### GitHub 改为纯邮箱注册、邮箱参数 UI 可配、中止接口容错
@@ -1053,7 +1062,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.11...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.12...HEAD
+[v0.5.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.11...v0.5.12
 [v0.5.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.10...v0.5.11
 [v0.5.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.9...v0.5.10
 [v0.5.9]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.8...v0.5.9
