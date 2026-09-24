@@ -24,6 +24,7 @@ accounts.json，无烧号风险。另支持在前端补充账号池之外的账�
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -50,6 +51,52 @@ DEFAULT_CONFIG = {
     "run_mode": "full",       # full=完整任务（签到/玩法/领奖） | query=仅查询
     "last_run_at": None,      # 上次执行时间戳（完成后回写，重启不重跑）
 }
+
+# 上游脚本支持的任务清单（用于面板展示「有哪些任务」）。
+# 来源：vendor 脚本里的任务常量，随上游版本变动时同步更新。
+TASK_CATALOG = [
+    {"group": "成长任务", "items": [
+        {"key": "first_buddy", "name": "首只 Buddy（领养引导）", "auto": False,
+         "note": "需先在桌面端/小程序完成一次领养，后续 17 项任务的前置条件"},
+        {"key": "create_canvas", "name": "创建画布", "auto": True},
+        {"key": "playbook_prompt", "name": "使用剧本文案", "auto": True},
+        {"key": "Library_read", "name": "体验资料库", "auto": True},
+        {"key": "chat_5", "name": "和 AI 聊天 5 次", "auto": True},
+        {"key": "skill_1", "name": "尝鲜热门技能", "auto": True},
+        {"key": "template_5", "name": "使用 5 个模板", "auto": True},
+        {"key": "automation_1", "name": "设置自动化任务", "auto": True},
+        {"key": "expert_5", "name": "召唤 5 次专家", "auto": True},
+        {"key": "Expert_team_use_3", "name": "召唤 3 次专家团", "auto": True},
+        {"key": "Expert_lighthouse", "name": "灯塔专家", "auto": True},
+        {"key": "Expert_Philanthropy", "name": "公益专家", "auto": True},
+        {"key": "Hp_Appearance", "name": "和平精英主题", "auto": True},
+        {"key": "Buddy_App", "name": "发现应用", "auto": True},
+        {"key": "Buddy_App_QQ", "name": "企鹅教师助手", "auto": True},
+        {"key": "Model_chat_GLM5.2", "name": "GLM-5.2 模型对话", "auto": True},
+        {"key": "black_cat", "name": "设计/自动化/灵感", "auto": True},
+        {"key": "wb_wechat_oa_subscribe_task", "name": "关注官方公众号", "auto": False,
+         "note": "需微信扫码关注「腾讯 WorkBuddy」公众号并满 24 小时"},
+    ]},
+    {"group": "互动玩法", "items": [
+        {"key": "checkin", "name": "每日签到", "auto": True},
+        {"key": "lottery", "name": "大转盘抽奖", "auto": True},
+        {"key": "blindbox", "name": "盲盒开启", "auto": True},
+        {"key": "buddy", "name": "Buddy 展示", "auto": True},
+        {"key": "travel", "name": "喵喵旅行", "auto": True},
+    ]},
+    {"group": "开学季活动", "items": [
+        {"key": "task_student_verify", "name": "微信学生认证", "auto": False,
+         "note": "人工环节，需微信内完成认证"},
+        {"key": "expert_use", "name": "专家使用", "auto": True},
+        {"key": "share_invite", "name": "分享邀请", "auto": True},
+        {"key": "chat_3_times", "name": "对话 3 次", "auto": True},
+        {"key": "desktop_chat_1_time", "name": "桌面端对话", "auto": True},
+    ]},
+    {"group": "夜猫子", "items": [
+        {"key": "night_owl", "name": "夜猫子任务（23:00–08:00）", "auto": True,
+         "note": "仅在该时段内计入进度，要求真实对话；每天 1 次×累计 3 天"},
+    ]},
+]
 
 
 def load_config() -> dict:
@@ -186,21 +233,27 @@ def accounts_preview(cfg: dict | None = None) -> dict:
 class DailyJob:
     """一轮每日任务的执行记录（子进程托管 vendor 脚本）。"""
 
-    # 从上游脚本输出行推断进度（到达即生效、只前进不回退）。
-    # 关键词带 emoji 前缀精确匹配，避免「执行模式: full（…签到/玩法…）」这类
-    # 提示行误触档位；档位子串全部取自实测日志原文。
+    # 从上游脚本输出行推断进度。
+    #
+    # 关键词一律带 emoji 前缀做**精确子串**匹配，不用宽泛词：
+    # 早先用「玩法」「抽奖」这种裸词，结果「执行模式: full（签到/玩法/领奖）」
+    # 这句提示行当场把进度顶到末档 —— 明明刚开跑。所有档位子串均取自实测日志原文。
     PROGRESS_MARKS = [
-        ("👥 账号数", 8),
-        ("💰 积分", 20),
-        ("📊 用量", 28),
-        ("🌱 成长", 35),
-        ("☁️ ── 云端任务", 50),
-        ("🏫 ── 开学季", 75),
-        ("🏫 lottery", 80),
-        ("🎁 ── 领奖", 85),
+        ("👥 账号数", 6),
+        ("💰 积分", 16),
+        ("📊 用量", 24),
+        ("🌱 成长", 30),
+        ("☁️ ── 云端任务", 45),
+        ("🏫 ── 开学季", 72),
+        ("🏫 lottery", 78),
+        ("🎁 ── 领奖", 84),
         ("🏁 ", 92),
         ("签到报告", 96),
     ]
+
+    # 账号起始行，形如 `╭─ 👤 账号1  138...`。
+    # 多账号时用它把总进度推到「尚未结束」的合理区间。
+    _ACCOUNT_START = "╭─ 👤 账号"
 
     def __init__(self, job_id: str, mode: str):
         self.id = job_id
@@ -212,17 +265,63 @@ class DailyJob:
         self.created_at = time.time()
         self.finished_at = None
         self.proc: asyncio.subprocess.Process | None = None
+        self.accounts_total = 0      # 本轮参与账号数
+        self.accounts_done = 0       # 已跑完的账号数
+        self.accounts_summary: list[dict] = []   # 逐账号汇总（落库用）
+        self._cur_account: dict | None = None    # 当前正在跑的账号
 
     def log_line(self, text: str):
         if len(self.log) > 800:
             self.log = self.log[-600:]
         self.log.append(f"[{time.strftime('%H:%M:%S')}] {text}")
+
+        # 逐账号阶段跟踪：开始行建卡，🏁 汇总行收尾。
+        # 面板要回答「每个账号执行了哪些」，只靠日志反解太脆，这里就地归集。
+        if self._ACCOUNT_START in text:
+            self.accounts_done += 0
+            self._cur_account = {"account": text.split(self._ACCOUNT_START, 1)[-1].strip(),
+                                 "done": 0, "total": 0}
+            self.accounts_summary.append(self._cur_account)
+        elif "🏁 " in text and self._cur_account is not None:
+            # `🏁 138xxx: 完成1/19 等级1 剩余: a, b, c`
+            m = re.search(r"完成\s*(\d+)\s*/\s*(\d+)", text)
+            if m:
+                self._cur_account["done"] = int(m.group(1))
+                self._cur_account["total"] = int(m.group(2))
+            m2 = re.search(r"等级\s*([^\s]+)", text)
+            if m2:
+                self._cur_account["level"] = m2.group(1)
+            m3 = re.search(r"剩余:\s*(.+)$", text)
+            if m3:
+                self._cur_account["rest"] = [s.strip() for s in m3.group(1).split(",") if s.strip()]
+            self.accounts_done += 1
+            self._cur_account = None
+        elif self._cur_account is not None:
+            # 账号级关键数值就地留存，供明细展示
+            for key, label in (("credits", "💰 积分:"), ("usage", "📊 用量:"),
+                               ("streak", "连签"), ("energy", "能量")):
+                if key == "streak":
+                    m = re.search(r"连签(\d+)天", text)
+                    if m:
+                        self._cur_account["streak"] = m.group(1)
+                elif key == "energy":
+                    m = re.search(r"能量(\d+)", text)
+                    if m:
+                        self._cur_account["energy"] = m.group(1)
+                elif label in text:
+                    self._cur_account[key] = text.split(label, 1)[-1].strip()
+
         pct = 0
         for keyword, mark in self.PROGRESS_MARKS:
             if keyword in text:
                 pct = mark
+        # 账号内部阶段（按已完账号数）+ 账号内小阶段，构成平滑推进：
+        # 已完账号占 45%，当前账号的小阶段占剩下的额度。
+        if self.accounts_total > 0:
+            ratio = min(1.0, self.accounts_done / self.accounts_total)
+            pct = max(pct, int(6 + ratio * 86))
         if pct > self.progress:
-            self.progress = pct
+            self.progress = min(pct, 99)
 
     def finish(self, status: str, result):
         self.status = status
@@ -240,6 +339,11 @@ class DailyJob:
             "result": self.result,
             "created_at": self.created_at,
             "finished_at": self.finished_at,
+            "accounts_total": self.accounts_total,
+            "accounts_done": self.accounts_done,
+            "steps": [f"👥 参与账号 {self.accounts_total} 个",
+                      f"✅ 已完成 {self.accounts_done} / {self.accounts_total}"]
+                     + ([f"▶ 当前：{self._cur_account['account']}"] if self._cur_account else []),
         }
 
 
@@ -273,6 +377,7 @@ async def _execute(job: DailyJob):
     with open(token_file, "w", encoding="utf-8") as f:
         json.dump(store, f, ensure_ascii=False, indent=1)
     job.log_line(f"参与账号 {len(store)} 个（账号池 cn + 补充账号）")
+    job.accounts_total = len(store)
     run_mode = "query" if str(cfg.get("run_mode") or "full").strip().lower() == "query" else "full"
     script_args = [sys.executable, str(script_copy), "--no-desktop"]
     if run_mode == "query":
@@ -349,6 +454,7 @@ async def _execute(job: DailyJob):
     if rc is not None and rc < 0:
         job.log_line("任务已被中止")
         job.finish("aborted", "手动中止")
+        _persist_run(job, all_lines)
         return
     if rc == 0:
         job.log_line("本轮每日任务执行完成")
@@ -356,6 +462,30 @@ async def _execute(job: DailyJob):
     else:
         job.log_line(f"脚本退出码 {rc}，请查看日志定位失败账号")
         job.finish("failed", {"rc": rc, "summary": _tail_summary(all_lines)})
+    _persist_run(job, all_lines)
+
+
+def _persist_run(job: DailyJob, all_lines: list[str]) -> None:
+    """把一轮执行落库（汇总 + 逐账号明细），供面板回看历史。
+
+    只保留最新 `db.WB_DAILY_RETAIN` 轮（默认 200），剪枝在 db 层做。
+    日志只留尾部：全量日志可能几千行，存着除了撑库没别的用，
+    排障真正需要的是最后那几十行结论。
+    """
+    try:
+        db.save_wb_daily_run(
+            job_id=job.id,
+            mode=job.mode,
+            status=job.status,
+            started_at=job.created_at,
+            finished_at=job.finished_at,
+            accounts=job.accounts_total,
+            summary=job.result if isinstance(job.result, dict) else {"detail": job.result},
+            log=_tail_summary(all_lines, 200),
+            account_rows=job.accounts_summary,
+        )
+    except Exception as e:
+        print(f"[wb-daily] 落库执行记录失败: {e}")
 
 
 async def start_job(mode: str = "manual") -> DailyJob:
@@ -440,6 +570,43 @@ async def save_config_api(body: ConfigBody):
 @app.get("/api/wb-daily/accounts")
 async def accounts_api():
     return accounts_preview()
+
+
+@app.get("/api/wb-daily/catalog")
+async def catalog_api():
+    """返回可执行的任务清单（有哪些任务、哪些需人工）。
+
+    面板上「每日任务提供了哪些任务」就靠它。清单是静态常量，
+    放在服务端而不是前端硬编：上游脚本增减任务时只改一处。
+    """
+    groups = []
+    total = 0
+    auto = 0
+    for group in TASK_CATALOG:
+        items = list(group.get("items") or [])
+        total += len(items)
+        auto += sum(1 for i in items if i.get("auto"))
+        groups.append({"group": group.get("group"), "items": items})
+    return {"groups": groups, "total": total, "auto": auto, "manual": total - auto}
+
+
+@app.get("/api/wb-daily/runs")
+async def runs_api(limit: int = 20):
+    """历史执行记录（SQLite 持久化，只保留最新 200 轮）。"""
+    limit = max(1, min(int(limit or 20), 200))
+    runs = db.list_wb_daily_runs(limit=limit)
+    running = [j for j in JOBS.values() if j.status == "running"]
+    return {"runs": runs, "retain": db.WB_DAILY_RETAIN,
+            "running_job_id": running[0].id if running else None}
+
+
+@app.get("/api/wb-daily/run-accounts/{job_id}")
+async def run_accounts_api(job_id: str):
+    """某一轮的逐账号明细（每个账号执行了哪些、剩下哪些）。"""
+    rows = db.get_wb_daily_accounts(job_id)
+    live = JOBS.get(job_id)
+    return {"job_id": job_id, "accounts": rows, "count": len(rows),
+            "live": live.to_dict() if live else None}
 
 
 @app.post("/api/wb-daily/run")

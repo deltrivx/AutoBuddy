@@ -14,7 +14,7 @@ import secrets
 import json
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 DB_PATH = DATA_DIR / "autobuddy.db"
@@ -65,6 +65,46 @@ def init_db() -> None:
             updated_at REAL NOT NULL
         )
         """)
+
+        # 4. 每日成长任务执行记录（拿每日任务面板用）。
+        #
+        # 为什么落库而不是只存内存：任务一轮可能跑十几分钟，容器一重启
+        # 内存记录就没了，用户回头想查「昨天那个账号到底签到没」无从下手。
+        # 只保留最新 N 条（见 prune_wb_daily_runs），避免无限增长。
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wb_daily_runs (
+            job_id TEXT PRIMARY KEY,
+            mode TEXT NOT NULL DEFAULT 'manual',
+            status TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            finished_at REAL,
+            accounts INTEGER NOT NULL DEFAULT 0,
+            summary TEXT,
+            log TEXT
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_started ON wb_daily_runs(started_at DESC)")
+
+        # 5. 逐账号执行明细（每个账号每轮一行）。
+        # 面板要回答「每个账号执行了哪些」——汇总行里只有总数，
+        # 无法拆到账号维度，所以单独一张表。
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wb_daily_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            account TEXT NOT NULL,
+            status TEXT,
+            level TEXT,
+            streak TEXT,
+            energy TEXT,
+            credits TEXT,
+            usage TEXT,
+            done_count INTEGER NOT NULL DEFAULT 0,
+            total_count INTEGER NOT NULL DEFAULT 0,
+            rest TEXT,
+            created_at REAL NOT NULL
+        )""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_acc_job ON wb_daily_accounts(job_id)")
         
         # 认证用户与环境变量动态同步：
         # 支持环境变量 AUTH_USERNAME / AUTH_USER / AUTH_DEFAULT_USER
@@ -238,3 +278,142 @@ def set_config(key: str, value: Any, category: str = "general", description: str
             updated_at = excluded.updated_at
         """, (key, val_str, category, description, now))
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# 每日成长任务执行记录
+# ---------------------------------------------------------------------------
+
+WB_DAILY_RETAIN = 200   # 执行记录保留条数（用户定的 100–200 区间，取上限）
+
+
+def save_wb_daily_run(job_id: str, mode: str, status: str, started_at: float,
+                      finished_at: Optional[float], accounts: int,
+                      summary: Any = None, log: Any = None,
+                      account_rows: Optional[List[Dict[str, Any]]] = None) -> None:
+    """落盘一轮每日任务（汇总行 + 逐账号明细），并顺手剪掉超出保留额的老记录。
+
+    日志存全文（上限由调用方控制），因为面板要能回看失败的账号到底卡在哪。
+    写入用 INSERT OR REPLACE：同一 job_id 会随状态推进多次落盘
+    （开始时先记 running，结束时覆盖成最终结果）。
+    """
+    now = time.time()
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT OR REPLACE INTO wb_daily_runs
+                (job_id, mode, status, started_at, finished_at, accounts, summary, log)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (str(job_id), str(mode), str(status), float(started_at),
+                  float(finished_at) if finished_at else None, int(accounts),
+                  json.dumps(summary, ensure_ascii=False) if summary is not None else None,
+                  json.dumps(log, ensure_ascii=False) if log is not None else None))
+            if account_rows:
+                cursor.execute("DELETE FROM wb_daily_accounts WHERE job_id = ?", (str(job_id),))
+                for row in account_rows:
+                    cursor.execute("""
+                    INSERT INTO wb_daily_accounts
+                        (job_id, account, status, level, streak, energy, credits, usage,
+                         done_count, total_count, rest, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (str(job_id), str(row.get("account") or ""), row.get("status"),
+                          row.get("level"), row.get("streak"), row.get("energy"),
+                          row.get("credits"), row.get("usage"),
+                          int(row.get("done") or 0), int(row.get("total") or 0),
+                          json.dumps(row.get("rest"), ensure_ascii=False) if row.get("rest") is not None else None,
+                          now))
+            conn.commit()
+        prune_wb_daily_runs()
+    except Exception as e:
+        print(f"[wb-daily] 写执行记录出错: {e}")
+
+
+def prune_wb_daily_runs(keep: int = WB_DAILY_RETAIN) -> int:
+    """只保留最新 `keep` 轮记录，返回删掉的轮数。
+
+    按 started_at 倒序取第 keep 条之后的全删，并同步清掉它们的逐账号明细。
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT job_id FROM wb_daily_runs ORDER BY started_at DESC LIMIT -1 OFFSET ?
+            """, (int(keep),))
+            stale = [row["job_id"] for row in cursor.fetchall()]
+            if not stale:
+                return 0
+            marks = ",".join("?" * len(stale))
+            cursor.execute(f"DELETE FROM wb_daily_accounts WHERE job_id IN ({marks})", stale)
+            cursor.execute(f"DELETE FROM wb_daily_runs WHERE job_id IN ({marks})", stale)
+            conn.commit()
+            return len(stale)
+    except Exception as e:
+        print(f"[wb-daily] 剪枝执行记录出错: {e}")
+        return 0
+
+
+def list_wb_daily_runs(limit: int = 20) -> List[Dict[str, Any]]:
+    """取最近几轮执行记录（不含逐账号明细，明细走 get_wb_daily_accounts）。"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT job_id, mode, status, started_at, finished_at, accounts, summary
+            FROM wb_daily_runs ORDER BY started_at DESC LIMIT ?
+            """, (int(limit),))
+            out = []
+            for row in cursor.fetchall():
+                summary = None
+                try:
+                    summary = json.loads(row["summary"]) if row["summary"] else None
+                except Exception:
+                    summary = None
+                out.append({
+                    "job_id": row["job_id"],
+                    "mode": row["mode"],
+                    "status": row["status"],
+                    "started_at": row["started_at"],
+                    "finished_at": row["finished_at"],
+                    "accounts": row["accounts"],
+                    "summary": summary,
+                })
+            return out
+    except Exception as e:
+        print(f"[wb-daily] 读执行记录出错: {e}")
+        return []
+
+
+def get_wb_daily_accounts(job_id: str) -> List[Dict[str, Any]]:
+    """取某一轮的逐账号明细（面板回答「每个账号执行了哪些」靠它）。"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT account, status, level, streak, energy, credits, usage,
+                   done_count, total_count, rest
+            FROM wb_daily_accounts WHERE job_id = ? ORDER BY id
+            """, (str(job_id),))
+            out = []
+            for row in cursor.fetchall():
+                rest = []
+                try:
+                    rest = json.loads(row["rest"]) if row["rest"] else []
+                except Exception:
+                    rest = []
+                out.append({
+                    "account": row["account"],
+                    "status": row["status"],
+                    "level": row["level"],
+                    "streak": row["streak"],
+                    "energy": row["energy"],
+                    "credits": row["credits"],
+                    "usage": row["usage"],
+                    "done": row["done_count"],
+                    "total": row["total_count"],
+                    "rest": rest,
+                })
+            return out
+    except Exception as e:
+        print(f"[wb-daily] 读账号明细出错: {e}")
+        return []

@@ -603,12 +603,22 @@ COLLAPSE_SCRIPT = r"""
 <script>
 (function() {
 
-  /* ------------------- 右上角实时注册进度指示器 -------------------
+  /* ------------------- 右上角实时进度指示器 -------------------
      参考 OutlookRegister 的做法：把「当前正在跑什么、到哪一步、进度百分之几」
-     常驻在右上角，切到别的页面也能看到。注册流程动辄数分钟，
-     只把进度埋在「账号接入」页面里，用户切走后就完全失去反馈。 */
+     常驻在右上角，切到别的页面也能看到。
+
+     ⚠️ 曾经反复闪烁的根因与现在约法：
+     旧实现每次轮询（2s 一次）都往 document 里 append 一个新的 pill，
+     并且每次非运行态都重开一个 6s 淡出定时器 —— 于是看见的就是「不断重新出现 / 消失」。
+     现在的规则：
+       1) 节点只在首次创建，后续只改文本与颜色（不再重建 DOM）；
+       2) 淡出定时器全局唯一，同一轮只计一次；
+       3) 内容未发生变化时连样式计算都不做，彻底避免无谓重绘。 */
+  var __wbPillState = { key: "", fadeTimer: null };
+
   function wbEnsureProgressPill() {
-    if (document.getElementById("wb-progress-pill")) return document.getElementById("wb-progress-pill");
+    var existing = document.getElementById("wb-progress-pill");
+    if (existing) return existing;
     var el = document.createElement("div");
     el.id = "wb-progress-pill";
     el.style.cssText = [
@@ -622,40 +632,60 @@ COLLAPSE_SCRIPT = r"""
       "cursor:pointer"
     ].join(";");
     el.innerHTML =
-      '<span id="wb-progress-spin" style="width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:#3b82f6;box-shadow:0 0 0 0 rgba(59,130,246,0.6);"></span>' +
+      '<span id="wb-progress-spin" style="width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:#3b82f6;"></span>' +
       '<span id="wb-progress-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">准备中…</span>' +
       '<span id="wb-progress-pct" style="font-variant-numeric:tabular-nums;font-weight:600;flex:0 0 auto;">0%</span>';
-    // 点击回到「账号接入」并展开日志，便于排查
+    // 点击回到「账号接入」页面，便于排查
     el.onclick = function () {
-      try { window.location.hash = "#/settings"; } catch (e) {}
+      try { window.location.hash = "#/account-connect"; } catch (e) {}
     };
     document.body.appendChild(el);
     return el;
   }
 
+  /* 渲染进度胶囊。
+     status: running / pending / done / failed / aborted / idle(或 none 表示隐藏)
+     同一 (status, progress, stepText) 组合只渲染一次，重复轮询不会产生任何 DOM 写入。 */
   function wbRenderProgressPill(status, progress, stepText) {
     var el = wbEnsureProgressPill();
     if (!el) return;
-    var running = (status === "running" || status === "pending");
+    // idle / none：隐藏并清掉淡出定时器，不重建节点
     if (status === "idle" || status === "none") {
-      el.style.display = "none";
+      if (__wbPillState.fadeTimer) { clearTimeout(__wbPillState.fadeTimer); __wbPillState.fadeTimer = null; }
+      if (el.style.display !== "none") el.style.display = "none";
+      __wbPillState.key = "";
       return;
     }
-    el.style.display = "inline-flex";
+
+    var running = (status === "running" || status === "pending");
+    var pct = progress || "0%";
+    var text = stepText || "注册进行中";
+    var key = status + "|" + pct + "|" + text;
+
+    // 内容无变化：不碰 DOM、不重置定时器（这就是闪烁的根治点）
+    if (key === __wbPillState.key && el.style.display === "inline-flex") return;
+    __wbPillState.key = key;
+
+    if (el.style.display !== "inline-flex") el.style.display = "inline-flex";
     var pctEl = document.getElementById("wb-progress-pct");
     var txtEl = document.getElementById("wb-progress-text");
     var dotEl = document.getElementById("wb-progress-spin");
-    if (pctEl) pctEl.textContent = progress || "0%";
-    if (txtEl) txtEl.textContent = stepText || "注册进行中";
+    if (pctEl && pctEl.textContent !== pct) pctEl.textContent = pct;
+    if (txtEl && txtEl.textContent !== text) txtEl.textContent = text;
     if (dotEl) {
-      if (running) { dotEl.style.background = "#3b82f6"; }
-      else if (status === "done") { dotEl.style.background = "#10b981"; }
-      else { dotEl.style.background = "#f59e0b"; }
+      var color = running ? "#3b82f6" : (status === "done" ? "#10b981" : "#f59e0b");
+      if (dotEl.style.background !== color) dotEl.style.background = color;
     }
-    // 结束后 6 秒自动淡出，避免长期占位
+
+    // 结束后 8 秒自动淡出；定时器全局唯一，重复渲染不会续期
     if (!running) {
-      if (window.__wbPillFadeTimer) clearTimeout(window.__wbPillFadeTimer);
-      window.__wbPillFadeTimer = setTimeout(function () { el.style.display = "none"; }, 6000);
+      if (__wbPillState.fadeTimer) return;
+      __wbPillState.fadeTimer = setTimeout(function () {
+        var node = document.getElementById("wb-progress-pill");
+        if (node) node.style.display = "none";
+        __wbPillState.fadeTimer = null;
+        __wbPillState.key = "";
+      }, 8000);
     }
   }
 
@@ -1157,17 +1187,29 @@ COLLAPSE_SCRIPT = r"""
     if (!pending.length) return;
 
     function render(data) {
+      // 建立多重索引：卡片标题是账号昵称，而新账号常常没有昵称
+      // （官方流水里 accountName 为空，只能回退成账号 ID）。
+      // 只按昵称建索引的话，新账号卡片标题对不上任何键 → 落进 fallback →
+      // 丢掉 accountId → 点击禁用 / 全部恢复这些按钮全数不渲染。
+      // 所以三个键都注：name、aliases（后端下发）、id。
       var byName = {};
       var accs = (data && data.accounts) || {};
       Object.keys(accs).forEach(function (id) {
         var a = accs[id];
-        if (a && a.name) byName[a.name] = a;
+        if (!a) return;
+        [a.name, a.id].concat(a.aliases || []).forEach(function (key) {
+          if (key) byName[String(key)] = a;
+        });
       });
-      // 账号没有任何调用记录时（例如刚添加）也要展示网关可路由的完整清单
+      // 账号没有任何调用记录时（例如刚添加）也要展示网关可路由的完整清单，
+      // 并带上 id —— 没有 id 就等于没有交互按钮。
       var fallback = { models: (data && data.catalog) || [], used: [] };
       if (!fallback.models.length) return;
 
-      pending.forEach(function (card) {
+      // 账号池顺序（后端下发），供标题对不上时按位置兜底取 id。
+      var pendingIds = Object.keys(accs).map(function (k) { return accs[k] && accs[k].id ? accs[k].id : k; });
+
+      pending.forEach(function (card, cardIndex) {
         if (card.querySelector(".wb-am-box")) return;
         var h3 = card.querySelector("h3");
         if (!h3) return;
@@ -1179,7 +1221,12 @@ COLLAPSE_SCRIPT = r"""
         if (!models.length) return;
 
         // 该卡片的账号 id：取自后端，避免用昵称反查导致的错配。
+        // 标题查不到时（新账号/昵称被格式化过）按账号池顺序兜底，
+        // 不轻易置 null —— accountId 为空会让整张卡片变成只读展示。
         var accountId = entry.id || null;
+        if (!accountId && cardIndex < pendingIds.length) {
+          accountId = pendingIds[cardIndex] || null;
+        }
 
         var box = document.createElement("div");
         box.className = "wb-am-box";
@@ -2740,10 +2787,13 @@ COLLAPSE_SCRIPT = r"""
               '<div>' +
                 '<div class="wb-api-label">注册专用出网代理 (HTTP / SOCKS5)</div>' +
                 '<div style="display:flex;gap:8px;align-items:center;margin-top:4px">' +
-                  '<input id="wb-cfg-reg-proxy" class="wb-api-input" style="flex:1;min-width:0" placeholder="例如 http://192.168.31.10:7890">' +
+                  '<div style="flex:1;min-width:0;position:relative;display:flex;align-items:center">' +
+                    '<input id="wb-cfg-reg-proxy" class="wb-api-input" style="width:100%;padding-right:30px" placeholder="例如 http://192.168.31.10:7890">' +
+                    '<span id="wb-cfg-proxy-dot" title="未检测" style="position:absolute;right:10px;width:9px;height:9px;border-radius:50%;background:rgba(120,120,120,.45);transition:background .2s ease;pointer-events:none"></span>' +
+                  '</div>' +
                   '<button id="wb-cfg-proxy-test" class="wb-api-btn" style="white-space:nowrap">检测代理</button>' +
                 '</div>' +
-                '<div id="wb-cfg-proxy-result" class="wb-api-desc" style="margin-top:4px"></div>' +
+                '<div id="wb-cfg-proxy-result" class="wb-api-desc" style="margin-top:4px;display:none"></div>' +
               '</div>' +
 
               '<div>' +
@@ -2819,22 +2869,55 @@ COLLAPSE_SCRIPT = r"""
 
     var proxyTestBtn = v.querySelector("#wb-cfg-proxy-test");
     if (proxyTestBtn) {
+      // 代理检测的状态展示方式：
+      //   输入框右侧内嵌一个状态圆点（灰=未测 / 蓝=检测中 / 绿=可用 / 红=不可用），
+      //   按钮文字依次轮换「检测代理 → 检测中… → 重新检测」，流程结束后恢复原文字，
+      //   鼠标悬停圆点可观详情。
+      //
+      // ⚠️ 为什么不把结果写在输入框下方：那样会撑高整张卡片，
+      // 把下方「Google 登录密码 / 打码平台」等整片布局顶下去，
+      // 周围控件跟着跳动 —— 用户反馈的「下方布局下移」就是这么来的。
+      // 现在结果只落在圆点的 title 里，不占任何布局空间。
+      var PROXY_DOT_COLORS = {
+        idle: "rgba(120,120,120,.45)",
+        testing: "#3b82f6",
+        ok: "#10b981",
+        fail: "#ef4444"
+      };
+
+      var setProxyDot = function(state, tip) {
+        var dot = v.querySelector("#wb-cfg-proxy-dot");
+        if (!dot) return;
+        dot.style.background = PROXY_DOT_COLORS[state] || PROXY_DOT_COLORS.idle;
+        dot.title = tip || "未检测";
+        if (state === "testing") {
+          dot.style.boxShadow = "0 0 0 3px rgba(59,130,246,.22)";
+        } else {
+          dot.style.boxShadow = "none";
+        }
+      };
+
+      // 输入内容一变就回到「未检测」：旧结论不再对应当前地址
+      var proxyInput = v.querySelector("#wb-cfg-reg-proxy");
+      if (proxyInput) {
+        proxyInput.addEventListener("input", function() {
+          setProxyDot("idle", "未检测（代理地址已修改）");
+          proxyTestBtn.textContent = "检测代理";
+        });
+      }
+
       proxyTestBtn.addEventListener("click", function() {
         var resultEl = v.querySelector("#wb-cfg-proxy-result");
         var proxyVal = (v.querySelector("#wb-cfg-reg-proxy").value || "").trim();
+        if (resultEl) resultEl.style.display = "none";
         if (!proxyVal) {
-          if (resultEl) {
-            resultEl.textContent = "请先填写代理地址";
-            resultEl.style.color = "#ef4444";
-          }
+          setProxyDot("fail", "请先填写代理地址");
+          wbToast("请先填写代理地址", "warn");
           return;
         }
         proxyTestBtn.disabled = true;
         proxyTestBtn.textContent = "检测中…";
-        if (resultEl) {
-          resultEl.textContent = "正在通过该代理访问 GitHub…";
-          resultEl.style.color = "var(--muted-foreground,#64748b)";
-        }
+        setProxyDot("testing", "正在通过该代理访问 GitHub…");
         fetch("/api/gh-register/proxy/test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2851,23 +2934,20 @@ COLLAPSE_SCRIPT = r"""
           })
           .then(function(res) {
             proxyTestBtn.disabled = false;
-            proxyTestBtn.textContent = "检测代理";
-            if (!resultEl) return;
+            proxyTestBtn.textContent = "重新检测";
             if (res && res.ok) {
-              resultEl.textContent = "✅ 代理可用 · " + (res.detail || "") + (res.latency_ms ? " · " + res.latency_ms + "ms" : "");
-              resultEl.style.color = "#10b981";
+              setProxyDot("ok", "✅ 代理可用 · " + (res.detail || "") + (res.latency_ms ? " · " + res.latency_ms + "ms" : ""));
+              wbToast("代理可用" + (res.latency_ms ? " · " + res.latency_ms + "ms" : ""), "ok");
             } else {
-              resultEl.textContent = "❌ 代理不可用 · " + ((res && res.detail) || "未知原因");
-              resultEl.style.color = "#ef4444";
+              setProxyDot("fail", "❌ 代理不可用 · " + ((res && res.detail) || "未知原因"));
+              wbToast("代理不可用：" + ((res && res.detail) || "未知原因"), "err");
             }
           })
           .catch(function(e) {
             proxyTestBtn.disabled = false;
-            proxyTestBtn.textContent = "检测代理";
-            if (resultEl) {
-              resultEl.textContent = "❌ 检测失败: " + ((e && e.message) ? e.message : e);
-              resultEl.style.color = "#ef4444";
-            }
+            proxyTestBtn.textContent = "重新检测";
+            setProxyDot("fail", "❌ 检测失败: " + ((e && e.message) ? e.message : e));
+            wbToast("检测失败: " + ((e && e.message) ? e.message : e), "err");
           });
       });
     }
@@ -3401,10 +3481,26 @@ COLLAPSE_SCRIPT = r"""
         '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border,rgba(120,120,120,.2));padding-bottom:14px">' +
           '<div>' +
             '<h1 style="font-size:20px;font-weight:700;margin:0;color:var(--foreground,#0f172a)">每日任务</h1>' +
-            '<p style="font-size:13px;margin:4px 0 0 0;color:var(--muted-foreground,#64748b)">WorkBuddy 成长中心自动化：积分查询、成长任务、互动玩法与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
+            '<p style="font-size:13px;margin:4px 0 0 0;color:var(--muted-foreground,#64748b)">WorkBuddy 成长中心自动化：积分与成长查询、成长任务、互动玩法、开学季活动与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
           '</div>' +
           '<div id="wb-dl-state" class="wb-api-badge">加载中…</div>' +
         '</div>' +
+
+        '<!-- 执行中：进度条 + 阶段明细（无任务时整块隐藏） -->' +
+        '<div id="wb-dl-progress-card" class="wb-api-card" style="display:none">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div id="wb-dl-progress-label" class="wb-api-label">正在执行</div>' +
+              '<div id="wb-dl-progress-step" class="wb-api-desc">准备中…</div>' +
+            '</div>' +
+            '<div id="wb-dl-progress-pct" class="wb-api-mono" style="font-size:18px;font-weight:600">0%</div>' +
+          '</div>' +
+          '<div style="width:100%;height:8px;border-radius:4px;background:rgba(120,120,120,.22);overflow:hidden;margin-top:8px">' +
+            '<div id="wb-dl-progress-bar" style="width:0%;height:100%;background:#3b82f6;transition:width .4s ease"></div>' +
+          '</div>' +
+          '<div id="wb-dl-progress-accounts" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>' +
+        '</div>' +
+
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
@@ -3442,6 +3538,18 @@ COLLAPSE_SCRIPT = r"""
             '</div>' +
           '</div>' +
         '</div>' +
+
+        '<!-- 任务清单：每日任务提供了哪些任务 -->' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">任务清单</div>' +
+              '<div class="wb-api-desc" id="wb-dl-catalog-sum">正在加载任务列表…</div>' +
+            '</div>' +
+          '</div>' +
+          '<div id="wb-dl-catalog" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
+        '</div>' +
+
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
@@ -3455,21 +3563,32 @@ COLLAPSE_SCRIPT = r"""
             '<textarea id="wb-dl-extra" class="wb-api-input" rows="3" style="width:100%;font-family:monospace" placeholder="13800000000:eyJraWQiOi..."></textarea>' +
           '</div>' +
         '</div>' +
+
+        '<!-- 执行记录（SQLite 持久化，保留最近 200 轮） -->' +
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-label">执行记录</div>' +
-              '<div class="wb-api-desc">最近 8 轮执行状态；任务执行期间下方实时滚动日志。</div>' +
+              '<div class="wb-api-desc" id="wb-dl-runs-sum">最近执行轮次（点击任一轮查看逐账号明细）</div>' +
             '</div>' +
+            '<button id="wb-dl-refresh-runs" class="wb-api-btn">刷新</button>' +
           '</div>' +
-          '<div id="wb-dl-jobs" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
-          '<div id="wb-dl-log" class="wb-api-code" style="max-height:220px;overflow-y:auto;white-space:pre-wrap;display:none"></div>' +
+          '<div id="wb-dl-runs" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
+          '<div id="wb-dl-run-detail" style="display:none"></div>' +
+          '<div id="wb-dl-log-wrap" style="display:none">' +
+            '<div class="wb-api-label" style="margin-top:10px">实时日志</div>' +
+            '<div id="wb-dl-log" class="wb-api-code" style="max-height:220px;overflow-y:auto;white-space:pre-wrap"></div>' +
+          '</div>' +
         '</div>' +
       '</div>';
 
     v.querySelector("#wb-dl-save").addEventListener("click", wbDailySaveConfig);
     v.querySelector("#wb-dl-run").addEventListener("click", wbDailyRunJob);
     v.querySelector("#wb-dl-abort").addEventListener("click", wbDailyAbort);
+    v.querySelector("#wb-dl-refresh-runs").addEventListener("click", function() {
+      wbLoadWbDailyRuns();
+      wbToast("执行记录已刷新", "ok");
+    });
     return v;
   }
 
@@ -3495,12 +3614,14 @@ COLLAPSE_SCRIPT = r"""
           badge.style.background = "rgba(16,185,129,.14)"; badge.style.color = "#047857";
         }
       }
-      if (runBtn) runBtn.disabled = !!(d && d.running);
+      if (runBtn) { runBtn.disabled = !!(d && d.running); if (!(d && d.running)) runBtn.textContent = "立即执行"; }
       if (abortBtn) abortBtn.style.display = d && d.running ? "" : "none";
       var lr = document.getElementById("wb-dl-lastrun"); if (lr) lr.textContent = wbFmtTs(d && d.last_run_at);
       var nd = document.getElementById("wb-dl-nextdue"); if (nd) nd.textContent = d && d.enabled ? wbFmtTs(d.next_due_at) : "—（调度停用）";
       if (d && d.running && d.running_job_id) wbDailyPoll(d.running_job_id);
+      else wbRenderDailyProgress(null);
     }).catch(function() {});
+    wbLoadWbDailyCatalog();
     fetch("/api/wb-daily/accounts").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
       var box = document.getElementById("wb-dl-accounts");
       if (!box) return;
@@ -3521,22 +3642,154 @@ COLLAPSE_SCRIPT = r"""
   }
 
   function wbLoadWbDailyJobs() {
-    fetch("/api/wb-daily/jobs").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
-      var box = document.getElementById("wb-dl-jobs");
+    wbLoadWbDailyRuns();
+  }
+
+  /* 任务清单：每日任务提供了哪些任务、各自是自动还是需人工 */
+  function wbLoadWbDailyCatalog() {
+    fetch("/api/wb-daily/catalog").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var box = document.getElementById("wb-dl-catalog");
+      var sum = document.getElementById("wb-dl-catalog-sum");
       if (!box) return;
-      var jobs = (d && d.jobs) || [];
-      if (!jobs.length) { box.innerHTML = '<div class="wb-api-desc">暂无执行记录</div>'; return; }
+      var groups = (d && d.groups) || [];
+      if (sum && d && d.total) {
+        sum.textContent = "共 " + d.total + " 项任务：" + d.auto + " 项全自动、" + d.manual + " 项需人工（下方标灰）；需人工项不影响其余任务执行。";
+      }
+      if (!groups.length) { box.innerHTML = '<div class="wb-api-desc">暂无任务清单</div>'; return; }
       var html = "";
-      jobs.slice(0, 8).forEach(function(j) {
-        var tone = j.status === "done" ? "#047857" : (j.status === "running" ? "#1d4ed8" : "#b45309");
-        var label = j.status === "done" ? "✅ 完成" : j.status === "running" ? "⏳ 执行中 " + (j.progress || "") : j.status === "aborted" ? "⛔ 已中止" : "❌ 失败";
-        html += '<div class="wb-api-row" style="padding:6px 0">' +
-          '<div class="wb-api-main"><span class="wb-api-mono">' + String(j.id) + '</span>' +
-          '<span class="wb-api-desc" style="margin-left:8px">' + wbFmtTs(j.created_at) + ' · ' + (j.mode === "scheduled" ? "自动" : "手动") + '</span></div>' +
-          '<span style="font-size:12px;font-weight:600;color:' + tone + '">' + label + '</span></div>';
+      groups.forEach(function(g) {
+        var items = g.items || [];
+        var autoN = items.filter(function(i) { return i.auto; }).length;
+        html += '<div style="width:100%;margin-top:10px">' +
+          '<div class="wb-api-label">' + g.group + '（' + autoN + '/' + items.length + ' 自动）</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px;margin-top:6px">';
+        items.forEach(function(i) {
+          var dim = i.auto ? "" : ";opacity:.62";
+          var badge = i.auto
+            ? '<span style="color:#047857;font-size:11px">自动</span>'
+            : '<span style="color:#b45309;font-size:11px">人工</span>';
+          html += '<div style="display:flex;align-items:center;gap:6px;min-width:0' + dim + '" title="' + (i.note || i.name || "") + '">' +
+            '<span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (i.name || i.key) + '</span>' +
+            badge + '</div>';
+        });
+        html += '</div></div>';
       });
       box.innerHTML = html;
     }).catch(function() {});
+  }
+
+  /* 执行记录（SQLite 持久化）+ 逐账号明细 */
+  function wbLoadWbDailyRuns() {
+    fetch("/api/wb-daily/runs").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var box = document.getElementById("wb-dl-runs");
+      var sum = document.getElementById("wb-dl-runs-sum");
+      if (!box) return;
+      var runs = (d && d.runs) || [];
+      if (sum) sum.textContent = "最近执行轮次（最多保留 " + ((d && d.retain) || 200) + " 轮，点击任意一轮查看逐账号明细）";
+      if (!runs.length) { box.innerHTML = '<div class="wb-api-desc">暂无执行记录</div>'; return; }
+      var html = "";
+      runs.forEach(function(j) {
+        var tone = j.status === "done" ? "#047857" : (j.status === "running" ? "#1d4ed8" : "#b45309");
+        var label = j.status === "done" ? "✅ 完成" : j.status === "running" ? "⏳ 执行中"
+                  : j.status === "aborted" ? "⛔ 已中止" : "❌ 失败";
+        html += '<div class="wb-api-row wb-dl-run-row" data-job="' + j.job_id + '" style="padding:7px 0;cursor:pointer">' +
+          '<div class="wb-api-main">' +
+            '<span class="wb-api-mono">' + String(j.job_id) + '</span>' +
+            '<span class="wb-api-desc" style="margin-left:8px">' + wbFmtTs(j.started_at) +
+            ' · ' + (j.mode === "scheduled" ? "自动" : "手动") +
+            (j.accounts ? " · " + j.accounts + " 个账号" : "") + '</span>' +
+          '</div>' +
+          '<span style="font-size:12px;font-weight:600;color:' + tone + '">' + label + '</span>' +
+        '</div>';
+      });
+      box.innerHTML = html;
+      box.querySelectorAll(".wb-dl-run-row").forEach(function(row) {
+        row.addEventListener("click", function() {
+          wbLoadWbDailyRunDetail(row.getAttribute("data-job"));
+        });
+      });
+    }).catch(function() {});
+  }
+
+  function wbLoadWbDailyRunDetail(jobId) {
+    var wrap = document.getElementById("wb-dl-run-detail");
+    if (!wrap) return;
+    wrap.style.display = "";
+    wrap.innerHTML = '<div class="wb-api-desc" style="margin-top:10px">正在加载 ' + jobId + ' 的逐账号明细…</div>';
+    fetch("/api/wb-daily/run-accounts/" + jobId)
+      .then(function(r) { return r.ok ? r.json() : {}; })
+      .then(function(d) {
+        var rows = (d && d.accounts) || [];
+        var html = '<div class="wb-api-label" style="margin-top:12px">逐账号明细：' + jobId + '</div>';
+        if (!rows.length) {
+          html += '<div class="wb-api-desc">本轮没有账号级明细（可能是旧记录或任务未跑完）</div>';
+          wrap.innerHTML = html;
+          return;
+        }
+        html += '<div style="width:100%;overflow-x:auto;margin-top:6px"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
+          '<thead><tr style="text-align:left;color:var(--muted-foreground,#64748b)">' +
+          '<th style="padding:4px 6px">账号</th><th style="padding:4px 6px">完成</th>' +
+          '<th style="padding:4px 6px">等级</th><th style="padding:4px 6px">连签</th>' +
+          '<th style="padding:4px 6px">能量</th><th style="padding:4px 6px">积分</th></tr></thead><tbody>';
+        rows.forEach(function(a) {
+          html += '<tr style="border-top:1px solid var(--border,rgba(120,120,120,.15))">' +
+            '<td style="padding:5px 6px" class="wb-api-mono">' + (a.account || "?") + '</td>' +
+            '<td style="padding:5px 6px">' + (a.done || 0) + '/' + (a.total || 0) + '</td>' +
+            '<td style="padding:5px 6px">' + (a.level || "—") + '</td>' +
+            '<td style="padding:5px 6px">' + (a.streak || "—") + '</td>' +
+            '<td style="padding:5px 6px">' + (a.energy || "—") + '</td>' +
+            '<td style="padding:5px 6px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + ((a.credits || "").replace(/"/g, "&quot;")) + '">' + (a.credits || "—") + '</td></tr>';
+          if (a.rest && a.rest.length) {
+            html += '<tr><td colspan="6" style="padding:0 6px 6px 6px;color:var(--muted-foreground,#64748b);font-size:11px">剩余 ' + a.rest.length + ' 项：' + a.rest.join("、") + '</td></tr>';
+          }
+        });
+        html += '</tbody></table></div>';
+        wrap.innerHTML = html;
+      })
+      .catch(function() {
+        wrap.innerHTML = '<div class="wb-api-desc" style="margin-top:10px">明细加载失败</div>';
+      });
+  }
+
+  /* 执行中进度：进度条 + 阶段文字 + 逐账号状态点。
+     与右上角胶囊同一套原则：内容无变化不碰 DOM：只有值与上次不同才写。*/
+  var __wbDlProgress = { key: "" };
+
+  function wbRenderDailyProgress(d) {
+    var card = document.getElementById("wb-dl-progress-card");
+    if (!card) return;
+    if (!d || (d.status !== "running" && d.status !== "pending")) {
+      card.style.display = "none";
+      __wbDlProgress.key = "";
+      return;
+    }
+    card.style.display = "";
+    var pct = d.progress || "0%";
+    var steps = d.steps || [];
+    var stepText = steps.length ? steps[steps.length - 1] : "正在执行…";
+    var logs = d.log || [];
+    var lastLog = logs.length ? logs[logs.length - 1] : "";
+    var key = pct + "|" + stepText + "|" + lastLog;
+    if (key === __wbDlProgress.key) return;
+    __wbDlProgress.key = key;
+
+    var pctEl = document.getElementById("wb-dl-progress-pct");
+    var barEl = document.getElementById("wb-dl-progress-bar");
+    var stepEl = document.getElementById("wb-dl-progress-step");
+    var accEl = document.getElementById("wb-dl-progress-accounts");
+    if (pctEl) pctEl.textContent = pct;
+    if (barEl) barEl.style.width = pct;
+    if (stepEl) stepEl.textContent = lastLog || stepText;
+    if (accEl) {
+      var total = d.accounts_total || 0, done = d.accounts_done || 0;
+      var html = "";
+      for (var i = 0; i < total; i++) {
+        var color = i < done ? "#10b981" : (i === done ? "#3b82f6" : "rgba(120,120,120,.35)");
+        html += '<span title="账号' + (i + 1) + (i < done ? " 已完成" : (i === done ? " 执行中" : " 等待中")) + '" style="width:10px;height:10px;border-radius:50%;background:' + color + '"></span>';
+      }
+      if (total) html += '<span class="wb-api-desc" style="margin-left:6px">' + done + '/' + total + ' 个账号完成</span>';
+      accEl.innerHTML = html;
+    }
   }
 
   function wbDailySaveConfig() {
@@ -3646,6 +3899,20 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
     # 所以当前上游产物里已**不含**任何 `:57890`（实测 HTML / JS 均 0 处），这 4 条命中数
     # 正常就是 0。保留是因为补丁只认那一个 `const` 形态——上游若在别处新写一个硬编码
     # 后端地址，这里仍能把端口掰到 18090。**命中 0 属预期，不是失效。**
+    # 旧品牌名兜底清除。
+    #
+    # ⚠️ 这里的 `content` 是 HTML/JS 响应体，不是二进制，所以**不要求等长** ——
+    # 等长约束只适用于 patch/patch_binary.py 打二进制的情形（详见二进制补丁规程）。
+    #
+    # 以下四条的定位与边界：
+    #   · `workbuddy-switch.app` → `workbuddy-switch`：官方文案里的 macOS 应用名，
+    #     容器里没有桌面应用，去掉 .app 后缀纯为了不让用户去找一个不存在的东西。
+    #   · 后三条把展示用的品牌名统一成 AutoBuddy，覆盖带引号、尖括号（JSX 文本节点）
+    #     与裸串三种形态；顺序必须是「先具体后笼统」，否则后面的规则会先吃掉前面的。
+    #
+    # ⚠️ **不要**把 `/usr/lib/node_modules/workbuddy-switch` 或 `workbuddy-switch serve`
+    # 这类标识符改成 AutoBuddy：那是官方 npm 包名与可执行文件名，改了容器直接起不来。
+    # 展示名与标识符是两码事，详见 entrypoint.sh 第 1 步的注释。
     replacements = [
         (b"http://[IP]:57890", b""),
         (b"http://127.0.0.1:57890", b""),
@@ -3654,8 +3921,11 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
         (b"/icon-transparent.png", b"/icon.png"),
         (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"),
         (b"workbuddy-switch.app", b"workbuddy-switch"),
+        # JSX 文本节点：`>WorkBuddy Switch<` 与带引号的字符串字面量 {\"WorkBuddy Switch\"} 都要覆盖，
+        # 否则侧边栏标题会留下半截旧名。
         (b'"WorkBuddy Switch"', b'"AutoBuddy"'),
         (b">WorkBuddy Switch<", b">AutoBuddy<"),
+        # 笼统兜底放最后：上面两条已处理过的形态，走到这里就只剩裸串了。
         (b"WorkBuddy Switch", b"AutoBuddy"),
     ]
     for old, new in replacements:
@@ -3757,6 +4027,85 @@ async def get_icon():
         return Response(content=r.content, media_type="image/png")
 
 
+def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
+    """校准 ``officialUsage`` 里失真的「今日消耗」。
+
+    问题背景（实测）：官方底层的 ``officialUsage.summary.usageToday`` 长期为
+    ``0.0``，各账号 ``usageToday`` 也全为 0、``currentRemaining`` 为 ``null``，
+    而同一份响应顶层的 ``summary.usageToday`` 是准确的（如 1975.17）。
+    官方前端优先采用 ``officialUsage``（``status=complete`` 即视为可用），
+    于是把准确的顶层值覆盖成 0 —— 这就是「积分统计页今日消耗一直是 0」的根因。
+
+    这里的做法是**不信任 officialUsage 的今日值**：
+    - 顶层 summary.usageToday > 0 时，直接以它为准；
+    - 顶层也为 0（或缺失）时，才回退到用 ``daily`` 里**今天**那条数据重算；
+    - 各账号同样按其 daily 重算，并用顶层同账号的 currentRemaining 补 null。
+
+    只动「今日」这一个维度：usage7Days / usageThisMonth 官方是有值的，
+    动它们反而会引入新的不一致。
+    """
+    ou = data.get("officialUsage")
+    if not isinstance(ou, dict) or not ou:
+        return
+    ou_summary = ou.get("summary")
+    if not isinstance(ou_summary, dict):
+        return
+
+    top_summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    top_today = top_summary.get("usageToday")
+
+    def _today_from_daily(daily) -> float:
+        if not isinstance(daily, list):
+            return 0.0
+        today = time.strftime("%Y-%m-%d")
+        for row in daily:
+            if isinstance(row, dict) and str(row.get("date")) == today:
+                try:
+                    return float(row.get("usage") or 0.0)
+                except Exception:
+                    return 0.0
+        return 0.0
+
+    # 先按 daily 重算各账号的今日值，并收集可用的兜底合计
+    ou_accounts = ou.get("accounts")
+    recomputed_total = None
+    if isinstance(ou_accounts, list):
+        total = 0.0
+        any_value = False
+        for acc in ou_accounts:
+            if not isinstance(acc, dict):
+                continue
+            value = _today_from_daily(acc.get("daily"))
+            if acc.get("usageToday") in (None, 0, 0.0) and value:
+                acc["usageToday"] = round(value, 4)
+            if acc.get("usageToday"):
+                any_value = True
+            try:
+                total += float(acc.get("usageToday") or 0.0)
+            except Exception:
+                pass
+        if any_value:
+            recomputed_total = total
+
+        # currentRemaining 为 null 时用顶层同账号的值补上（官方 officialUsage 不带该字段）
+        top_by_id = {}
+        for acc in (data.get("accounts") or []):
+            if isinstance(acc, dict) and acc.get("accountId"):
+                top_by_id[str(acc["accountId"])] = acc
+        for acc in ou_accounts:
+            if not isinstance(acc, dict):
+                continue
+            if acc.get("currentRemaining") is None:
+                src = top_by_id.get(str(acc.get("accountId")))
+                if src and src.get("currentRemaining") is not None:
+                    acc["currentRemaining"] = src.get("currentRemaining")
+
+    if isinstance(top_today, (int, float)) and top_today > 0:
+        ou_summary["usageToday"] = round(float(top_today), 4)
+    elif recomputed_total is not None:
+        ou_summary["usageToday"] = round(recomputed_total, 4)
+
+
 @app.get("/api/credits/stats")
 async def credits_stats_proxy(request: Request):
     """过滤官方 credits/stats 中的已删除僵尸账号，只保留当前账号池真实账号，并校准汇总指标。"""
@@ -3803,6 +4152,8 @@ async def credits_stats_proxy(request: Request):
             data["summary"]["currentRemaining"] = round(total_remaining, 2)
             data["summary"]["usage7Days"] = round(usage_7d, 2)
             data["summary"]["usageToday"] = round(usage_today, 4)
+
+    _reconcile_official_usage(data, valid_account_ids)
 
     return Response(content=json.dumps(data, ensure_ascii=False), media_type="application/json")
 
@@ -4136,6 +4487,30 @@ async def _fetch_gateway_catalog() -> list:
         return []
 
 
+def _load_accounts_for_models() -> list:
+    """读账号池（兼容 list 与 {"accounts": [...]} 两种形态）。
+
+    /api/account-models 用它做最后一道兜底：账号池里存在、但两条流水源
+    （网关归因 / 官方缓存）都没覆盖到的账号（典型是刚添加、还没调过），
+    也必须出现在结果里 —— 否则它们的卡片拿不到 id，功能按钮全数消失。
+    读不到就返回空列表，绝不因账号池异常而让整个接口失败。
+    """
+    for acc_file in [Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json",
+                     Path("/data/.wb-switch/accounts.json")]:
+        if not acc_file.exists():
+            continue
+        try:
+            with open(acc_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if isinstance(data, list):
+            return [a for a in data if isinstance(a, dict)]
+        if isinstance(data, dict) and isinstance(data.get("accounts"), list):
+            return [a for a in data["accounts"] if isinstance(a, dict)]
+    return []
+
+
 @app.get("/api/account-models")
 async def account_models_api():
     """按账号返回「可用模型 + 已调用模型」，供账号卡片动态展示。
@@ -4246,9 +4621,17 @@ async def account_models_api():
     for aid, entry in agg.items():
         used = sorted(entry["used"])
         all_used.update(used)
+        # 名称兜底：新账号往往没有昵称，官方流水里 accountName 也是空的。
+        # 留空会让前端拿卡片标题去反查时对不上，进而丢掉 accountId ——
+        # 而所有需要 accountId 的交互（点击禁用 / 全部恢复）都靠它，
+        # 结果就是「新加的账号卡片上没有任何功能性按钮」。
+        # 宁可回退成账号 ID（至少唯一、能对上接口），也不留空。
+        label = entry.get("name") or str(aid)
         result["accounts"][aid] = {
             "id": aid,
-            "name": entry.get("name"),
+            "name": label,
+            # 供前端建立多重索引：昵称可能重名或为空，accountId 永远唯一。
+            "aliases": [x for x in (entry.get("name"), str(aid)) if x],
             # 可用清单与网关保持一致，新账号也不会是空的
             "models": catalog or sorted(entry["used"]),
             "used": used,
@@ -4259,6 +4642,27 @@ async def account_models_api():
             # 每个禁用项的来源："manual"（人手禁的）/ "auto"（巡检禁的）
             "disabledSources": disabled_sources_by_account.get(str(aid)) or {},
         }
+    # 账号池里存在、但两条流水源都没覆盖到的账号（例如刚添加、未曾调用），
+    # 同样要出现在结果里 —— 否则它们的卡片拿不到 id，功能按钮全数消失。
+    try:
+        for acc in _load_accounts_for_models():
+            aid = str(acc.get("id") or acc.get("uid") or "")
+            if not aid or aid in result["accounts"]:
+                continue
+            label = acc.get("nickname") or acc.get("email") or aid
+            result["accounts"][aid] = {
+                "id": aid,
+                "name": label,
+                "aliases": [x for x in (acc.get("nickname"), acc.get("email"), aid) if x],
+                "models": catalog,
+                "used": [],
+                "usage": {},
+                "gatewayCalls": 0,
+                "disabled": disabled_by_account.get(aid) or [],
+                "disabledSources": disabled_sources_by_account.get(aid) or {},
+            }
+    except Exception as e:
+        print(f"[account-models] 补全账号池条目失败: {e}")
     result["discovered"] = sorted(all_used)
     result["disabledTotal"] = sum(len(v) for v in disabled_by_account.values())
     return result
@@ -4319,6 +4723,8 @@ _QUIET_SUBSTRINGS = (
     "/api/wb-daily/jobs",
     "/api/wb-daily/health",
     "/api/wb-daily/accounts",
+    "/api/wb-daily/runs",
+    "/api/wb-daily/catalog",
     "/api/auth/status",
     "/api/account-models",
     "/api/account-pool",
@@ -4419,6 +4825,27 @@ async def wb_daily_config_post(request: Request):
 async def wb_daily_accounts():
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/accounts")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/catalog")
+async def wb_daily_catalog():
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/catalog")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/runs")
+async def wb_daily_runs():
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/runs")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/run-accounts/{job_id}")
+async def wb_daily_run_accounts(job_id: str):
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/run-accounts/{job_id}")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 

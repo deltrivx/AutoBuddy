@@ -800,6 +800,38 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # 巡检轮次（把「算组合 → 探测 → 写策略」串起来）
 # ---------------------------------------------------------------------------
 
+def _account_unusable_reason(acc: Dict[str, Any]) -> Optional[str]:
+    """账号是否**不值得发起调用**；是则返回一句中文理由，否则 None。
+
+    场景（用户明确要求）：巡检时如果账号**没有余额（积分为 0）**，
+    就不该再拿它去发请求 —— 注定失败、白花上游额度，还会把
+    「没余额」污染成一片「模型不可用」。
+
+    判定只认确定性的信号，**宁可不跳过也不误跳**：
+      - ``currentRemaining`` / ``remainingCredits`` 等余额字段存在且 <= 0 → 跳过；
+      - 字段缺失或不是数字 → **不跳过**（官方接口名目多变，认不出就当有余额）；
+      - 负数也跳过（上游偶发回 -0.0）。
+
+    不在这里下判断的：
+      - 「上一轮探测无结果」（transient）：那可能是网络抖动，跳过会让账号
+        永久卡在不可用状态，没有自愈机会。
+    """
+    for key in ("currentRemaining", "remainingCredits", "remaining", "credits",
+                "remainingCredit"):
+        if key not in acc:
+            continue
+        value = acc.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            continue
+        if amount <= 0:
+            return f"余额为 0（{key}={amount:g}），跳过本次调用"
+    return None
+
+
 def run_round(accounts: List[Dict[str, Any]],
               config: Dict[str, Any],
               client_factory: Any,
@@ -818,6 +850,8 @@ def run_round(accounts: List[Dict[str, Any]],
     另外**手动禁用的组合压根不探测**：那是人的明确决定，探测它得不到任何有用的
     结论，只会白花上游额度，并让「人禁用的」和「巡检禁用的」在界面上混成一锅。
     与之相对，``auto`` 项必须继续探测 —— 自愈正是靠这轮探测发现模型恢复可用。
+
+    **无余额（积分为 0）的账号不探**：见 ``_account_unusable_reason``。
     """
     now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     policy = model_policy.load_policy()
@@ -860,6 +894,7 @@ def run_round(accounts: List[Dict[str, Any]],
         grouped.setdefault(combo["accountId"], []).append(combo["model"])
 
     client = client_factory()
+    skipped_no_credit: List[Dict[str, str]] = []
     try:
         for acc_id, models in grouped.items():
             acc = by_id.get(acc_id)
@@ -868,6 +903,25 @@ def run_round(accounts: List[Dict[str, Any]],
             token = acc.get("access_token")
             variant = acc.get("variant", "ai")
             base_url = base_url_for(variant)
+
+            # 没余额的账号连探测都不发：一次注定不会成功的调用。
+            # 必须**先于账号级探测**判断，否则凭据探测本身就白花了。
+            unusable = _account_unusable_reason(acc)
+            if unusable:
+                skipped_no_credit.append({"accountId": acc_id,
+                                          "reason": unusable})
+                account_reports.append({
+                    "accountId": acc_id,
+                    "accountName": acc.get("nickname") or acc.get("email") or acc_id,
+                    "disabled": [],
+                    "enabled": [],
+                    "protected": [],
+                    "skippedReason": unusable,
+                    "accountProbe": None,
+                    "credential": None,
+                    "results": [],
+                })
+                continue
 
             # 先花一次请求确认凭据，再决定要不要接着探模型。
             #

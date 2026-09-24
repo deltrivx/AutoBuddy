@@ -19,6 +19,12 @@ RUN apt-get update && apt-get install -y \
 
 # 全局安装官方 workbuddy-switch（底层服务 + WebUI）。本容器在其之上做定制。
 #
+# ⚠️ `workbuddy-switch` 是**官方 npm 包名与可执行文件名**，不是可以随便改的展示名。
+#   内容池里的品牌名（侧边栏标题、标签页标题等）由 gateway/web_proxy.py 的响应层
+#   替换为 AutoBuddy；这里的包名一旦改掉，npm 装不上、entrypoint 的
+#   `workbuddy-switch serve` 也找不到命令，容器直接起不来。
+#   判据：**展示名改，标识符不改**。
+#
 # 版本必须锁定，不能用 @latest：
 # patch/patch_binary.py 的锚点依赖官方前端的具体结构，上游发版会重排 minify 变量名
 # 甚至改动 DOM（0.1.36 -> 0.1.40 就发生过一次），锚点一旦失配，构建会失败（见下方补丁

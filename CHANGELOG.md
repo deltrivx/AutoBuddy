@@ -15,6 +15,17 @@
 
 - 暂无。
 
+## [v0.6.1] - 2026-09-24
+
+### 修复积分今日消耗恒为 0、进度闪烁、代理检测布局与轮询策略
+- **积分统计页「今日消耗」恒为 0 修复（根因在官方底层）**：官方 `officialUsage.summary.usageToday` 与各账号 `usageToday` 长期回 `0.0`（`currentRemaining` 为 `null`），但其 `status` 为 `complete`，前端据此用它覆盖了顶层准确的 `summary.usageToday`（实测 1975.17），于是页面恒显示 0。新增 `_reconcile_official_usage()`：顶层值 > 0 时以它为准，否则回退用 `daily` 里今天的数据重算；各账号 `currentRemaining` 同步用顶层同账号值补齐。
+- **右上角进度胶囊不再闪烁**：旧实现每 2 秒轮询都向 `document` 追加一个新节点，并反复重置 6 秒淡出定时器，表现为不停出现/消失。改为全局单例状态：节点只创建一次，内容无变化时完全不碰 DOM，淡出定时器全局唯一（8 秒）。
+- **代理检测不再顶掉下方布局**：结果原先写在输入框下方的独立行，会撑高卡片把「Google 登录密码 / 打码平台」等整片控件下移。改为输入框**右侧内嵌状态圆点**（灰=未测 / 蓝=检测中 / 绿=可用 / 红=不可用），按钮文字依次轮换「检测代理 → 检测中… → 重新检测」，结果只进圆点悬停提示与 toast，不占布局；修改输入框自动回到未测态。
+- **零余额账号不再发起调用**：新增 `_account_unusable_reason()`，余额字段 ≤ 0 的账号在巡检时**连凭据探测都不发**（注定失败、白花额度，还会把「没余额」污染成「模型全不可用」）；字段缺失或无法解析时保守不跳过，避免误判。
+- **新账号卡片恢复全部功能按钮**：新账号昵称常为空（只能回退账号 ID），前端仅按昵称建索引导致卡片标题对不上键、丢掉 `accountId`，于是「点击禁用 / 恢复 / 全部恢复」全数不渲染。后端补 `name` 兜底与 `aliases` 数组、并把账号池里未被流水覆盖的账号一并下发；前端改为 `name`/`aliases`/`id` 三重索引 + 位置兜底。
+- **旧品牌名清理边界明确**：`workbuddy-switch` 是官方 npm 包名与可执行文件名，改动会导致容器无法启动，保留并补注释；展示名（侧边栏/标题栏）继续由响应层替换为 AutoBuddy，补注释说明「展示名改、标识符不改」。
+- **临时邮箱创建判定说明补全**：修正注释中的字段描述（与第 8 节契约对齐）。
+
 ## [v0.6.0] - 2026-09-24
 
 ### WorkBuddy 每日成长任务（侧边栏「每日任务」）
@@ -1071,7 +1082,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.1...HEAD
+[v0.6.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.12...v0.6.0
 [v0.5.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.11...v0.5.12
 [v0.5.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.10...v0.5.11
