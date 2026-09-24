@@ -15,6 +15,12 @@
 
 - 暂无。
 
+## [v0.6.4] - 2026-09-24
+
+### 修复官方新加账号（如「一杯美式」）不出现在账号池控件里
+- **根因**：账号文件有两份，内容不一致：`/data/.wb-switch/accounts.json`（官方维护）8 个账号，含「一杯美式」与另一个新账号；`$AB_DATA_DIR/accounts.json`（容器副本）只有 6 个。而 `_load_accounts_for_models()` 写的是「找到第一个存在的文件就 break」，永远只能读到其中一份 —— 官方新加的账号因此进不了 `/api/account-models` 与 `/api/account-pool`，卡片上启用/停用、设为首选、检测账号、调用次数四个控件全数不出现。
+- **修复**：改为**合并两份文件**（按账号 ID 去重，字段互补），后遍历的本地副本覆盖官方那份（本地字段更全）；无 ID 的条目回退用昵称/邮箱做键，不整条丢弃。
+
 ## [v0.6.3] - 2026-09-24
 
 ### 修复新账号卡片缺失账号池控件（启用/停用 · 设为首选 · 检测账号 · 调用次数）
@@ -1105,7 +1111,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.3...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.4...HEAD
+[v0.6.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.3...v0.6.4
 [v0.6.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.2...v0.6.3
 [v0.6.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.1...v0.6.2
 [v0.6.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.0...v0.6.1

@@ -4,7 +4,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import FastAPI, Request, Response
 import httpx
 import uvicorn
@@ -4633,15 +4633,23 @@ async def _fetch_gateway_catalog() -> list:
 
 
 def _load_accounts_for_models() -> list:
-    """读账号池（兼容 list 与 {"accounts": [...]} 两种形态）。
+    """读账号池，**合并两份账号文件**（按 ID 去重，字段互补）。
 
-    /api/account-models 用它做最后一道兜底：账号池里存在、但两条流水源
-    （网关归因 / 官方缓存）都没覆盖到的账号（典型是刚添加、还没调过），
-    也必须出现在结果里 —— 否则它们的卡片拿不到 id，功能按钮全数消失。
-    读不到就返回空列表，绝不因账号池异常而让整个接口失败。
+    两个文件各有各的盲区，只取其一必然漏账号：
+      - ``/data/.wb-switch/accounts.json``：官方维护的那份，用户新加入的
+        账号（如「一杯美式」）先出现在这里；
+      - ``$AB_DATA_DIR/accounts.json``：容器自己的副本，字段更全。
+
+    历史 bug：早先写的是「找到第一个存在的文件就 break」，于是只认自己那份，
+    官方新加的账号根本进不了 /api/account-models 与 /api/account-pool，
+    表现为「新账号的卡片上没有任何控件」（启用/设为首选/检测/调用次数全无）。
+
+    合并原则：先官方后本地覆盖，同 ID 以本地为准；读不到就返回空列表，
+    绝不因账号文件异常而让调用方失败。
     """
-    for acc_file in [Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json",
-                     Path("/data/.wb-switch/accounts.json")]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for acc_file in [Path("/data/.wb-switch/accounts.json"),
+                     Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json"]:
         if not acc_file.exists():
             continue
         try:
@@ -4649,11 +4657,22 @@ def _load_accounts_for_models() -> list:
                 data = json.load(f)
         except Exception:
             continue
-        if isinstance(data, list):
-            return [a for a in data if isinstance(a, dict)]
-        if isinstance(data, dict) and isinstance(data.get("accounts"), list):
-            return [a for a in data["accounts"] if isinstance(a, dict)]
-    return []
+        if isinstance(data, dict):
+            data = data.get("accounts") if isinstance(data.get("accounts"), list) else []
+        if not isinstance(data, list):
+            continue
+        for acc in data:
+            if not isinstance(acc, dict):
+                continue
+            key = str(acc.get("id") or acc.get("uid") or "")
+            if not key:
+                # 没 ID 的条目按昵称/邮箱兜底，总比整条丢掉强。
+                key = str(acc.get("nickname") or acc.get("email") or "")
+            if not key:
+                continue
+            # 后遍历的（本地那份）覆盖先遍历的（官方那份）—— 本地字段更全。
+            merged[key] = {**(merged.get(key) or {}), **acc}
+    return list(merged.values())
 
 
 @app.get("/api/account-models")
