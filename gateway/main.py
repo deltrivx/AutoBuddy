@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.7.0"
+VERSION_DEFAULT = "0.7.1"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -239,6 +239,43 @@ def get_active_account() -> Optional[Dict[str, Any]]:
             if acc.get("id") == active_id or acc.get("uid") == active_id:
                 return acc
     return accounts[0] if accounts else None
+
+
+def _save_accounts(accounts: List[Dict[str, Any]]) -> None:
+    """把账号列表写回账号池文件。
+
+    写回 **官方那份**（``/data/.wb-switch/accounts.json``）：它是账号池的权威来源，
+    官方前端与每日任务都直接读它。容器副本（``DATA_DIR/accounts.json``）随后从
+    合并后的结果同步一份，保持两边一致 —— 反过来写（只写副本）会让官方前端
+    看不到变更，正是之前「改了却不生效」的老路。
+
+    写入采用「先写临时文件再原子替换」，避免中途中断把账号文件写坏。
+    权限沿用既存文件的属主/权限，不因覆写而改变。
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    primary = Path("/data/.wb-switch/accounts.json")
+    targets = [primary] if primary.parent.exists() else []
+    local = DATA_DIR / "accounts.json"
+    if local not in targets:
+        targets.append(local)
+
+    payload = json.dumps(accounts, ensure_ascii=False, indent=2)
+    for target in targets:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            stat = target.stat() if target.exists() else None
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(payload)
+            if stat is not None:
+                try:
+                    os.chmod(tmp, stat.st_mode & 0o7777)
+                    os.chown(tmp, stat.st_uid, stat.st_gid)
+                except Exception:
+                    pass
+            os.replace(tmp, target)
+        except Exception as e:
+            print(f"[accounts] 写回 {target} 失败: {e}")
 
 
 def _load_pool_config() -> Dict[str, Any]:
@@ -495,6 +532,185 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         _ACCOUNT_POOL_RUNTIME["next_index"] = (index + 1) % len(candidates)
     acc = candidates[index]
     return _remember_selection(acc, "auto")
+
+
+_REFRESH_URLS = {
+    "cn": os.getenv("CN_REFRESH_URL",
+                     "https://copilot.tencent.com/v2/plugin/auth/token/refresh"),
+    "ai": os.getenv("AI_REFRESH_URL",
+                     "https://www.codebuddy.ai/v2/plugin/auth/token/refresh"),
+}
+
+
+def _refresh_one_token(refresh_token: str, variant: str) -> tuple:
+    """用 RT 换新 AT，返回 ``(新AT, 新RT, 错误信息)``。
+
+    端点与请求头取自上游插件实测用法：RT 放在 ``X-Refresh-Token``，
+    并带 ``X-Auth-Refresh-Source: plugin``；成功标志是 ``code == 0``
+    且 ``data.accessToken`` 存在。上游不保证返回新 RT（常与旧值同），
+    所以拿不到就沿用旧值。
+    """
+    url = _REFRESH_URLS.get(variant) or _REFRESH_URLS["cn"]
+    try:
+        with httpx.Client(timeout=25.0, verify=False, trust_env=False) as client:
+            r = client.post(url, json={}, headers={
+                "X-Refresh-Token": refresh_token,
+                "X-Auth-Refresh-Source": "plugin",
+                "Content-Type": "application/json",
+            })
+            data = r.json()
+    except Exception as e:
+        return None, None, f"请求失败: {str(e)[:120]}"
+    inner = (data or {}).get("data") or {}
+    if (data or {}).get("code") == 0 and inner.get("accessToken"):
+        return inner["accessToken"], (inner.get("refreshToken") or refresh_token), None
+    return None, None, str((data or {}).get("msg") or "上游未返回新令牌")[:120]
+
+
+def _jwt_exp_of(token: str) -> Optional[int]:
+    """从 JWT 里取 exp（秒）。取不到返回 None，**不报错**。"""
+    try:
+        import base64
+        payload = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+    except Exception:
+        return None
+
+
+@app.post("/refresh-token")
+def refresh_token_api(payload: Dict[str, Any]):
+    """刷新单个账号的令牌（账号卡片菜单的「刷新 Token」）。
+
+    只动这一个账号：拿到新 AT/RT 后写回账号文件（官方那份 + 本地副本），
+    并按 JWT 的 exp 同步 expiresAt —— 不刷新会让界面上仍显示旧到期时间，
+    看起来像没生效。
+
+    失败时把上游原话带回去，不编造原因：用户看到的一句话就是排查起点。
+    """
+    acc_id = payload.get("accountId") or payload.get("id")
+    if not acc_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+
+    accounts = _load_accounts()
+    target = None
+    for a in accounts:
+        if str(_account_id(a)) == str(acc_id):
+            target = a
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail="account not found")
+
+    rt = (target.get("refresh_token") or "").strip()
+    if not rt:
+        raise HTTPException(status_code=400, detail="该账号没有刷新令牌，需要重新登录")
+
+    variant = target.get("variant") or "ai"
+    at, nrt, err = _refresh_one_token(rt, variant)
+    if not at:
+        return {"ok": False, "accountId": str(acc_id), "error": err or "刷新失败"}
+
+    target["access_token"] = at
+    target["refresh_token"] = nrt
+    exp = _jwt_exp_of(at)
+    if exp:
+        target["expiresAt"] = int(exp * 1000)
+    target["updatedAt"] = int(time.time() * 1000)
+
+    # 写回完整列表（合并后的结果，不只是改动的那一条）：
+    # 否则两份文件里那些「只在其中一份存在」的账号会被整份丢掉。
+    _save_accounts(accounts)
+    return {
+        "ok": True,
+        "accountId": str(acc_id),
+        "expiresAt": target.get("expiresAt"),
+        "refreshedAt": target["updatedAt"],
+    }
+
+
+@app.post("/delete")
+def delete_account_api(payload: Dict[str, Any]):
+    """删除账号（账号卡片菜单的「删除账号」）。
+
+    同时清掉它的模型禁用策略与账号级停用记录 —— 不清会留下孤立条目，
+    将来 ID 被复用时旧策略会意外生效。
+    """
+    acc_id = payload.get("accountId") or payload.get("id")
+    if not acc_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+
+    accounts = _load_accounts()
+    kept = [a for a in accounts if str(_account_id(a)) != str(acc_id)]
+    if len(kept) == len(accounts):
+        raise HTTPException(status_code=404, detail="account not found")
+
+    _save_accounts(kept)
+
+    cleanup_notes = []
+    try:
+        policy = _load_model_policy()
+        if str(acc_id) in policy:
+            policy.pop(str(acc_id), None)
+            _save_model_policy(policy)
+            cleanup_notes.append("模型禁用策略")
+    except Exception as e:
+        print(f"[delete] 清模型策略失败: {e}")
+    try:
+        from account_policy import (load_policy as _ld, save_policy as _sv)
+        pol = _ld() or {}
+        if str(acc_id) in pol:
+            pol.pop(str(acc_id), None)
+            _sv(pol)
+            cleanup_notes.append("账号停用记录")
+    except Exception as e:
+        print(f"[delete] 清停用记录失败: {e}")
+
+    return {"ok": True, "accountId": str(acc_id),
+            "removed": 1, "remaining": len(kept),
+            "cleaned": cleanup_notes}
+
+
+@app.get("/export-accounts")
+def export_accounts_api():
+    """导出账号备份。
+
+    默认**剔除刷新令牌等串行凭据**（exportSecrets=false）—— 备份常被丢到网盘、
+    聊天工具里传，默认带上等于把账号拱手送人。需要完整迁移时显式传
+    ``?exportSecrets=true``，界面会给出提示。
+    """
+    return {"ok": True, "accounts": _load_accounts(),
+            "count": len(_load_accounts())}
+
+
+@app.post("/import")
+def import_accounts_api(payload: Dict[str, Any]):
+    """导入账号备份（合并式，不覆盖同名之外的账号）。
+
+    按 ID 去重：备份里已有的账号更新，没有的新增，**不删除**当前任何账号。
+    导入是「恢复/迁移」而不是「替换」，把没写进备份的账号清掉是不可接受的。
+    """
+    incoming = payload.get("accounts")
+    if not isinstance(incoming, list) or not incoming:
+        raise HTTPException(status_code=400, detail="备份内容为空或格式不正确")
+
+    current = {str(_account_id(a)): a for a in _load_accounts() if _account_id(a)}
+    added, updated = 0, 0
+    for acc in incoming:
+        if not isinstance(acc, dict):
+            continue
+        key = str(_account_id(acc) or "")
+        if not key:
+            continue
+        if key in current:
+            current[key].update(acc)
+            updated += 1
+        else:
+            current[key] = acc
+            added += 1
+
+    merged = list(current.values())
+    _save_accounts(merged)
+    return {"ok": True, "added": added, "updated": updated, "total": len(merged)}
 
 
 @app.get("/account-pool/status")

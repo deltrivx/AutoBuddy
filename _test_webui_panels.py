@@ -56,6 +56,36 @@ def extract_script(src: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def check_js_parses(script: str) -> None:
+    """把注入的 JS 交给 node 做**纯语法解析**，不通过就直接失败。
+
+    为什么单拷一道：Python 的 `py_compile` 只看 web_proxy.py 本身，
+    里面装的是字符串字面量；拼装字符串时写出的 JS 语法错（例如
+    `'</div>' + +` 这种多写一个加号）**Python 完全看不出**，
+    而浏览器会直接抛 SyntaxError，整段注入脚本不执行 —— 所有面板一齐消失。
+    v0.7.0 就踩过：多出的两个 `+ +` 让「每日任务」整页布局塌掉，
+    而当时的测试全部绿灯。
+
+    这里只查语法（快、无需 DOM）；真正的渲染冒烟在后面另跑。
+    """
+    if not shutil.which("node"):
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "chk.js"
+        # strip_bootstrap 只改末尾几行，不影响语法；直接查原文更严格。
+        p.write_text(script, encoding="utf-8", newline="\n")
+        proc = subprocess.run(["node", "--check", str(p)],
+                              capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        err = (proc.stderr or "").strip().splitlines()
+        check("注入 JS 能通过 node --check 语法解析", False,
+              " | ".join(err[:4]))
+        raise SystemExit(
+            "注入的 JS 存在语法错误，浏览器会整段不执行 —— 必须修完再提交。\n"
+            + "\n".join(err[:12]))
+    check("注入 JS 能通过 node --check 语法解析", True)
+
+
 def strip_bootstrap(script: str) -> str:
     """把脚本末尾的自动启动换掉，改成把 run / 宿主查找函数交出来。
 
@@ -744,7 +774,10 @@ def main() -> int:
         print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
         return 1 if _fail else 0
 
-    print("\n[2] 在 DOM 桩里跑一遍所有面板的渲染")
+    print("\n[2] 注入 JS 语法解析（node --check）")
+    check_js_parses(script)
+
+    print("\n[3] 在 DOM 桩里跑一遍所有面板的渲染")
     harness = (HARNESS_JS
                .replace("__PAYLOADS__", json.dumps({
                    "gatewayInfo": GATEWAY_INFO, "keysStatus": KEYS_STATUS,

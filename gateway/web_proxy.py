@@ -189,6 +189,28 @@ COLLAPSE_SCRIPT = r"""
     color: #1d4ed8;
     font-weight: 600;
   }
+  /* 控制条里「账号池状态」与「账号自身维护动作」之间的分隔符。
+     不画成竖线而留空白，是因为两组按钮权重不同：左边决定要不要参与调用，
+     右边是刷新/签到/删除这类维护动作，混在一排里容易误点。 */
+  .wb-pool-sep {
+    flex: 0 0 100%;
+    height: 0;
+    margin: 0;
+  }
+  /* 删除账号：用红色描边与文字。与「已停用」的灰不同，
+     这个动作不可逆，让它一眼就能与旁边的常规按钮区分开。 */
+  .wb-pool-btn-danger {
+    border-color: rgba(220, 38, 38, 0.45);
+    color: #b91c1c;
+  }
+  .wb-pool-btn-danger:hover {
+    background: rgba(220, 38, 38, 0.12);
+    border-color: rgba(220, 38, 38, 0.6);
+  }
+  .wb-pool-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
   /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
     margin-top: 12px;
@@ -1635,6 +1657,66 @@ COLLAPSE_SCRIPT = r"""
           bar.appendChild(last);
         }
 
+        // ---- 账号本身的操作（刷新 Token / 手动签到 / 删除）----
+        //
+        // 这三项原本在官方卡片的「更多账号操作」菜单里。容器里官方菜单仍在，
+        // 但它调的 /api/* 路径属于桌面版后端，网关并未实现 —— 点下去只有
+        // 404/500，也就是「按钮在、功能没有」。
+        //
+        // 这里把它们接到**网关真实实现的接口**上：走的是同一份账号数据，
+        // 不是另画一套按钮充数。职责与控制条分开：
+        //   控制条  = 该账号要不要参与 API 调用（轮询层面）
+        //   下面这些 = 对该账号本身的维护动作（凭据/签到/删除）
+        var sep = document.createElement("span");
+        sep.className = "wb-pool-sep";
+        bar.appendChild(sep);
+
+        var refreshBtn = document.createElement("button");
+        refreshBtn.className = "wb-pool-btn";
+        refreshBtn.textContent = "刷新 Token";
+        refreshBtn.title = "用刷新令牌换一个新的访问令牌，延长这个账号的登录有效期。";
+        refreshBtn.onclick = function () {
+          if (refreshBtn.dataset.wbBusy === "1") return;
+          refreshBtn.dataset.wbBusy = "1";
+          refreshBtn.disabled = true;
+          refreshBtn.textContent = "刷新中…";
+          wbRefreshAccountToken(acc.id, function (ok) {
+            refreshBtn.dataset.wbBusy = "0";
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = "刷新 Token";
+            if (ok) { wbPoolCache = null; refreshPool(); }
+          });
+        };
+        bar.appendChild(refreshBtn);
+
+        var checkinBtn = document.createElement("button");
+        checkinBtn.className = "wb-pool-btn";
+        checkinBtn.textContent = "手动签到";
+        checkinBtn.title = "立即跑一轮签到（与「每日任务」页同一个服务），进度到那边看。";
+        checkinBtn.onclick = function () {
+          if (checkinBtn.dataset.wbBusy === "1") return;
+          checkinBtn.dataset.wbBusy = "1";
+          checkinBtn.disabled = true;
+          checkinBtn.textContent = "已启动…";
+          wbManualCheckin(acc.id, function () {
+            checkinBtn.dataset.wbBusy = "0";
+            checkinBtn.disabled = false;
+            checkinBtn.textContent = "手动签到";
+          });
+        };
+        bar.appendChild(checkinBtn);
+
+        var delBtn = document.createElement("button");
+        delBtn.className = "wb-pool-btn wb-pool-btn-danger";
+        delBtn.textContent = "删除账号";
+        delBtn.title = "从账号池里移除这个账号（需二次确认）。目标不可恢复，需重新登录。";
+        delBtn.onclick = function () {
+          wbDeleteAccount(acc.id, acc.nickname || acc.email || cardTitle, function (ok) {
+            if (ok) { wbPoolCache = null; refreshPool(); }
+          });
+        };
+        bar.appendChild(delBtn);
+
         (card.querySelector("section") || card).appendChild(bar);
       });
     }
@@ -1644,6 +1726,90 @@ COLLAPSE_SCRIPT = r"""
       .then(function (r) { return r.json(); })
       .then(function (data) { wbPoolCache = data; render(data); })
       .catch(function () {});
+  }
+
+  function wbRefreshAccountToken(accountId, done) {
+    fetch("/api/refresh-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: accountId, exportSecrets: false })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, body: body || {} };
+        });
+      })
+      .then(function (res) {
+        if (!res.ok || res.body.ok === false) {
+          var d = res.body.detail || res.body.error;
+          wbToast(typeof d === "string" && d ? "刷新失败：" + d : "刷新失败，请重试", "err");
+          if (done) done(false);
+          return;
+        }
+        wbToast("Token 已刷新");
+        if (done) done(true);
+      })
+      .catch(function () {
+        wbToast("请求失败，请刷新页面后重试", "err");
+        if (done) done(false);
+      });
+  }
+
+  function wbDeleteAccount(accountId, label, done) {
+    // 删除是不可逆的，必须先确认；把账号名写进提示里，
+    // 避免在长列表里点错行却按习惯直接确认。
+    if (!window.confirm("确定删除账号「" + (label || accountId) + "」？\n\n"
+        + "删除后该账号的登录凭据会被移除，需重新登录才能恢复；"
+        + "它的模型禁用策略与停用记录会一并清理。")) {
+      return;
+    }
+    fetch("/api/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: accountId })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, body: body || {} }; 
+        });
+      })
+      .then(function (res) {
+        if (!res.ok || res.body.ok === false) {
+          var d = res.body.detail || res.body.error;
+          wbToast(typeof d === "string" && d ? "删除失败：" + d : "删除失败，请重试", "err");
+          if (done) done(false);
+          return;
+        }
+        wbToast("已删除账号");
+        if (done) done(true);
+      })
+      .catch(function () {
+        wbToast("请求失败，请刷新页面后重试", "err");
+        if (done) done(false);
+      });
+  }
+
+  function wbManualCheckin(accountId, done) {
+    // 手动签到走每日任务服务（它本来就在做签到，不另开一条路径）。
+    fetch("/api/wb-daily/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: accountId || undefined })
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (d) {
+        if (!d || !d.job_id) {
+          wbToast("签到启动失败：" + ((d && (d.detail || d.error)) || "未知原因"), "err");
+          if (done) done(false);
+          return;
+        }
+        wbToast("已开始签到，可在「每日任务」页看进度");
+        if (done) done(true);
+      })
+      .catch(function () {
+        wbToast("请求失败，请刷新页面后重试", "err");
+        if (done) done(false);
+      });
   }
 
   function refreshPool() {
@@ -3563,7 +3729,7 @@ COLLAPSE_SCRIPT = r"""
                 '<input id="wb-dl-lazy" type="number" min="1" max="72" class="wb-api-input" style="width:100%;margin-top:4px" value="6">' +
               '</div>' +
             '</div>' +
-          '</div>' + +
+          '</div>' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-desc">上次执行：<span id="wb-dl-lastrun" class="wb-api-mono">—</span>　下次到期：<span id="wb-dl-nextdue" class="wb-api-mono">—</span></div>' +
@@ -3595,7 +3761,7 @@ COLLAPSE_SCRIPT = r"""
             '</div>' +
           '</div>' +
           '<div id="wb-dl-accounts" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
-        '</div>' + +
+        '</div>' +
 
         '<!-- 执行记录（SQLite 持久化，保留最近 200 轮） -->' +
         '<div class="wb-api-card">' +
@@ -4427,6 +4593,71 @@ async def account_pool_selections_reset():
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)}), status_code=502,
                         media_type="application/json")
+
+
+@app.post("/api/refresh-token")
+async def refresh_token_proxy(request: Request):
+    """转发「刷新 Token」（账号卡片菜单）。
+
+    超时给到 40s：要等上游刷新接口回包，默认值太紧会把「上游慢」
+    误报成「刷新失败」。
+    """
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=40.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/refresh-token",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)}),
+                        status_code=502, media_type="application/json")
+
+
+@app.post("/api/delete")
+async def delete_account_proxy(request: Request):
+    """转发「删除账号」（账号卡片菜单）。"""
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=20.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/delete",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)}),
+                        status_code=502, media_type="application/json")
+
+
+@app.get("/api/export-accounts")
+async def export_accounts_proxy():
+    """转发「导出账号备份」。"""
+    try:
+        async with _internal_client(timeout=20.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/export-accounts")
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)}),
+                        status_code=502, media_type="application/json")
+
+
+@app.post("/api/import")
+async def import_accounts_proxy(request: Request):
+    """转发「导入账号备份」（合并式，不覆盖未列出的账号）。"""
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=30.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/import",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)}),
+                        status_code=502, media_type="application/json")
 
 
 @app.post("/api/account-pool/toggle")

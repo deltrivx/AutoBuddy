@@ -35,7 +35,7 @@ src = (Path(__file__).parent / "gateway" / "main.py").read_text(encoding="utf-8"
 seg1 = src[src.index("DATA_DIR = Path("):src.index("def infer_owner(")]
 seg_policy = src[src.index("def _load_model_policy("):src.index("def _account_id(")]
 seg_pool = src[src.index("def _load_pool_config("):src.index("def select_account(")]
-seg_select = src[src.index("def select_account("):src.index('@app.get("/account-pool/status")')]
+seg_select = src[src.index("def select_account("):src.index('_REFRESH_URLS = {')]
 
 ns = {
     "json": json, "os": os, "Path": Path, "print": print,

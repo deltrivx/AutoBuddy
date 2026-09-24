@@ -15,6 +15,22 @@
 
 - 暂无。
 
+## [v0.7.1] - 2026-09-24
+
+### 修复 v0.7.0 引入的注入 JS 语法错（每日任务页布局塔陷）
+- **根因**：v0.7.0 拼注入字符串时多写了两个加号（`'</div>' + +`）。这是**硬语法错**，浏览器直接抛 SyntaxError，**整段注入脚本不执行** —— 表现就是「每日任务界面布局全乱」。
+- **为何当时测试全绿也发得出去**：`py_compile` 只看放在字符串里的 Python 字面量，**看不出拼出来的 JS 语法错**；面板渲染测试也会跳过。已给测试套件加上 `node --check` 门禁，这类错再也上不了 CI。
+
+### 账号卡片补全三个操作：刷新 Token · 手动签到 · 删除账号
+- 官方卡片菜单三项原本调用桌面版后端路径，容器网关未实现 —— 点下去只有 404/500，属于「按钮在、功能没有」。
+- 现接到网关**真实实现**的接口上（同一份账号数据，不是另画一套按钮充数）：
+  - `POST /refresh-token` —— 用 RT 换新 AT 并写回，同步按 JWT 的 exp 更新 `expiresAt`
+  - `POST /delete` —— 删除账号，并清理它的模型禁用策略与停用记录（免留孤立条目）
+  - `POST /wb-daily/run` —— 手动签到复用每日任务服务，不另开一条路径
+- 新增 `GET /export-accounts` · `POST /import`（合并式导入，不删除现有账号），供后续备份入口使用
+- 职责划分：账号池控制条只管「要不要参与 API 调用」，三个新按钮管「账号本身的维护动作」。
+- 账号写回改为**原子替换**并保留原有属主与权限，同时写官方那份文件 —— 只写本地副本会重现「改了不生效」。
+
 ## [v0.7.0] - 2026-09-24
 
 ### 统一账号来源：修好「按钮在、一点就报 account not found」
@@ -1146,7 +1162,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.1...HEAD
+[v0.7.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.6...v0.7.0
 [v0.6.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.5...v0.6.6
 [v0.6.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.4...v0.6.5
