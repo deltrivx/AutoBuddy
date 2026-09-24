@@ -189,28 +189,6 @@ COLLAPSE_SCRIPT = r"""
     color: #1d4ed8;
     font-weight: 600;
   }
-  /* 控制条里「账号池状态」与「账号自身维护动作」之间的分隔符。
-     不画成竖线而留空白，是因为两组按钮权重不同：左边决定要不要参与调用，
-     右边是刷新/签到/删除这类维护动作，混在一排里容易误点。 */
-  .wb-pool-sep {
-    flex: 0 0 100%;
-    height: 0;
-    margin: 0;
-  }
-  /* 删除账号：用红色描边与文字。与「已停用」的灰不同，
-     这个动作不可逆，让它一眼就能与旁边的常规按钮区分开。 */
-  .wb-pool-btn-danger {
-    border-color: rgba(220, 38, 38, 0.45);
-    color: #b91c1c;
-  }
-  .wb-pool-btn-danger:hover {
-    background: rgba(220, 38, 38, 0.12);
-    border-color: rgba(220, 38, 38, 0.6);
-  }
-  .wb-pool-btn:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
   /* 账号卡片下方动态展示的「可用模型」区域 */
   .wb-am-box {
     margin-top: 12px;
@@ -1656,66 +1634,6 @@ COLLAPSE_SCRIPT = r"""
           last.textContent = "最近调用";
           bar.appendChild(last);
         }
-
-        // ---- 账号本身的操作（刷新 Token / 手动签到 / 删除）----
-        //
-        // 这三项原本在官方卡片的「更多账号操作」菜单里。容器里官方菜单仍在，
-        // 但它调的 /api/* 路径属于桌面版后端，网关并未实现 —— 点下去只有
-        // 404/500，也就是「按钮在、功能没有」。
-        //
-        // 这里把它们接到**网关真实实现的接口**上：走的是同一份账号数据，
-        // 不是另画一套按钮充数。职责与控制条分开：
-        //   控制条  = 该账号要不要参与 API 调用（轮询层面）
-        //   下面这些 = 对该账号本身的维护动作（凭据/签到/删除）
-        var sep = document.createElement("span");
-        sep.className = "wb-pool-sep";
-        bar.appendChild(sep);
-
-        var refreshBtn = document.createElement("button");
-        refreshBtn.className = "wb-pool-btn";
-        refreshBtn.textContent = "刷新 Token";
-        refreshBtn.title = "用刷新令牌换一个新的访问令牌，延长这个账号的登录有效期。";
-        refreshBtn.onclick = function () {
-          if (refreshBtn.dataset.wbBusy === "1") return;
-          refreshBtn.dataset.wbBusy = "1";
-          refreshBtn.disabled = true;
-          refreshBtn.textContent = "刷新中…";
-          wbRefreshAccountToken(acc.id, function (ok) {
-            refreshBtn.dataset.wbBusy = "0";
-            refreshBtn.disabled = false;
-            refreshBtn.textContent = "刷新 Token";
-            if (ok) { wbPoolCache = null; refreshPool(); }
-          });
-        };
-        bar.appendChild(refreshBtn);
-
-        var checkinBtn = document.createElement("button");
-        checkinBtn.className = "wb-pool-btn";
-        checkinBtn.textContent = "手动签到";
-        checkinBtn.title = "立即跑一轮签到（与「每日任务」页同一个服务），进度到那边看。";
-        checkinBtn.onclick = function () {
-          if (checkinBtn.dataset.wbBusy === "1") return;
-          checkinBtn.dataset.wbBusy = "1";
-          checkinBtn.disabled = true;
-          checkinBtn.textContent = "已启动…";
-          wbManualCheckin(acc.id, function () {
-            checkinBtn.dataset.wbBusy = "0";
-            checkinBtn.disabled = false;
-            checkinBtn.textContent = "手动签到";
-          });
-        };
-        bar.appendChild(checkinBtn);
-
-        var delBtn = document.createElement("button");
-        delBtn.className = "wb-pool-btn wb-pool-btn-danger";
-        delBtn.textContent = "删除账号";
-        delBtn.title = "从账号池里移除这个账号（需二次确认）。目标不可恢复，需重新登录。";
-        delBtn.onclick = function () {
-          wbDeleteAccount(acc.id, acc.nickname || acc.email || cardTitle, function (ok) {
-            if (ok) { wbPoolCache = null; refreshPool(); }
-          });
-        };
-        bar.appendChild(delBtn);
 
         (card.querySelector("section") || card).appendChild(bar);
       });
@@ -5027,8 +4945,24 @@ async def account_models_api():
 
     # 兜底：某账号可能「一条调用记录都没有，但已被用户禁用过模型」。
     # 不补进 agg 的话，它的禁用状态会静默丢失，用户会以为点了没生效。
+    #
+    # ‼️ 但必须先确认这个账号**现在还在账号池里**。
+    # 这里曾经无约束地把策略文件里的每个账号键都补进来，结果历史残留的
+    # 策略（账号已删、键还在）会被当成真账号渲染成一张卡片 ——
+    # 卡片标题只能回退成 UUID，与控制条、模型区都对不上，
+    # 看上去就像「多出来几个没有名字、没有任何功能的卡片」。
+    # 策略文件不会自己清理旧键，所以这层过滤必须放在渲染侧。
+    try:
+        pool_ids = {
+            str(acc.get("id") or acc.get("uid") or "")
+            for acc in _load_accounts_for_models()
+        }
+    except Exception as e:
+        print(f"[account-models] 读账号池做策略键过滤失败: {e}")
+        pool_ids = set()
+
     for aid, models in disabled_by_account.items():
-        if aid not in agg and models:
+        if aid not in agg and models and str(aid) in pool_ids:
             _touch(str(aid), None)
 
     all_used = set()

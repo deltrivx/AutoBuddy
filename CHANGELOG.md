@@ -15,6 +15,19 @@
 
 - 暂无。
 
+## [v0.7.2] - 2026-09-25
+
+### 彻底根除幽灵账号与模型策略残留
+- **根因**：历史测试/删除账号后，`model_policy.json` 中残留了 5 个无效账号的禁用策略键。`/api/account-models` 的兜底遍历盲目信任策略键并加入聚合列表，导致前端为这些不存在的账号生成了空白 UUID 假卡片。
+- **修复**：
+  - 渲染聚合层严格校验账号必须在当前真实账号池（`_load_accounts_for_models()`）中存在，阻断孤立策略键渗透前端；
+  - 物理清理 `model_policy.json` 中的幽灵账号键，使账号池与模型策略完全对齐（真实账号数 8，模型目录账号数 8）；
+  - 移除多余的手动按钮注入，保持官方账号卡片原生完整结构。
+
+### README 结构与排版重塑
+- 参考 ThemeEffects 仓库规范，重构 `README.md` 为模块化视觉布局，强化核心能力表格矩阵与部署指引；
+- 遵循版本管理测试规范，统一更新日志与版本索引格式。
+
 ## [v0.7.1] - 2026-09-24
 
 ### 修复 v0.7.0 引入的注入 JS 语法错（每日任务页布局塔陷）
@@ -1162,7 +1175,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.1...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.2...HEAD
+[v0.7.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.1...v0.7.2
 [v0.7.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.6...v0.7.0
 [v0.6.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.5...v0.6.6
