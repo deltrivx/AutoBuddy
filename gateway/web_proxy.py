@@ -2772,7 +2772,15 @@ COLLAPSE_SCRIPT = r"""
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ proxy: proxyVal })
         })
-          .then(function(r) { return r.json(); })
+          .then(function(r) {
+            // 必须校验响应类型：路由若未命中会掉进兜底转发，返回 HTML 页面，
+            // 直接 r.json() 会抛出难懂的 "The string did not match the expected pattern"。
+            var ct = (r.headers.get("content-type") || "");
+            if (ct.indexOf("application/json") === -1) {
+              throw new Error("接口返回了非 JSON 响应 (HTTP " + r.status + ")，请确认容器版本已更新至最新");
+            }
+            return r.json();
+          })
           .then(function(res) {
             proxyTestBtn.disabled = false;
             proxyTestBtn.textContent = "检测代理";
@@ -2789,7 +2797,7 @@ COLLAPSE_SCRIPT = r"""
             proxyTestBtn.disabled = false;
             proxyTestBtn.textContent = "检测代理";
             if (resultEl) {
-              resultEl.textContent = "❌ 检测请求失败: " + e;
+              resultEl.textContent = "❌ 检测失败: " + ((e && e.message) ? e.message : e);
               resultEl.style.color = "#ef4444";
             }
           });
@@ -2854,8 +2862,16 @@ COLLAPSE_SCRIPT = r"""
         body: JSON.stringify({ security_code: code, google_password: googlePw })
       })
         .then(function(r) { return r.json(); })
+        .then(function(r) {
+          // 与代理检测同理：路由未命中会返回 HTML，直接 r.json() 会抛难懂的语法错误。
+          var ct = (r.headers.get("content-type") || "");
+          if (ct.indexOf("application/json") === -1) {
+            throw new Error("接口返回了非 JSON 响应 (HTTP " + r.status + ")");
+          }
+          return r.json();
+        })
         .then(function(data) {
-          if (data.job_id) {
+          if (data && data.job_id) {
             window.__wbAcJobId = data.job_id;
             abortBtn.style.display = "inline-block";
             if (wbAcJobTimer) clearInterval(wbAcJobTimer);
@@ -2863,12 +2879,16 @@ COLLAPSE_SCRIPT = r"""
             wbPollJobStatus();
           } else {
             startBtn.disabled = false;
-            wbToast("任务启动失败: " + (data.error || JSON.stringify(data)), "error");
+            var st = v.querySelector("#wb-ac-task-status");
+            if (st) { st.textContent = "启动失败"; st.className = "wb-api-badge wb-api-badge-warn"; }
+            wbToast("任务启动失败: " + ((data && data.error) || "服务端未返回任务 ID"), "error");
           }
         })
         .catch(function(e) {
           startBtn.disabled = false;
-          wbToast("请求失败: " + e, "error");
+          var st2 = v.querySelector("#wb-ac-task-status");
+          if (st2) { st2.textContent = "启动失败"; st2.className = "wb-api-badge wb-api-badge-warn"; }
+          wbToast("请求失败: " + ((e && e.message) ? e.message : e), "error");
         });
     });
 
@@ -3025,6 +3045,36 @@ COLLAPSE_SCRIPT = r"""
         }
       })
       .catch(function() {});
+
+    // 刷新后重新挂载：任务状态在服务端内存里，但页面变量刷新即丢。
+    // 这里主动查一次仍在运行的任务，让进度条「接着显示」而不是凭空消失。
+    function wbResumeRunningJob() {
+      fetch("/api/gh-register/jobs")
+        .then(function(r) {
+          var ct = (r.headers.get("content-type") || "");
+          if (ct.indexOf("application/json") === -1) return null;
+          return r.json();
+        })
+        .then(function(data) {
+          if (!data || !data.jobs || !data.jobs.length) return;
+          var running = data.jobs.filter(function(j) { return j.status === "running"; })[0];
+          if (!running) return;
+          window.__wbAcJobId = running.job_id;
+          var taskBox = document.getElementById("wb-ac-task-box");
+          if (taskBox) taskBox.style.display = "flex";
+          var abortBtn2 = document.getElementById("wb-ac-job-abort");
+          if (abortBtn2) abortBtn2.style.display = "inline-block";
+          var startBtn2 = document.getElementById("wb-ac-job-start");
+          if (startBtn2) startBtn2.disabled = true;
+          var st = document.getElementById("wb-ac-task-status");
+          if (st) st.textContent = "已恢复进度显示";
+          if (wbAcJobTimer) clearInterval(wbAcJobTimer);
+          wbAcJobTimer = setInterval(wbPollJobStatus, 2000);
+          wbPollJobStatus();
+        })
+        .catch(function() {});
+    }
+    wbResumeRunningJob();
 
     // 拉取配置
     if (!wbAcDataLoaded) {
@@ -3839,6 +3889,25 @@ async def gh_register_browser_status():
 async def gh_register_browser_install():
     async with _gh_register_client() as client:
         r = await client.post(f"{GH_REGISTER_INTERNAL}/api/gh-register/browser/install")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/gh-register/proxy/test")
+async def gh_register_proxy_test(request: Request):
+    body = await request.body()
+    async with _gh_register_client() as client:
+        r = await client.post(
+            f"{GH_REGISTER_INTERNAL}/api/gh-register/proxy/test",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/gh-register/jobs")
+async def gh_register_jobs_list():
+    async with _gh_register_client() as client:
+        r = await client.get(f"{GH_REGISTER_INTERNAL}/api/gh-register/jobs")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 

@@ -800,6 +800,7 @@ class Job:
         self.log = []
         self.result = None
         self.browser = None
+        self.created_at = time.time()
 
     def step(self, msg):
         self.steps.append(msg)
@@ -1057,6 +1058,27 @@ async def start_job(job: StartJob):
     JOBS[job_id] = Job(job_id, job.security_code, job.google_password)
     asyncio.create_task(_run_job(JOBS[job_id]))
     return {"job_id": job_id, "status": "started"}
+
+
+@app.get("/api/gh-register/jobs")
+async def list_jobs():
+    """列出当前内存中的所有任务。
+
+    存在的理由：任务状态只存在服务端内存里，而前端的 job_id 存在页面变量中 ——
+    刷新页面就丢了，用户会看到进度凭空消失（任务其实还在跑）。
+    有了这个接口，前端加载时可以「重新挂载」到仍在运行的任务上。
+    """
+    items = []
+    for job in JOBS.values():
+        items.append({
+            "job_id": job.id,
+            "status": job.status,
+            "progress": job.progress,
+            "createdAt": getattr(job, "created_at", None),
+        })
+    # 运行中的排前面，方便前端直接取第一个活动任务
+    items.sort(key=lambda x: (x["status"] != "running", x["job_id"]))
+    return {"jobs": items, "running": len([i for i in items if i["status"] == "running"])}
 
 
 @app.get("/api/gh-register/status/{job_id}")

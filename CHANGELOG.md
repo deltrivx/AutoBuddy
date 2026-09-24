@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.5.9] - 2026-09-24
+
+### 修复代理检测报错与任务进度丢失
+- **修复代理检测报错（关键）**：WebUI 代理层缺少 `POST /api/gh-register/proxy/test` 的转发路由，请求掉进兜底通配路由后返回 HTML 页面，前端按 JSON 解析即抛出 `SyntaxError: The string did not match the expected pattern`。现已补全转发路由，并为前端请求增加 `content-type` 校验，异常时给出可读提示。
+- **修复任务进度刷新即丢**：新增 `GET /api/gh-register/jobs` 接口列出内存中的任务；前端在页面加载时主动查询并在发现运行中任务时自动重新挂载进度轮询，刷新页面不再丢失进度显示。
+- **修复启动失败按钮锁死**：任务启动失败或接口异常时，明确恢复「开始注册」按钮并展示失败原因，不再停留在「正在提交注册任务」的静默卡死状态。
+
 ## [v0.5.8] - 2026-09-24
 
 ### 账号接入页面全面优化与 GitHub 注册全自动化
@@ -1031,7 +1038,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.8...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.9...HEAD
+[v0.5.9]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.8...v0.5.9
 [v0.5.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.7...v0.5.8
 [v0.5.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.6...v0.5.7
 [v0.5.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.5...v0.5.6
