@@ -466,7 +466,6 @@ def patch(bin_path):
         ("settings-rate-limit", "settings: desktop rate-limit monitor"),
         ("settings-startup", "settings: desktop startup/tray"),
         ("settings-updates", "settings: desktop auto-update"),
-        ("settings-auto-checkin", "settings: auto-checkin (moved to daily tasks)"),
     ):
         data = _nullify_section(data, section_id, label)
 

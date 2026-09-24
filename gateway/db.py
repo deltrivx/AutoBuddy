@@ -102,9 +102,19 @@ def init_db() -> None:
             done_count INTEGER NOT NULL DEFAULT 0,
             total_count INTEGER NOT NULL DEFAULT 0,
             rest TEXT,
+            actions TEXT,
             created_at REAL NOT NULL
-        )""")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_acc_job ON wb_daily_accounts(job_id)")
+        )""");
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_acc_job ON wb_daily_accounts(job_id)");
+
+        # 表结构平滑迁移：补齐 actions 列（如果旧库缺少）
+        try:
+            cursor.execute("PRAGMA table_info(wb_daily_accounts)")
+            cols = [c[1] for c in cursor.fetchall()]
+            if "actions" not in cols:
+                cursor.execute("ALTER TABLE wb_daily_accounts ADD COLUMN actions TEXT")
+        except Exception as e:
+            print(f"[Database] wb_daily_accounts 表结构迁移失败: {e}")
         
         # 认证用户与环境变量动态同步：
         # 支持环境变量 AUTH_USERNAME / AUTH_USER / AUTH_DEFAULT_USER
@@ -315,13 +325,14 @@ def save_wb_daily_run(job_id: str, mode: str, status: str, started_at: float,
                     cursor.execute("""
                     INSERT INTO wb_daily_accounts
                         (job_id, account, status, level, streak, energy, credits, usage,
-                         done_count, total_count, rest, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         done_count, total_count, rest, actions, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (str(job_id), str(row.get("account") or ""), row.get("status"),
                           row.get("level"), row.get("streak"), row.get("energy"),
                           row.get("credits"), row.get("usage"),
                           int(row.get("done") or 0), int(row.get("total") or 0),
                           json.dumps(row.get("rest"), ensure_ascii=False) if row.get("rest") is not None else None,
+                          json.dumps(row.get("actions"), ensure_ascii=False) if row.get("actions") is not None else None,
                           now))
             conn.commit()
         prune_wb_daily_runs()
@@ -391,7 +402,7 @@ def get_wb_daily_accounts(job_id: str) -> List[Dict[str, Any]]:
             cursor = conn.cursor()
             cursor.execute("""
             SELECT account, status, level, streak, energy, credits, usage,
-                   done_count, total_count, rest
+                   done_count, total_count, rest, actions
             FROM wb_daily_accounts WHERE job_id = ? ORDER BY id
             """, (str(job_id),))
             out = []
@@ -401,6 +412,11 @@ def get_wb_daily_accounts(job_id: str) -> List[Dict[str, Any]]:
                     rest = json.loads(row["rest"]) if row["rest"] else []
                 except Exception:
                     rest = []
+                actions = []
+                try:
+                    actions = json.loads(row["actions"]) if row["actions"] else []
+                except Exception:
+                    actions = []
                 out.append({
                     "account": row["account"],
                     "status": row["status"],
@@ -412,6 +428,7 @@ def get_wb_daily_accounts(job_id: str) -> List[Dict[str, Any]]:
                     "done": row["done_count"],
                     "total": row["total_count"],
                     "rest": rest,
+                    "actions": actions,
                 })
             return out
     except Exception as e:

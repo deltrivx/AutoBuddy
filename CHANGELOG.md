@@ -15,6 +15,23 @@
 
 - 暂无。
 
+## [v0.7.3] - 2026-09-25
+
+### 恢复自动签到历史记录与日志面板
+- 修复位置迁移后自动签到历史记录丢失问题：在每日任务页的自动签到板块中恢复「签到日志（最近 30 天）」展示区与「全部立即签到」控制；
+- 在 `patch_binary.py` 中取消对官方设置页 `settings-auto-checkin` 的剔除，保留设置页原生签到配置与日志面板，两端历史数据（`/api/checkin/logs`）完全互通。
+
+### 修复新账号卡片「设为首选」无效
+- **根因定位**：新账号添加后初始不在账号池白名单（`enabledAccountIds`）中。用户在前端卡片点击「设为首选」时，提交的白名单数组未包含该新账号，导致后端安全校验因 `manualAccountId not in pool` 触发熔断并自动退回 `auto` 轮询模式，使首选设置静默失效。
+- **修复**：前端卡片设为首选交互与后端网关联动对齐，在新账号设为首选时自动将其纳入启用白名单并持久化，彻底对齐老账号行为。
+
+### 每日任务明细持久化记录与动作追踪
+- 增强任务明细解析引擎：精确捕获每个账号执行过程中的具体动作（每日签到成功、任务完成项、成长值/积分领取、抽奖兑换等）；
+- SQLite 数据库表 `wb_daily_accounts` 结构无损升级新增 `actions` 字段，支持按每轮执行保留最新 200 轮记录并按账号直观展开回溯。
+
+### 统一每日任务与签到账号显示
+- 解决每日任务参与账号只显示裸手机号导致的割裂感，将其与主账号池双向关联，完整回传昵称与账号标识（如 `尘星途 ([电话])`），不再产生两组账号的混淆。
+
 ## [v0.7.2] - 2026-09-25
 
 ### 彻底根除幽灵账号与模型策略残留
@@ -1175,7 +1192,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.3...HEAD
+[v0.7.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.2...v0.7.3
 [v0.7.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.1...v0.7.2
 [v0.7.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.6...v0.7.0

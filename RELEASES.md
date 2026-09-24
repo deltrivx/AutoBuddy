@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.7.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.2)
+**当前稳定版：** [v0.7.3](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.3)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.7.3](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.3) | 2026-09-25 | 恢复自动签到历史记录与日志面板 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.3.md) |
 | [v0.7.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.2) | 2026-09-25 | 彻底根除幽灵账号与模型策略残留 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.2.md) |
 | [v0.7.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.1) | 2026-09-24 | 修复 v0.7.0 引入的注入 JS 语法错（每日任务页布局塔陷） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.1.md) |
 | [v0.7.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.0) | 2026-09-24 | 统一账号来源：修好「按钮在、一点就报 account not found」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.0.md) |
@@ -83,7 +84,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.7.2    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.7.3    # 锁定版本
 ```
 
 ## 部署产物

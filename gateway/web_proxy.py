@@ -1540,16 +1540,15 @@ COLLAPSE_SCRIPT = r"""
         pin.className = "wb-pool-btn" + (pinned ? " wb-pool-btn-primary" : "");
         pin.textContent = pinned ? "首选账号 · 点击改回自动分配" : "设为首选";
         pin.onclick = function () {
-          // 必须**连 enabledAccountIds 一起提交**。
-          //
-          // 早先这里只发 {mode, manualAccountId}，后端又把「缺字段」读成空数组，
-          // 于是一次「设为首选」就把用户勾选的白名单整份清掉 —— 而空数组在
-          // 业务上等于「全部启用」，界面上看不出异常，只在排查时表现为
-          //「首选账号设置没生效」。后端现已改成保留式更新（不传的字段不动），
-          // 这里再显式带上，两层都不再依赖「缺省即重置」这种危险语义。
+          // 设为首选：必须连 enabledAccountIds 一起提交，且确保目标账号在白名单内。
+          // 若为新账号且尚未加入白名单，设为首选时自动将其追加进启用列表，
+          // 否则后端安全校验因 manualAccountId not in pool 会退回 auto，导致设置失效。
           var ids = (data.allEnabledByDefault
             ? (data.accounts || []).map(function (a) { return a.id; })
             : (data.enabledAccountIds || [])).slice();
+          if (!pinned && acc.id && ids.indexOf(acc.id) === -1) {
+            ids.push(acc.id);
+          }
           savePool(
             pinned
               ? { mode: "auto", manualAccountId: null, enabledAccountIds: ids }
@@ -3658,6 +3657,16 @@ COLLAPSE_SCRIPT = r"""
               '<button id="wb-dl-run" class="wb-api-btn wb-api-btn-primary">立即执行</button>' +
             '</div>' +
           '</div>' +
+          '<!-- 签到日志恢复：显示原设置页的签到流水与历史记录 -->' +
+          '<div class="wb-api-row wb-api-row-stack" style="border-bottom:0;padding-top:14px">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:6px">' +
+              '<span class="wb-api-label">签到日志（最近 30 天）</span>' +
+              '<button id="wb-dl-checkin-all-btn" class="wb-api-btn" style="font-size:11px">全部立即签到</button>' +
+            '</div>' +
+            '<div id="wb-dl-checkin-logs-box" style="width:100%;max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
+              '<div class="wb-api-desc">正在加载签到日志…</div>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
 
         '<!-- 任务清单：每日任务提供了哪些任务 -->' +
@@ -3706,6 +3715,34 @@ COLLAPSE_SCRIPT = r"""
       wbLoadWbDailyRuns();
       wbToast("执行记录已刷新", "ok");
     });
+    var checkinAllBtn = v.querySelector("#wb-dl-checkin-all-btn");
+    if (checkinAllBtn) {
+      checkinAllBtn.addEventListener("click", function() {
+        if (checkinAllBtn.disabled) return;
+        checkinAllBtn.disabled = true;
+        checkinAllBtn.textContent = "签到中…";
+        fetch("/api/checkin/all", { method: "POST", headers: { "Content-Type": "application/json" } })
+          .then(function(r) { return r.json().catch(function() { return {}; }); })
+          .then(function(w) {
+            if (w && w.status === "skipped" && w.reason === "already_running") {
+              wbToast("签到任务正在进行，请稍后再试", "warn");
+              return;
+            }
+            var accs = (w && w.accounts) || [];
+            var s = accs.filter(function(e) { return e.result === "success"; }).length;
+            var b = accs.filter(function(e) { return e.result === "already"; }).length;
+            var o = accs.filter(function(e) { return e.result === "error"; }).length;
+            var tone = o > 0 ? "err" : "ok";
+            wbToast("签到完成：成功 " + s + "，已签 " + b + (o > 0 ? "，失败 " + o : ""), tone);
+            wbLoadWbDailyCheckinLogs();
+          })
+          .catch(function(e) { wbToast("签到请求失败: " + e, "err"); })
+          .then(function() {
+            checkinAllBtn.disabled = false;
+            checkinAllBtn.textContent = "全部立即签到";
+          });
+      });
+    }
     return v;
   }
 
@@ -3741,6 +3778,7 @@ COLLAPSE_SCRIPT = r"""
       else wbRenderDailyProgress(null);
     }).catch(function() {});
     wbLoadWbDailyCatalog();
+    wbLoadWbDailyCheckinLogs();
     fetch("/api/wb-daily/accounts").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
       var box = document.getElementById("wb-dl-accounts");
       if (!box) return;
@@ -3751,13 +3789,49 @@ COLLAPSE_SCRIPT = r"""
       }
       var html = "";
       accs.forEach(function(a) {
+        var displayName = a.name && a.name !== a.user ? (a.name + ' (' + a.user + ')') : (a.user || "?");
         html += '<div class="wb-api-row" style="padding:6px 0">' +
-          '<div class="wb-api-main"><span class="wb-api-mono">' + String(a.user || "?") + '</span></div>' +
+          '<div class="wb-api-main"><span class="wb-api-mono">' + String(displayName) + '</span></div>' +
           '<span class="wb-api-badge">' + (a.has_rt ? "凭据就绪" : "缺刷新令牌") + '</span></div>';
       });
       box.innerHTML = html;
     }).catch(function() {});
     wbLoadWbDailyJobs();
+  }
+
+  /* 签到日志恢复：从 /api/checkin/logs 获取最近 30 天历史记录 */
+  function wbLoadWbDailyCheckinLogs() {
+    var box = document.getElementById("wb-dl-checkin-logs-box");
+    if (!box) return;
+    fetch("/api/checkin/logs").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var logs = (d && d.logs) || [];
+      if (!logs.length) {
+        box.innerHTML = '<div class="wb-api-desc" style="padding:8px 0;text-align:center">暂无签到记录</div>';
+        return;
+      }
+      var html = "";
+      logs.slice().reverse().forEach(function(l) {
+        var tone = l.result === "success" ? "#047857" : (l.result === "already" ? "#b45309" : "#b91c1c");
+        var text = l.result === "success" ? "签到成功" : (l.result === "already" ? "已签到" : "失败");
+        var timeStr = "";
+        try {
+          timeStr = new Date(l.ts).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        } catch(e) { timeStr = String(l.ts); }
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border,rgba(120,120,120,.1))">' +
+          '<div style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            '<span class="wb-api-label" style="margin-right:6px">' + (l.email || l.accountId || "未知账号") + '</span>' +
+            (l.error ? '<span style="color:#b91c1c">（' + l.error + '）</span>' : '') +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;shrink:0">' +
+            '<span style="font-weight:600;color:' + tone + '">' + text + '</span>' +
+            '<span class="wb-api-desc" style="font-size:11px">' + timeStr + '</span>' +
+          '</div>' +
+        '</div>';
+      });
+      box.innerHTML = html;
+    }).catch(function() {
+      box.innerHTML = '<div class="wb-api-desc">签到日志加载失败</div>';
+    });
   }
 
   function wbLoadWbDailyJobs() {
@@ -3858,6 +3932,9 @@ COLLAPSE_SCRIPT = r"""
             '<td style="padding:5px 6px">' + (a.streak || "—") + '</td>' +
             '<td style="padding:5px 6px">' + (a.energy || "—") + '</td>' +
             '<td style="padding:5px 6px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + ((a.credits || "").replace(/"/g, "&quot;")) + '">' + (a.credits || "—") + '</td></tr>';
+          if (a.actions && a.actions.length) {
+            html += '<tr><td colspan="6" style="padding:2px 6px 4px 6px;color:var(--foreground,#0f172a);font-size:11px;background:rgba(59,130,246,0.04)">已执行动作（' + a.actions.length + ' 项）：' + a.actions.join(" · ") + '</td></tr>';
+          }
           if (a.rest && a.rest.length) {
             html += '<tr><td colspan="6" style="padding:0 6px 6px 6px;color:var(--muted-foreground,#64748b);font-size:11px">剩余 ' + a.rest.length + ' 项：' + a.rest.join("、") + '</td></tr>';
           }

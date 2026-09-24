@@ -202,7 +202,7 @@ def _jwt_exp(tok: str):
 
 
 def build_account_store(cfg: dict | None = None) -> dict:
-    """生成上游脚本的 token 池：{user: {"refresh_token": rt, "access_token": at}}。
+    """生成上游脚本的 token 池：{user: {"refresh_token": rt, "access_token": at, "name": nickname}}。
 
     账号**自动关联账号池**（国内版 cn 账号），只读使用其凭据，不写回。
     """
@@ -222,7 +222,8 @@ def build_account_store(cfg: dict | None = None) -> dict:
                     or (a.get("nickname") or "").strip() or "")
         if not user:
             user = "acct-%d" % (len(store) + 1)
-        store[user] = {"refresh_token": rt, "access_token": at}
+        name = a.get("nickname") or a.get("email") or user
+        store[user] = {"refresh_token": rt, "access_token": at, "name": name, "id": a.get("id")}
     return store
 
 
@@ -233,6 +234,8 @@ def accounts_preview(cfg: dict | None = None) -> dict:
     for user, ent in store.items():
         accounts.append({
             "user": user,
+            "name": ent.get("name") or user,
+            "id": ent.get("id"),
             "has_rt": bool(ent.get("refresh_token")),
             "has_at": bool(ent.get("access_token")),
             "exp": _jwt_exp(ent.get("access_token") or "") or None,
@@ -293,8 +296,10 @@ class DailyJob:
         # 面板要回答「每个账号执行了哪些」，只靠日志反解太脆，这里就地归集。
         if self._ACCOUNT_START in text:
             self.accounts_done += 0
-            self._cur_account = {"account": text.split(self._ACCOUNT_START, 1)[-1].strip(),
-                                 "done": 0, "total": 0}
+            self._cur_account = {
+                "account": text.split(self._ACCOUNT_START, 1)[-1].strip(),
+                "done": 0, "total": 0, "actions": []
+            }
             self.accounts_summary.append(self._cur_account)
         elif "🏁 " in text and self._cur_account is not None:
             # `🏁 138xxx: 完成1/19 等级1 剩余: a, b, c`
@@ -311,6 +316,14 @@ class DailyJob:
             self.accounts_done += 1
             self._cur_account = None
         elif self._cur_account is not None:
+            # 记录具体的执行动作（签到、领奖、抽奖、完成等）
+            if "actions" not in self._cur_account:
+                self._cur_account["actions"] = []
+            if any(k in text for k in ("✅签到", "🎁", "兑换", "抽奖", "完成了")):
+                clean_act = text.strip()
+                if clean_act and clean_act not in self._cur_account["actions"]:
+                    self._cur_account["actions"].append(clean_act)
+
             # 账号级关键数值就地留存，供明细展示
             for key, label in (("credits", "💰 积分:"), ("usage", "📊 用量:"),
                                ("streak", "连签"), ("energy", "能量")):
