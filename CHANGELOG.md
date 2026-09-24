@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.6.2] - 2026-09-24
+
+### 修复 v0.6.1 引入的 500（缺 time 导入）
+- **根因**：`gateway/web_proxy.py` 新增的 `_reconcile_official_usage()` 用了 `time.strftime()` 取当天日期，但该模块此前从未需要过 `time`，导入清单里没有它 —— `/api/credits/stats` 直接抛 `NameError: name 'time' is not defined` 返回 500，积分统计页整个打不开。
+- **修复**：补齐 `import time`。
+- **教训**：响应层模块（web_proxy）从未用过时间函数，新加带日期比较的逻辑时极易漏导入；CI 的语法检查（`py_compile`）拦不住这类**运行期** NameError，所以改动后必须实测接口，不能只看编译通过。
+
 ## [v0.6.1] - 2026-09-24
 
 ### 修复积分今日消耗恒为 0、进度闪烁、代理检测布局与轮询策略
@@ -1082,7 +1089,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.1...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.2...HEAD
+[v0.6.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.1...v0.6.2
 [v0.6.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.12...v0.6.0
 [v0.5.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.11...v0.5.12
