@@ -15,6 +15,13 @@
 
 - 暂无。
 
+## [v0.5.10] - 2026-09-24
+
+### 修复临时邮箱创建判定导致注册流程无法启动
+- **问题**：注册任务在第一步「生成临时域名邮箱」即失败，报「创建临时邮箱失败」。
+- **根因**：`create_email` 只认可 `success` / `ok` 字段判断成功，而本项目实际使用的 grok-mail-worker 返回的是 `{"address": ..., "jwt": ..., "token": ..., "domain": ...}`，既无 `success` 也无 `ok`，被误判为失败。
+- **修复**：兼容多种返回结构（`address` / `data.address` / `email` / `result.address` / `success` / `ok`），并优先采用服务端返回的 `address` 作为权威邮箱地址。
+
 ## [v0.5.9] - 2026-09-24
 
 ### 修复代理检测报错与任务进度丢失
@@ -1038,7 +1045,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.9...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.10...HEAD
+[v0.5.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.9...v0.5.10
 [v0.5.9]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.8...v0.5.9
 [v0.5.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.7...v0.5.8
 [v0.5.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.5.6...v0.5.7

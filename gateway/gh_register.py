@@ -394,6 +394,25 @@ async def create_email(http_client, cfg: dict):
     url = f"{api_base}{create_path}"
     resp = await http_client.post(url, json={"name": email}, headers=headers, timeout=30)
     data = resp.json()
+
+    # 兼容多种邮箱服务返回结构：
+    #   - {success:true} / {ok:true}                      —— 通用约定
+    #   - {address, jwt, token, domain}                   —— grok-mail-worker (本项目在用的)
+    #   - {data:{address}} / {email} / {result:{address}} —— 其它常见变体
+    # 任一命中即视为成功，并把服务端返回的 address 作为权威值（可能与请求名不同）。
+    addr = None
+    if isinstance(data, dict):
+        if data.get("address"):
+            addr = data["address"]
+        elif isinstance(data.get("data"), dict) and data["data"].get("address"):
+            addr = data["data"]["address"]
+        elif data.get("email"):
+            addr = data["email"]
+        elif isinstance(data.get("result"), dict) and data["result"].get("address"):
+            addr = data["result"]["address"]
+
+    if addr:
+        return addr
     if data.get("success") or data.get("ok"):
         return email
     raise RuntimeError(f"创建临时邮箱失败: {data}")
