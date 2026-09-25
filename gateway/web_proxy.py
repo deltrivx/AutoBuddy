@@ -939,13 +939,6 @@ COLLAPSE_SCRIPT = r"""
       }
     });
 
-    // 「无 Buddy」表示该账号没有旅行伙伴、无法参与自动旅行，属负面且无参考价值的状态
-    document.querySelectorAll("span, div").forEach(el => {
-      if (el.children.length === 0 && (el.textContent || "").trim() === "无 Buddy") {
-        el.classList.add("wb-mac-btn-hide");
-      }
-    });
-
     // 仅精准清理包含「如何授权」或「完全磁盘访问」的引导小卡片，绝不向上寻找普通大容器
     document.querySelectorAll("div.border-l-2, div.rounded-md.border").forEach(box => {
       const text = box.innerText || "";
