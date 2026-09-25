@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# ------------------------------------------------------------------------------
+# 净化容器 DNS 配置（防御宿主机 dhcpcd 继承的无效 IPv6 Link-Local 作用域）：
+# 宿主机（如 Unraid/路由器 RA）生成 /etc/resolv.conf 时会带 nameserver fe80::...%br0，
+# Docker 默认将其完整拷入容器。但容器网络命名空间内只有 eth0，没有 br0 网卡，
+# 导致 glibc 与 Python httpx/socket 在解析域名时因无法识别 %br0 而触发
+# [Errno -3] Temporary failure in name resolution。
+# 启动时自动剥离含 % 的无效条目，确保 DNS 查询秒级通畅。
+# ------------------------------------------------------------------------------
+if grep -q '%' /etc/resolv.conf 2>/dev/null; then
+    grep -v '%' /etc/resolv.conf > /tmp/resolv.conf.clean 2>/dev/null &&         cat /tmp/resolv.conf.clean > /etc/resolv.conf 2>/dev/null &&         rm -f /tmp/resolv.conf.clean 2>/dev/null || true
+fi
+
 echo "=== 启动 AutoBuddy & OpenAI API Gateway ==="
 
 # 只确保数据目录存在。**不要**再创建 /data/.autobuddy/rotate —— 那是 CodeBuddy CLI
