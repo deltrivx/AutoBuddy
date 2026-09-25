@@ -2,15 +2,56 @@
 set -e
 
 # ------------------------------------------------------------------------------
-# 净化容器 DNS 配置（防御宿主机 dhcpcd 继承的无效 IPv6 Link-Local 作用域）：
-# 宿主机（如 Unraid/路由器 RA）生成 /etc/resolv.conf 时会带 nameserver fe80::...%br0，
-# Docker 默认将其完整拷入容器。但容器网络命名空间内只有 eth0，没有 br0 网卡，
-# 导致 glibc 与 Python httpx/socket 在解析域名时因无法识别 %br0 而触发
-# [Errno -3] Temporary failure in name resolution。
-# 启动时自动剥离含 % 的无效条目，确保 DNS 查询秒级通畅。
+# 容器 DNS 自愈（防御宿主机继承的无效 DNS）：
+# 1) 剥离带网卡作用域的条目（如 fe80::...%br0 —— 容器内无 br0 网卡，glibc 直接报错）；
+# 2) 逐个实测继承的 nameserver 是否真正应答 DNS 查询（宿主机 DHCP 可能指向 macvlan
+#    容器 IP，受内核 macvlan 隔离策略限制，宿主机与 bridge 容器均无法访问，只会超时）；
+# 3) 继承 DNS 全部不可用时，切换到公共 DNS（223.5.5.5 / 119.29.29.29 / 8.8.8.8）兜底。
+# 若容器已由模板 --dns 注入权威 DNS（resolv.conf 带 Overrides: [nameservers] 标记），
+# 说明 Docker 已完成覆盖，本段自动跳过，不做任何改写。
 # ------------------------------------------------------------------------------
-if grep -q '%' /etc/resolv.conf 2>/dev/null; then
-    grep -v '%' /etc/resolv.conf > /tmp/resolv.conf.clean 2>/dev/null &&         cat /tmp/resolv.conf.clean > /etc/resolv.conf 2>/dev/null &&         rm -f /tmp/resolv.conf.clean 2>/dev/null || true
+if ! grep -q '# Overrides: \[nameservers\]' /etc/resolv.conf 2>/dev/null; then
+python3 - <<'PYDNS' 2>/dev/null || true
+import socket
+
+def probe(ip):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0.8)
+    try:
+        s.sendto(b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x05baidu\x03com\x00\x00\x01\x00\x01", (ip, 53))
+        return len(s.recvfrom(512)[0]) > 0
+    except Exception:
+        return False
+    finally:
+        s.close()
+
+path = "/etc/resolv.conf"
+keep, original = [], []
+try:
+    with open(path) as f:
+        for line in f:
+            if line.startswith("nameserver"):
+                parts = line.split()
+                ip = parts[1] if len(parts) > 1 else ""
+                original.append(ip)
+                if ip and "%" not in ip and probe(ip):
+                    keep.append(ip)
+except Exception:
+    pass
+
+if keep and len(keep) < len(original):
+    with open(path, "w") as f:
+        f.write("".join("nameserver %s\n" % ip for ip in keep))
+    print("[dns] pruned unreachable/scope-qualified nameservers, kept:", ", ".join(keep))
+elif not keep:
+    for fb in ("223.5.5.5", "119.29.29.29", "8.8.8.8"):
+        if probe(fb):
+            keep.append(fb)
+    if keep:
+        with open(path, "w") as f:
+            f.write("".join("nameserver %s\n" % ip for ip in keep))
+        print("[dns] inherited DNS unavailable, switched to:", ", ".join(keep))
+PYDNS
 fi
 
 echo "=== 启动 AutoBuddy & OpenAI API Gateway ==="

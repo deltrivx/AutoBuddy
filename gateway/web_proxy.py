@@ -10,6 +10,11 @@ import httpx
 import uvicorn
 
 try:
+    from gateway import account_policy
+except ImportError:
+    import account_policy
+
+try:
     from gateway.token_tracker import get_aggregated_token_stats
 except ImportError:
     from token_tracker import get_aggregated_token_stats

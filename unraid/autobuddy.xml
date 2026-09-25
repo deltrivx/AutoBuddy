@@ -16,7 +16,7 @@
   <WebUI>http://[IP]:[PORT:18090]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/unraid/autobuddy.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/icon.png</Icon>
-  <ExtraParams>--restart=unless-stopped --log-opt max-size=50m --log-opt max-file=1</ExtraParams>
+  <ExtraParams>--shm-size=1g --restart=unless-stopped --log-opt max-size=50m --log-opt max-file=1 --health-cmd='curl -fsS http://127.0.0.1:18091/health || exit 1' --health-interval=60s --health-timeout=10s --health-retries=3 --health-start-period=120s</ExtraParams>
   <PostArgs />
   <CPUset />
   <DonateText />
