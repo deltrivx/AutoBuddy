@@ -690,7 +690,10 @@ COLLAPSE_SCRIPT = r"""
     }
   }
 
-  /* ------------------- 侧边栏左上角品牌文字实时校准 ------------------- */
+  /* 侧边栏左上角品牌文字实时校准。
+     官方产物里旧名有「WorkBuddy Switch」与不含 Switch 的裸「WorkBuddy」两种形态，
+     后者与业务文案里的 WorkBuddy（账号池指代）同形，所以只处理 aside 内的品牌节点：
+     div.truncate 是侧边栏标题容器，业务文案不会出现在这里。 */
   function sanitizeSidebarBrand() {
     var aside = document.querySelector("aside");
     if (!aside) return;
@@ -3652,14 +3655,15 @@ COLLAPSE_SCRIPT = r"""
               '<button id="wb-dl-run" class="wb-api-btn wb-api-btn-primary">立即执行</button>' +
             '</div>' +
           '</div>' +
-          '<!-- 签到日志恢复：显示原设置页的签到流水与历史记录 -->' +
+          '<!-- 账号签到与凭据：一账号一行，同时显示今日签到状态与凭据状态（原「参与账号」卡片已并入此处，不再重复渲染） -->' +
           '<div class="wb-api-row wb-api-row-stack" style="border-bottom:0;padding-top:14px">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:6px">' +
-              '<span class="wb-api-label">签到日志（最近 30 天）</span>' +
+              '<span class="wb-api-label">账号签到与凭据（最近 30 天）</span>' +
               '<button id="wb-dl-checkin-all-btn" class="wb-api-btn" style="font-size:11px">全部立即签到</button>' +
             '</div>' +
-            '<div id="wb-dl-checkin-logs-box" style="width:100%;max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
-              '<div class="wb-api-desc">正在加载签到日志…</div>' +
+            '<div class="wb-api-desc" style="margin-bottom:6px">自动关联账号池里的国内版（cn）账号，新增账号无需在此登记；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。</div>' +
+            '<div id="wb-dl-checkin-logs-box" style="width:100%;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
+              '<div class="wb-api-desc">正在加载账号签到与凭据…</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -3675,14 +3679,16 @@ COLLAPSE_SCRIPT = r"""
           '<div id="wb-dl-catalog" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
         '</div>' +
 
+        '<!-- 任务记录：任务维度的台账（SQLite 持久化，逐任务项聚合） -->' +
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div class="wb-api-label">参与账号</div>' +
-              '<div class="wb-api-desc">自动关联账号池里的国内版（cn）账号，新增账号无需在此登记；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。</div>' +
+              '<div class="wb-api-label">任务记录</div>' +
+              '<div class="wb-api-desc" id="wb-dl-tasks-sum">每个任务项最近一次执行结果与成功次数（内置 SQLite 持久化）</div>' +
             '</div>' +
+            '<button id="wb-dl-refresh-tasks" class="wb-api-btn">刷新</button>' +
           '</div>' +
-          '<div id="wb-dl-accounts" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
+          '<div id="wb-dl-tasks" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
         '</div>' +
 
         '<!-- 执行记录（SQLite 持久化，保留最近 200 轮） -->' +
@@ -3710,6 +3716,13 @@ COLLAPSE_SCRIPT = r"""
       wbLoadWbDailyRuns();
       wbToast("执行记录已刷新", "ok");
     });
+    var refreshTasksBtn = v.querySelector("#wb-dl-refresh-tasks");
+    if (refreshTasksBtn) {
+      refreshTasksBtn.addEventListener("click", function() {
+        wbLoadWbDailyTasks();
+        wbToast("任务记录已刷新", "ok");
+      });
+    }
     var checkinAllBtn = v.querySelector("#wb-dl-checkin-all-btn");
     if (checkinAllBtn) {
       checkinAllBtn.addEventListener("click", function() {
@@ -3774,58 +3787,154 @@ COLLAPSE_SCRIPT = r"""
     }).catch(function() {});
     wbLoadWbDailyCatalog();
     wbLoadWbDailyCheckinLogs();
-    fetch("/api/wb-daily/accounts").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
-      var box = document.getElementById("wb-dl-accounts");
-      if (!box) return;
-      var accs = (d && d.accounts) || [];
-      if (!accs.length) {
-        box.innerHTML = '<div class="wb-api-desc">暂无参与账号（账号池无国内版账号，也未配置补充账号）</div>';
-        return;
-      }
-      var html = "";
-      accs.forEach(function(a) {
-        var displayName = a.name && a.name !== a.user ? (a.name + ' (' + a.user + ')') : (a.user || "?");
-        html += '<div class="wb-api-row" style="padding:6px 0">' +
-          '<div class="wb-api-main"><span class="wb-api-mono">' + String(displayName) + '</span></div>' +
-          '<span class="wb-api-badge">' + (a.has_rt ? "凭据就绪" : "缺刷新令牌") + '</span></div>';
-      });
-      box.innerHTML = html;
-    }).catch(function() {});
+    wbLoadWbDailyTasks();
     wbLoadWbDailyJobs();
   }
 
-  /* 签到日志恢复：从 /api/checkin/logs 获取最近 30 天历史记录 */
-  function wbLoadWbDailyCheckinLogs() {
-    var box = document.getElementById("wb-dl-checkin-logs-box");
+  /* 任务记录：任务维度的台账。数据来自 SQLite（/api/wb-daily/task-summary），
+     一任务一行，显示最近结果、最近账号与成功次数。与「执行记录」互补：
+     那边是按轮次看，这边是按任务项看。 */
+  function wbLoadWbDailyTasks() {
+    var box = document.getElementById("wb-dl-tasks");
     if (!box) return;
-    fetch("/api/checkin/logs").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
-      var logs = (d && d.logs) || [];
-      if (!logs.length) {
-        box.innerHTML = '<div class="wb-api-desc" style="padding:8px 0;text-align:center">暂无签到记录</div>';
+    fetch("/api/wb-daily/task-summary").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+      var items = (d && d.items) || [];
+      var sum = document.getElementById("wb-dl-tasks-sum");
+      if (!items.length) {
+        if (sum) sum.textContent = "还没有任务记录（执行一轮每日任务后自动累积，内置 SQLite 持久化）";
+        box.innerHTML = '<div class="wb-api-desc" style="padding:8px 0;text-align:center">暂无任务记录</div>';
         return;
       }
+      if (sum) sum.textContent = "共 " + items.length + " 个任务项有记录（内置 SQLite 持久化，随执行轮次累积）";
       var html = "";
-      logs.slice().reverse().forEach(function(l) {
-        var tone = l.result === "success" ? "#047857" : (l.result === "already" ? "#b45309" : "#b91c1c");
-        var text = l.result === "success" ? "签到成功" : (l.result === "already" ? "已签到" : "失败");
-        var timeStr = "";
-        try {
-          timeStr = new Date(l.ts).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        } catch(e) { timeStr = String(l.ts); }
-        html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border,rgba(120,120,120,.1))">' +
-          '<div style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-            '<span class="wb-api-label" style="margin-right:6px">' + (l.email || l.accountId || "未知账号") + '</span>' +
-            (l.error ? '<span style="color:#b91c1c">（' + l.error + '）</span>' : '') +
+      items.forEach(function(t) {
+        var tone = t.last_result === "success" ? "#047857"
+                 : t.last_result === "already" ? "#b45309"
+                 : t.last_result === "failed" ? "#b91c1c" : "#94a3b8";
+        var label = t.last_result === "success" ? "成功"
+                  : t.last_result === "already" ? "已做过"
+                  : t.last_result === "failed" ? "失败" : "记录";
+        var extra = [];
+        if (t.streak_days != null) extra.push("连签 " + t.streak_days + " 天");
+        html += '<div class="wb-api-row" style="padding:6px 0">' +
+          '<div class="wb-api-main" style="min-width:0">' +
+            '<span class="wb-api-label" style="margin:0">' + (t.task_name || t.task_key) + '</span>' +
+            '<span class="wb-api-desc" style="font-size:11px;margin-left:8px">' +
+              (t.last_at ? wbFmtTs(t.last_at) : "—") +
+              (t.last_account ? " · " + t.last_account : "") +
+              (extra.length ? " · " + extra.join(" · ") : "") +
+            '</span>' +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;shrink:0">' +
-            '<span style="font-weight:600;color:' + tone + '">' + text + '</span>' +
-            '<span class="wb-api-desc" style="font-size:11px">' + timeStr + '</span>' +
+          '<div style="display:flex;align-items:center;gap:8px;flex:0 0 auto">' +
+            '<span class="wb-api-desc" style="font-size:11px">成功 ' + (t.success || 0) + '/' + (t.total || 0) + '</span>' +
+            '<span class="wb-api-badge" style="color:' + tone + ';background:transparent;border:1px solid ' + tone + '33">' + label + '</span>' +
           '</div>' +
         '</div>';
       });
       box.innerHTML = html;
     }).catch(function() {
-      box.innerHTML = '<div class="wb-api-desc">签到日志加载失败</div>';
+      box.innerHTML = '<div class="wb-api-desc">任务记录加载失败</div>';
+    });
+  }
+
+  /* 账号签到与凭据合并展示：一账号一行 ——
+     左侧账号名（唯一来源：/api/wb-daily/accounts，与账号池同一出处），
+     右侧两个状态：今日签到（/api/checkin/status，实时）+ 凭据（has_rt）。
+     原「参与账号」卡片与「签到日志」两张卡重复列同一批账号，此处合并为一张。 */
+  function wbLoadWbDailyCheckinLogs() {
+    var box = document.getElementById("wb-dl-checkin-logs-box");
+    if (!box) return;
+
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return "";
+      try {
+        return new Date(ts).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+      } catch (e) { return String(ts); }
+    }
+
+    Promise.all([
+      fetch("/api/wb-daily/accounts").then(function(r) { return r.ok ? r.json() : {}; }).catch(function() { return {}; }),
+      fetch("/api/checkin/status").then(function(r) { return r.ok ? r.json() : {}; }).catch(function() { return {}; }),
+      fetch("/api/checkin/logs").then(function(r) { return r.ok ? r.json() : {}; }).catch(function() { return {}; })
+    ]).then(function(res) {
+      var accounts = (res[0] && res[0].accounts) || [];
+      var statusList = (res[1] && res[1].accounts) || [];
+      var logs = (res[2] && res[2].logs) || [];
+
+      if (!accounts.length) {
+        box.innerHTML = '<div class="wb-api-desc" style="padding:8px 0;text-align:center">暂无参与账号（账号池无国内版账号）</div>';
+        return;
+      }
+
+      // 账号标识归一：账号池用 user/name，签到接口用 email/accountId。
+      // 建一个多键索引，任一边的标识都能命中同一条记录。
+      var statusByKey = {};
+      statusList.forEach(function(s) {
+        if (s.accountId) statusByKey[String(s.accountId)] = s;
+        if (s.email) statusByKey[String(s.email)] = s;
+      });
+
+      // 每个账号取最近一条签到流水（logs 按时间升序返回）
+      var lastLogByKey = {};
+      logs.forEach(function(l) {
+        if (l.accountId) lastLogByKey[String(l.accountId)] = l;
+        if (l.email) lastLogByKey[String(l.email)] = l;
+      });
+
+      var html = "";
+      accounts.forEach(function(a) {
+        var displayName = a.name && a.name !== a.user ? (a.name + " (" + a.user + ")") : (a.user || a.name || "?");
+        var st = statusByKey[String(a.id)] || statusByKey[String(a.user)] || statusByKey[String(a.name)] || null;
+        var lg = lastLogByKey[String(a.id)] || lastLogByKey[String(a.user)] || lastLogByKey[String(a.name)] || null;
+
+        // 今日签到状态
+        var checkinText, checkinTone, checkinTitle = "";
+        if (st && st.ok) {
+          checkinText = st.todayCheckedIn ? "今日已签到" : "今日未签到";
+          checkinTone = st.todayCheckedIn ? "#047857" : "#b45309";
+          var exp = {};
+          try { exp = (st.raw && st.raw.raw) || st.raw || {}; } catch (e) { exp = {}; }
+          if (exp.streak_days != null) checkinTitle = "连签 " + exp.streak_days + " 天";
+        } else if (st && st.statusUnsupported) {
+          checkinText = "无签到接口";
+          checkinTone = "#94a3b8";
+          checkinTitle = st.error || "";
+        } else if (lg) {
+          var lt = lg.result === "success" ? "签到成功" : (lg.result === "already" ? "已签到" : "签到失败");
+          checkinText = lt;
+          checkinTone = lg.result === "success" ? "#047857" : (lg.result === "already" ? "#b45309" : "#b91c1c");
+          if (lg.ts) checkinTitle = fmtTime(lg.ts);
+        } else {
+          checkinText = "暂无记录";
+          checkinTone = "#94a3b8";
+        }
+
+        // 凭据状态
+        var credText = a.has_rt ? "凭据就绪" : "缺刷新令牌";
+        var credTone = a.has_rt ? "#047857" : "#b91c1c";
+
+        var lastTime = lg && lg.ts ? fmtTime(lg.ts) : "";
+
+        html += '<div class="wb-api-row" style="padding:6px 0">' +
+          '<div class="wb-api-main" style="min-width:0">' +
+            '<span class="wb-api-mono" title="' + esc(displayName) + '">' + esc(displayName) + '</span>' +
+            (lastTime ? '<span class="wb-api-desc" style="font-size:11px;margin-left:8px">最近 ' + esc(lastTime) + '</span>' : '') +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">' +
+            '<span class="wb-api-badge" style="color:' + checkinTone + ';background:transparent;border:1px solid ' + checkinTone + '33" title="' + esc(checkinTitle) + '">' + esc(checkinText) + '</span>' +
+            '<span class="wb-api-badge" style="color:' + credTone + ';background:transparent;border:1px solid ' + credTone + '33">' + esc(credText) + '</span>' +
+          '</div>' +
+        '</div>';
+      });
+      box.innerHTML = html;
+    }).catch(function() {
+      box.innerHTML = '<div class="wb-api-desc">账号签到与凭据加载失败</div>';
     });
   }
 
@@ -5158,6 +5267,8 @@ _QUIET_SUBSTRINGS = (
     "/api/wb-daily/accounts",
     "/api/wb-daily/runs",
     "/api/wb-daily/catalog",
+    "/api/wb-daily/tasks",
+    "/api/wb-daily/task-summary",
     "/api/auth/status",
     "/api/account-models",
     "/api/account-pool",
@@ -5279,6 +5390,25 @@ async def wb_daily_runs():
 async def wb_daily_run_accounts(job_id: str):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/run-accounts/{job_id}")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/tasks")
+async def wb_daily_tasks(limit: int = 200, account: Optional[str] = None):
+    """任务台账：任务维度的记录（面板「任务记录」卡片）。"""
+    async with _wb_daily_client() as client:
+        params = {"limit": limit}
+        if account:
+            params["account"] = account
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/tasks", params=params)
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/task-summary")
+async def wb_daily_task_summary():
+    """任务台账聚合：每个任务项最近一次结果 + 成功次数。"""
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/task-summary")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 

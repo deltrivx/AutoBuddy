@@ -105,7 +105,29 @@ def init_db() -> None:
             actions TEXT,
             created_at REAL NOT NULL
         )""");
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_acc_job ON wb_daily_accounts(job_id)");
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_acc_job ON wb_daily_accounts(job_id)")
+
+        # 6. 任务台账（每个账号 × 每个任务项 × 每次签到/领奖一行）。
+        # 面板要回答「这个任务今天做了几次、最后什么时候成功」——
+        # 逐账号明细只存“完成 N/M”总数，拆不到任务维度，所以单独一张表。
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wb_daily_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            account TEXT NOT NULL,
+            task_key TEXT NOT NULL,
+            task_name TEXT,
+            group_name TEXT,
+            result TEXT,
+            detail TEXT,
+            checked_in_dates TEXT,
+            streak_days INTEGER,
+            total_credits INTEGER,
+            occurred_at REAL NOT NULL
+        )""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_task_job ON wb_daily_tasks(job_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_task_key ON wb_daily_tasks(task_key, occurred_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wb_daily_task_acct ON wb_daily_tasks(account, occurred_at DESC)");
 
         # 表结构平滑迁移：补齐 actions 列（如果旧库缺少）
         try:
@@ -300,7 +322,8 @@ WB_DAILY_RETAIN = 200   # 执行记录保留条数（用户定的 100–200 区�
 def save_wb_daily_run(job_id: str, mode: str, status: str, started_at: float,
                       finished_at: Optional[float], accounts: int,
                       summary: Any = None, log: Any = None,
-                      account_rows: Optional[List[Dict[str, Any]]] = None) -> None:
+                      account_rows: Optional[List[Dict[str, Any]]] = None,
+                      task_rows: Optional[List[Dict[str, Any]]] = None) -> None:
     """落盘一轮每日任务（汇总行 + 逐账号明细），并顺手剪掉超出保留额的老记录。
 
     日志存全文（上限由调用方控制），因为面板要能回看失败的账号到底卡在哪。
@@ -335,9 +358,136 @@ def save_wb_daily_run(job_id: str, mode: str, status: str, started_at: float,
                           json.dumps(row.get("actions"), ensure_ascii=False) if row.get("actions") is not None else None,
                           now))
             conn.commit()
+        if task_rows:
+            save_wb_daily_tasks(job_id, task_rows)
         prune_wb_daily_runs()
     except Exception as e:
         print(f"[wb-daily] 写执行记录出错: {e}")
+
+
+def save_wb_daily_tasks(job_id: str, task_rows: Optional[List[Dict[str, Any]]]) -> None:
+    """落盘一轮的任务台账（任务维度，供面板按任务聚合展示）。
+
+    与 ``wb_daily_accounts`` 的区别：那边一行 = 一个账号；这里一行 = 一个
+    账号的一个任务项。面板要展示「任务记录」就必须有任务维度，否则只能从
+    日志文本反解，极度不可靠。
+    """
+    if not task_rows:
+        return
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM wb_daily_tasks WHERE job_id = ?", (str(job_id),))
+            now = time.time()
+            for row in task_rows:
+                cursor.execute("""
+                INSERT INTO wb_daily_tasks
+                    (job_id, account, task_key, task_name, group_name, result, detail,
+                     checked_in_dates, streak_days, total_credits, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(job_id), str(row.get("account") or ""),
+                    str(row.get("task_key") or ""), row.get("task_name"),
+                    row.get("group_name"), row.get("result"), row.get("detail"),
+                    json.dumps(row.get("checked_in_dates"), ensure_ascii=False)
+                    if row.get("checked_in_dates") is not None else None,
+                    int(row["streak_days"]) if row.get("streak_days") is not None else None,
+                    int(row["total_credits"]) if row.get("total_credits") is not None else None,
+                    float(row.get("occurred_at") or now),
+                ))
+            conn.commit()
+    except Exception as e:
+        print(f"[wb-daily] 写任务台账出错: {e}")
+
+
+def list_wb_daily_tasks(limit: int = 200, account: Optional[str] = None) -> List[Dict[str, Any]]:
+    """取最近的任务台账（可按账号过滤），按时间倒序。"""
+    limit = max(1, min(int(limit or 200), 1000))
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            if account:
+                cursor.execute("""
+                SELECT job_id, account, task_key, task_name, group_name, result, detail,
+                       checked_in_dates, streak_days, total_credits, occurred_at
+                FROM wb_daily_tasks WHERE account = ?
+                ORDER BY occurred_at DESC LIMIT ?
+                """, (str(account), limit))
+            else:
+                cursor.execute("""
+                SELECT job_id, account, task_key, task_name, group_name, result, detail,
+                       checked_in_dates, streak_days, total_credits, occurred_at
+                FROM wb_daily_tasks
+                ORDER BY occurred_at DESC LIMIT ?
+                """, (limit,))
+            out = []
+            for row in cursor.fetchall():
+                dates = []
+                try:
+                    dates = json.loads(row["checked_in_dates"]) if row["checked_in_dates"] else []
+                except Exception:
+                    dates = []
+                out.append({
+                    "job_id": row["job_id"],
+                    "account": row["account"],
+                    "task_key": row["task_key"],
+                    "task_name": row["task_name"],
+                    "group_name": row["group_name"],
+                    "result": row["result"],
+                    "detail": row["detail"],
+                    "checked_in_dates": dates,
+                    "streak_days": row["streak_days"],
+                    "total_credits": row["total_credits"],
+                    "occurred_at": row["occurred_at"],
+                })
+            return out
+    except Exception as e:
+        print(f"[wb-daily] 读任务台账出错: {e}")
+        return []
+
+
+def summarize_wb_daily_tasks() -> List[Dict[str, Any]]:
+    """按任务项聚合最近状态：每个任务最近一次结果 + 成功次数。
+
+    面板「任务记录」卡片就靠它 —— 一眼看出哪些任务今天已做、哪些还没动静。
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT task_key, task_name, group_name,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END) AS success,
+                   MAX(occurred_at) AS last_at
+            FROM wb_daily_tasks
+            GROUP BY task_key
+            ORDER BY last_at DESC
+            """)
+            out = []
+            for row in cursor.fetchall():
+                cursor.execute("""
+                SELECT account, result, detail, occurred_at, streak_days, total_credits
+                FROM wb_daily_tasks WHERE task_key = ?
+                ORDER BY occurred_at DESC LIMIT 1
+                """, (row["task_key"],))
+                last = cursor.fetchone()
+                out.append({
+                    "task_key": row["task_key"],
+                    "task_name": row["task_name"],
+                    "group_name": row["group_name"],
+                    "total": row["total"],
+                    "success": row["success"] or 0,
+                    "last_at": row["last_at"],
+                    "last_account": last["account"] if last else None,
+                    "last_result": last["result"] if last else None,
+                    "last_detail": last["detail"] if last else None,
+                    "streak_days": last["streak_days"] if last else None,
+                    "total_credits": last["total_credits"] if last else None,
+                })
+            return out
+    except Exception as e:
+        print(f"[wb-daily] 聚合任务台账出错: {e}")
+        return []
 
 
 def prune_wb_daily_runs(keep: int = WB_DAILY_RETAIN) -> int:
@@ -356,6 +506,7 @@ def prune_wb_daily_runs(keep: int = WB_DAILY_RETAIN) -> int:
                 return 0
             marks = ",".join("?" * len(stale))
             cursor.execute(f"DELETE FROM wb_daily_accounts WHERE job_id IN ({marks})", stale)
+            cursor.execute(f"DELETE FROM wb_daily_tasks WHERE job_id IN ({marks})", stale)
             cursor.execute(f"DELETE FROM wb_daily_runs WHERE job_id IN ({marks})", stale)
             conn.commit()
             return len(stale)

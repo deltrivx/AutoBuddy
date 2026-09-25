@@ -285,6 +285,7 @@ class DailyJob:
         self.accounts_total = 0      # 本轮参与账号数
         self.accounts_done = 0       # 已跑完的账号数
         self.accounts_summary: list[dict] = []   # 逐账号汇总（落库用）
+        self.tasks_summary: list[dict] = []      # 任务台账（任务维度，落库用）
         self._cur_account: dict | None = None    # 当前正在跑的账号
 
     def log_line(self, text: str):
@@ -324,6 +325,10 @@ class DailyJob:
                 if clean_act and clean_act not in self._cur_account["actions"]:
                     self._cur_account["actions"].append(clean_act)
 
+            # 任务维度台账：把这一行归到具体任务项（签到/领奖/抽奖/…）。
+            # 面板「任务记录」就是靠它聚合的，不能只存账号级总数。
+            self._record_task(text)
+
             # 账号级关键数值就地留存，供明细展示
             for key, label in (("credits", "💰 积分:"), ("usage", "📊 用量:"),
                                ("streak", "连签"), ("energy", "能量")):
@@ -349,6 +354,63 @@ class DailyJob:
             pct = max(pct, int(6 + ratio * 86))
         if pct > self.progress:
             self.progress = min(pct, 99)
+
+    # 日志关键词 → 任务项。子串取自 vendor 脚本实测输出原文。
+    TASK_SIGNATURES = [
+        ("✅签到", "checkin", "每日签到"),
+        ("🎁领奖", "claim", "自动领奖"),
+        ("🎁 ", "claim", "自动领奖"),
+        ("大转盘", "lottery", "大转盘抽奖"),
+        ("抽奖", "lottery", "大转盘抽奖"),
+        ("盲盒", "blindbox", "盲盒开启"),
+        ("喵喵旅行", "travel", "喵喵旅行"),
+        ("旅行", "travel", "喵喵旅行"),
+        ("📋批量接受", "accept_tasks", "批量接受任务"),
+        ("Buddy", "buddy", "Buddy 展示"),
+        ("💬", "chat", "对话任务"),
+    ]
+
+    def _record_task(self, text: str) -> None:
+        """把一行日志归到具体任务项，追加到任务台账。
+
+        判定顺序即优先级：一行同时命中多个关键词时取最具体的那个（签到 > 领奖）。
+        """
+        task_key = task_name = None
+        for kw, key, name in self.TASK_SIGNATURES:
+            if kw in text:
+                task_key, task_name = key, name
+                break
+        if not task_key:
+            return
+
+        account = (self._cur_account or {}).get("account") or "-"
+
+        # 结果判定：✅ / 成功 / +N积分 → success；已签到 / 已领过 → already；
+        # 失败 / 异常 / HTTP 4xx/5xx → failed；其余算 info（如抽样信息行）。
+        result = "info"
+        if any(k in text for k in ("失败", "异常", "错误", "超时")):
+            result = "failed"
+        elif any(k in text for k in ("已签到", "已领过", "已领", "already")):
+            result = "already"
+        elif any(k in text for k in ("✅", "成功", "+ ")):
+            result = "success"
+
+        streak = None
+        m = re.search(r"连签(\d+)天", text)
+        if m:
+            streak = int(m.group(1))
+
+        row = {
+            "account": account,
+            "task_key": task_key,
+            "task_name": task_name,
+            "group_name": "互动玩法" if task_key in ("checkin", "lottery", "blindbox", "buddy", "travel") else "成长任务",
+            "result": result,
+            "detail": text.strip()[:300],
+            "streak_days": streak,
+            "occurred_at": time.time(),
+        }
+        self.tasks_summary.append(row)
 
     def finish(self, status: str, result):
         self.status = status
@@ -510,6 +572,7 @@ def _persist_run(job: DailyJob, all_lines: list[str]) -> None:
             summary=job.result if isinstance(job.result, dict) else {"detail": job.result},
             log=_tail_summary(all_lines, 200),
             account_rows=job.accounts_summary,
+            task_rows=job.tasks_summary,
         )
     except Exception as e:
         print(f"[wb-daily] 落库执行记录失败: {e}")
@@ -617,6 +680,23 @@ async def catalog_api():
         auto += sum(1 for i in items if i.get("auto"))
         groups.append({"group": group.get("group"), "items": items})
     return {"groups": groups, "total": total, "auto": auto, "manual": total - auto}
+
+
+@app.get("/api/wb-daily/tasks")
+async def tasks_api(limit: int = 200, account: str | None = None):
+    """任务台账（任务维度）：每个账号的每个任务项每次执行一行。
+
+    面板「任务记录」卡片的数据源。与 /runs 的区别：runs 是一轮一条，
+    tasks 是一条任务一条，能直接回答「这个任务做了没、什么时候做的」。
+    """
+    return {"tasks": db.list_wb_daily_tasks(limit=limit, account=account),
+            "retain": db.WB_DAILY_RETAIN}
+
+
+@app.get("/api/wb-daily/task-summary")
+async def task_summary_api():
+    """任务台账聚合：每个任务项最近一次结果 + 成功次数。"""
+    return {"items": db.summarize_wb_daily_tasks()}
 
 
 @app.get("/api/wb-daily/runs")
