@@ -2050,6 +2050,67 @@ COLLAPSE_SCRIPT = r"""
     authRow.appendChild(authToggle);
     card.appendChild(authRow);
 
+    // ---- 4.5 IP 白名单免验证（仅在开启密钥校验时展示）----
+    //
+    // 为何要隐藏：关掉密钥校验时后端就整体放行了，白名单不产生任何效果。
+    // 展示一个“没用”的输入框只会让人误会它在生效。配置本身会保留，
+    // 重新打开校验就原样恢复，不会因为隐藏而丢失。
+    if (data.requireKey) {
+      var wlRow = wbEl("div", "wb-api-row wb-api-row-stack");
+      var wlHead = wbEl("div", null);
+      wlHead.appendChild(wbEl("div", "wb-api-label", "IP 白名单（免密钥）"));
+      wlHead.appendChild(wbEl("div", "wb-api-desc",
+        "名单内的来源 IP 调用 /v1/* 无需携密钥。支持精确 IP（192.168.31.5）与 CIDR 网段"
+        + "（192.168.31.0/24），一行一个，也可用逗号分隔。留空则不启用白名单。"));
+      wlRow.appendChild(wlHead);
+
+      var wlBox = document.createElement("textarea");
+      wlBox.className = "wb-api-input wb-api-mono";
+      wlBox.rows = 3;
+      wlBox.spellcheck = false;
+      wlBox.placeholder = "192.168.31.5\n192.168.31.0/24";
+      wlBox.style.cssText = "width:100%;margin-top:8px;resize:vertical;line-height:1.5;";
+      wlBox.value = (data.whitelist || []).join("\n");
+      wlRow.appendChild(wlBox);
+
+      var wlLine = wbEl("div", null);
+      wlLine.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px;";
+      var wlSave = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存白名单");
+      wlSave.onclick = function () {
+        wlSave.disabled = true;
+        wbApiAction("/api/api-keys/whitelist", "PUT", { whitelist: wlBox.value },
+          "白名单已保存").then(function () { wlSave.disabled = false; });
+      };
+      wlLine.appendChild(wlSave);
+
+      var wlSelf = wbEl("button", "wb-api-btn", "添加当前 IP");
+      wlSelf.title = "把你现在访问控制台的来源 IP 加进白名单";
+      wlSelf.onclick = function () {
+        wlSelf.disabled = true;
+        fetch("/api/client-ip", { cache: "no-store" })
+          .then(function (r) { return r.ok ? r.json() : {}; })
+          .then(function (d) {
+            var ip = (d && d.ip) || "";
+            if (!ip) { wbToast("未能获取当前 IP", "warn"); return; }
+            var cur = wlBox.value.trim();
+            if (cur.split(/[\n,]/).map(function (s) { return s.trim(); }).indexOf(ip) !== -1) {
+              wbToast("当前 IP 已在名单中：" + ip, "ok");
+              return;
+            }
+            wlBox.value = cur ? (cur + "\n" + ip) : ip;
+            wbToast("已填入当前 IP：" + ip + "，点「保存白名单」生效", "ok");
+          })
+          .catch(function () { wbToast("获取当前 IP 失败", "err"); })
+          .then(function () { wlSelf.disabled = false; });
+      };
+      wlLine.appendChild(wlSelf);
+
+      var wlCount = wbEl("span", "wb-api-desc", "共 " + (data.whitelistCount || 0) + " 条");
+      wlLine.appendChild(wlCount);
+      wlRow.appendChild(wlLine);
+      card.appendChild(wlRow);
+    }
+
     // ---- 5. 密钥列表 ----
     var keyHead = wbEl("div", "wb-api-row");
     var keyMain = wbEl("div", "wb-api-main");
@@ -4914,6 +4975,12 @@ async def api_keys_config(request: Request):
     return await _forward_gateway("PUT", "/api-keys/config", await request.body())
 
 
+@app.put("/api/api-keys/whitelist")
+async def api_keys_whitelist(request: Request):
+    """IP 白名单写入。与 config 同级，语义：仅在开启密钥校验时生效。"""
+    return await _forward_gateway("PUT", "/api-keys/whitelist", await request.body())
+
+
 @app.post("/api/gateway-selftest")
 async def gateway_selftest():
     """从容器内实测一次网关连通性。
@@ -5323,6 +5390,32 @@ async def gh_register_start(request: Request):
     async with _gh_register_client() as client:
         r = await client.post(f"{GH_REGISTER_INTERNAL}/api/gh-register/jobs", content=body, headers={"Content-Type": "application/json"})
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/client-ip")
+async def client_ip(request: Request):
+    """返回调用者看到的自身来源 IP。
+
+    「添加当前 IP」按钮靠它填白名单 —— 用户不需要自己去查 IP。
+    优先看反代传来的 X-Forwarded-For / X-Real-IP（取最左一个，那是真实客户端），
+    没有则回退到直接连接地址。
+    """
+    def _norm(v):
+        v = (v or "").strip()
+        if v.lower().startswith("::ffff:"):
+            v = v[7:]
+        return v
+
+    ip = ""
+    xff = request.headers.get("x-forwarded-for") or ""
+    if xff:
+        ip = _norm(xff.split(",")[0])
+    if not ip:
+        ip = _norm(request.headers.get("x-real-ip") or "")
+    if not ip:
+        client = getattr(request, "client", None)
+        ip = _norm(str(getattr(client, "host", "") or ""))
+    return {"ip": ip}
 
 
 @app.get("/api/gh-register/status/{job_id}")

@@ -38,6 +38,10 @@ _LOCK = threading.RLock()
 _STATE: Dict[str, Any] = {
     "requireKey": False,
     "keys": [],
+    # IP 白名单：仅当 requireKey=True 时生效。命中名单的客户端免密钥放行。
+    # 典型用途：家里/公司的固定出口 IP、内网网关、CI 机器 —— 它们反复调用
+    # /v1/*，每次都带密钥既麻烦又容易在轮换时漏改（本项目刚因此踩过 401）。
+    "whitelist": [],
 }
 
 
@@ -49,6 +53,7 @@ def _load_locked() -> None:
     """从磁盘恢复。文件缺失 / 损坏 / 结构不对一律回退到默认值，绝不抛。"""
     _STATE["requireKey"] = False
     _STATE["keys"] = []
+    _STATE["whitelist"] = []
     try:
         if not KEYS_FILE.exists():
             return
@@ -57,6 +62,9 @@ def _load_locked() -> None:
         if not isinstance(data, dict):
             return
         _STATE["requireKey"] = bool(data.get("requireKey"))
+        wl = data.get("whitelist")
+        if isinstance(wl, list):
+            _STATE["whitelist"] = [str(x).strip() for x in wl if str(x).strip()]
         keys = data.get("keys")
         if isinstance(keys, list):
             _STATE["keys"] = [k for k in keys if isinstance(k, dict) and k.get("key")]
@@ -64,6 +72,7 @@ def _load_locked() -> None:
         print(f"[api-keys] failed to load keys: {e}", flush=True)
         _STATE["requireKey"] = False
         _STATE["keys"] = []
+        _STATE["whitelist"] = []
 
 
 def _save_locked() -> None:
@@ -72,7 +81,9 @@ def _save_locked() -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         tmp = KEYS_FILE.with_name(KEYS_FILE.name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"requireKey": _STATE["requireKey"], "keys": _STATE["keys"]},
+            json.dump({"requireKey": _STATE["requireKey"],
+                       "whitelist": _STATE.get("whitelist") or [],
+                       "keys": _STATE["keys"]},
                       f, ensure_ascii=False, indent=2)
         os.replace(tmp, KEYS_FILE)
         try:
@@ -119,16 +130,91 @@ def _public(record: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_state() -> Dict[str, Any]:
     with _LOCK:
-        return {"requireKey": bool(_STATE["requireKey"])}
+        return {
+            "requireKey": bool(_STATE["requireKey"]),
+            "whitelist": list(_STATE.get("whitelist") or []),
+        }
+
+
+# ---------------------------------------------------------------------------
+# IP 白名单
+# ---------------------------------------------------------------------------
+#
+# 语义边界（很重要，避免把开关做成后门）：
+#   · 只在 requireKey=True 时生效。关掉密钥校验时一切放行，白名单没有意义，
+#     前端也据此隐藏这块 UI（配置保留但不可见，重新开启校验即恢复）。
+#   · 白名单只能「免去密钥」，不能绕过 loopback 判定之外的其他任何检查。
+#   · 支持精确 IP（192.168.31.5）与 CIDR 网段（192.168.31.0/24）。
+#     这里**必须**同时支持 CIDR —— 早先给 Hermes 配 NO_PROXY 时踩过
+#     「Python 不认 CIDR」的坑，那是另一回事（httpx 的 NO_PROXY 语义），
+#     本模块自己解析，不依赖第三方库的环境变量行为。
+
+def _normalize_ip(value: str) -> str:
+    """把 IPv4-mapped IPv6（::ffff:192.168.31.5）归一到纯 IPv4 形态。"""
+    v = (value or "").strip()
+    if v.lower().startswith("::ffff:"):
+        v = v[7:]
+    return v
+
+
+def _ip_in_whitelist(host: str, entries: List[str]) -> bool:
+    """判断 IP 是否命中白名单。支持精确匹配与 CIDR，非法条目静默跳过。"""
+    import ipaddress
+
+    ip = _normalize_ip(host)
+    if not ip:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+
+    for raw in entries or []:
+        item = _normalize_ip(str(raw))
+        if not item:
+            continue
+        try:
+            if "/" in item:
+                if addr in ipaddress.ip_network(item, strict=False):
+                    return True
+            elif addr == ipaddress.ip_address(item):
+                return True
+        except ValueError:
+            # 用户手输的条目可能不合法。跳过而不是 500 —— 一个笔误不该
+            # 让整个鉴权路径挂掉。
+            continue
+    return False
+
+
+def set_whitelist(entries: Any) -> Dict[str, Any]:
+    """整份替换白名单。传进来的可能是逗号/换行分隔的字符串，也可能是数组。"""
+    normalized: List[str] = []
+    if isinstance(entries, str):
+        parts = entries.replace(",", "\n").split("\n")
+    elif isinstance(entries, (list, tuple)):
+        parts = list(entries)
+    else:
+        parts = []
+    for p in parts:
+        s = str(p).strip()
+        if s and s not in normalized:
+            normalized.append(s)
+    with _LOCK:
+        _STATE["whitelist"] = normalized
+        _save_locked()
+    return get_config()
 
 
 def get_config() -> Dict[str, Any]:
     """给 /api-keys/status 用：连接信息面板需要知道当前是否强制密钥。"""
     with _LOCK:
         keys = [_public(k) for k in _STATE["keys"]]
+        whitelist = list(_STATE.get("whitelist") or [])
     enabled = [k for k in keys if k["enabled"]]
     return {
         "requireKey": bool(_STATE["requireKey"]),
+        "whitelist": whitelist,
+        "whitelistCount": len(whitelist),
         "keys": keys,
         "stats": {
             "total": len(keys),

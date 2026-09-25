@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.7.6"
+VERSION_DEFAULT = "0.7.7"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1247,57 +1247,33 @@ def _extract_api_key(request: Request) -> Optional[str]:
     return request.headers.get("x-api-key") or request.headers.get("api-key")
 
 
-# ---------------------------------------------------------------------------
-# 401 审计落盘：docker logs 会被 log-opt 轮转冲掉，而定位这类问题
-# **必须拿到失败请求当时的 Header 原始字节**，否则只能猜。
-# 落到 DATA_DIR 下的独立文件（挂载卷），永不被轮转清理，也便于事后取证。
-# ---------------------------------------------------------------------------
-_AUTH_FAIL_AUDIT = DATA_DIR / "auth_fail_audit.jsonl"
-
-
-def _audit_auth_failure(request: Request, gate: Dict[str, Any]) -> None:
-    """把一次鉴权失败的原貌落盘。写入失败一律吞掉——绝不能影响主流程。"""
-    try:
-        auth_raw = request.headers.get("authorization")
-        x_key = request.headers.get("x-api-key") or request.headers.get("api-key")
-        user_agent = request.headers.get("user-agent") or ""
-
-        client = getattr(request, "client", None)
-        record = {
-            "ts": int(time.time() * 1000),
-            "iso": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "client": str(getattr(client, "host", "") or ""),
-            "client_port": getattr(client, "port", None),
-            "mode": gate.get("mode"),
-            "detail": gate.get("detail"),
-            "path": str(request.url.path),
-            "method": request.method,
-            "user_agent": user_agent[:200],
-            # 关键证据：header 是否缺席 / 长度 / 字节十六进制。
-            # 不直接写明文密钥（审计文件可能被拷来拷去），但长度+头部明文
-            # 足以判断“空”“被截断”“格式错”还是“拼错”。
-            "auth_present": auth_raw is not None,
-            "auth_len": len(auth_raw) if auth_raw is not None else None,
-            "auth_prefix": (auth_raw or "")[:12],
-            "auth_hex": (auth_raw or "").encode("utf-8", "replace").hex()[:120],
-            "xkey_present": x_key is not None,
-            "xkey_len": len(x_key) if x_key is not None else None,
-            # 所有请求头名（不含值）——看清 OpenClaw 到底带了哪些头
-            "header_names": sorted(k.lower() for k in request.headers.keys()),
-        }
-        with open(_AUTH_FAIL_AUDIT, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception as e:
-        print(f"[auth-audit] 落盘失败: {e}", flush=True)
+def _client_host(request: Request) -> str:
+    client = getattr(request, "client", None)
+    return str(getattr(client, "host", "") or "")
 
 
 def _gateway_auth(request: Request) -> Dict[str, Any]:
-    """统一的 /v1 访问校验。返回 ``{"ok": bool, ...}``，失败时由调用方转 401。"""
+    """统一的 /v1 访问校验。返回 ``{"ok": bool, ...}``，失败时由调用方转 401。
+
+    判定顺序（自宽到严）：
+      1. 未开启密钥校验        -> 直接放行；
+      2. loopback（同容器内）    -> 放行（WebUI 代理读 /v1/models 不能被打断）；
+      3. **IP 白名单**（仅开启校验时生效）-> 免密钥放行；
+      4. 否则才校验 Authorization / x-api-key。
+    """
     state = api_keys.get_state()
     if not state.get("requireKey"):
         return {"ok": True, "mode": "open", "requireKey": False}
     if _client_is_loopback(request):
         return {"ok": True, "mode": "internal", "requireKey": True}
+
+    # IP 白名单：只免去密钥，不改变其他任何行为。关掉校验时这块整体不生效。
+    wl = state.get("whitelist") or []
+    if wl:
+        host = _client_host(request)
+        if api_keys._ip_in_whitelist(host, wl):
+            return {"ok": True, "mode": "whitelist", "requireKey": True, "client": host}
+
     return api_keys.authenticate(_extract_api_key(request))
 
 
@@ -1449,6 +1425,46 @@ def api_keys_config(payload: Dict[str, Any]):
     return {"ok": True, "status": api_keys_status()}
 
 
+@app.put("/api-keys/whitelist")
+def api_keys_whitelist(payload: Dict[str, Any]):
+    """整份替换 IP 白名单。
+
+    仅在开启密钥校验时才有意义 —— 未开启时整块放行，白名单不产生任何效果。
+    这里**不**因为未开启而报错：前端在那种情况下本就不会展示该入口，
+    但用户可能先配白名单再开校验；保留写入能力比硬拦更符合直觉。
+
+    传参：``{"whitelist": "192.168.31.5\n192.168.31.0/24"}`` 或数组形式。
+    """
+    if "whitelist" not in payload:
+        raise HTTPException(status_code=400, detail="whitelist is required")
+
+    raw = payload.get("whitelist")
+    # 先归一化成列表，再用同一个解析器逐条校验语法。
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.replace(",", "\n").split("\n") if p.strip()]
+    elif isinstance(raw, (list, tuple)):
+        parts = [str(p).strip() for p in raw if str(p).strip()]
+    else:
+        raise HTTPException(status_code=400, detail="whitelist must be a string or list")
+
+    import ipaddress
+    bad = []
+    for p in parts:
+        try:
+            if "/" in p:
+                ipaddress.ip_network(p, strict=False)
+            else:
+                ipaddress.ip_address(p)
+        except ValueError:
+            bad.append(p)
+    if bad:
+        raise HTTPException(status_code=400,
+                            detail="以下条目不是合法 IP 或 CIDR：" + "、".join(bad[:5]))
+
+    api_keys.set_whitelist(parts)
+    return {"ok": True, "status": api_keys_status()}
+
+
 @app.get("/health")
 def health():
     acc = get_active_account()
@@ -1469,7 +1485,6 @@ def health():
 async def list_models(request: Request):
     gate = _gateway_auth(request)
     if not gate["ok"]:
-        _audit_auth_failure(request, gate)
         raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
     if gate.get("keyId"):
         api_keys.mark_used(gate["keyId"])
@@ -1515,7 +1530,6 @@ async def chat_completions(request: Request):
     # 或 x-api-key: <key>；容器内 WebUI 代理走 loopback 免校验，不会被自己的密钥挡住。
     gate = _gateway_auth(request)
     if not gate["ok"]:
-        _audit_auth_failure(request, gate)
         raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
     if gate.get("keyId"):
         api_keys.mark_used(gate["keyId"])
