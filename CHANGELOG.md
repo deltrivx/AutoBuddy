@@ -15,6 +15,20 @@
 
 - 暂无。
 
+## [v0.7.8] - 2026-09-25
+
+### 彻底根除「幽灵账号」残留并保障所有账号按钮功能一致性
+
+- **幽灵账号根因根治**：
+  - 过去在点击「删除账号」时，后端仅删除了 `accounts.json`，遗漏了 `account_pool_config.json` 中的 `enabledAccountIds`（白名单）与 `manualAccountId`（首选账号），导致被删账号作为“幽灵 ID”一直残留。
+  - 前端点击「设为首选」或「停用/启用」提交整份白名单时，后端遇到幽灵 ID 直接判定非法并抛出 `400 Bad Request`；
+  - 前端 `savePool` 未捕获异常并误以为成功，导致新账号以及受幽灵 ID 影响的所有账号按钮点击后均无反应。
+- **全生命周期自愈与彻底联动**：
+  1. `delete_account_api`：删除账号时联动清理 `account_pool_config.json`，主动将该账号从白名单剔除，若该账号曾为首选账号则自动重置并切回 `auto` 模式；
+  2. `_load_pool_config`：加载账号池配置时主动与当前实际账号列表对齐自愈，自动剔除任何不在当前账号池中的幽灵 ID；
+  3. `update_account_pool`：更新账号池配置时，自动过滤未知/幽灵 ID 确保操作顺利落盘生效，不再因旧快照残留而报错中断；
+  4. `savePool` 前端网络层：补齐失败/错误提示，绝不静默吞掉异常。
+
 ## [v0.7.7] - 2026-09-25
 
 ### 移除 401 审计落盘（恢复纯净镜像）
@@ -1277,7 +1291,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.7...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.8...HEAD
+[v0.7.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.7...v0.7.8
 [v0.7.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.6...v0.7.7
 [v0.7.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.5...v0.7.6
 [v0.7.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.4...v0.7.5

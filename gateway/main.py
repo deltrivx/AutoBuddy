@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.7.7"
+VERSION_DEFAULT = "0.7.8"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -298,6 +298,24 @@ def _load_pool_config() -> Dict[str, Any]:
         default["mode"] = "auto"
     if not isinstance(default.get("enabledAccountIds"), list):
         default["enabledAccountIds"] = []
+
+    # 自愈与主动对齐：若当前已有可用账号列表，确保白名单和首选账号中的幽灵 ID 自动被剔除
+    try:
+        accounts = _load_accounts()
+        known = {str(_account_id(a)) for a in accounts if _account_id(a)}
+        if known:
+            orig_enabled = default.get("enabledAccountIds") or []
+            cleaned_enabled = [x for x in orig_enabled if str(x) in known]
+            if len(cleaned_enabled) != len(orig_enabled):
+                default["enabledAccountIds"] = cleaned_enabled
+                _save_pool_config(default)
+            if default.get("manualAccountId") and str(default["manualAccountId"]) not in known:
+                default["manualAccountId"] = None
+                default["mode"] = "auto"
+                _save_pool_config(default)
+    except Exception:
+        pass
+
     return default
 
 
@@ -647,6 +665,28 @@ def delete_account_api(payload: Dict[str, Any]):
     _save_accounts(kept)
 
     cleanup_notes = []
+
+    # 1. 彻底联动账号池配置（白名单 & 首选）：
+    # 之前删除账号只删了 accounts.json，漏删了 account_pool_config.json 里的 enabledAccountIds，
+    # 导致被删账号以“幽灵账号”残留在白名单里。一旦前端下次带着白名单提交，后端校验直接报 400 崩溃，
+    # 导致新账号的「设为首选」和「停用/启用」完全失灵！
+    try:
+        pool_cfg = _load_pool_config()
+        changed_pool = False
+        enabled = pool_cfg.get("enabledAccountIds") or []
+        if str(acc_id) in enabled:
+            pool_cfg["enabledAccountIds"] = [x for x in enabled if str(x) != str(acc_id)]
+            changed_pool = True
+            cleanup_notes.append("账号池白名单")
+        if str(pool_cfg.get("manualAccountId")) == str(acc_id):
+            pool_cfg["manualAccountId"] = None
+            pool_cfg["mode"] = "auto"
+            changed_pool = True
+            cleanup_notes.append("首选账号重置")
+        if changed_pool:
+            _save_pool_config(pool_cfg)
+    except Exception as e:
+        print(f"[delete] 清账号池配置失败: {e}")
     try:
         policy = _load_model_policy()
         if str(acc_id) in policy:
@@ -801,9 +841,21 @@ def update_account_pool(config: Dict[str, Any]):
 
     accounts = _load_accounts()
     known = {str(_account_id(a)) for a in accounts if _account_id(a)}
+
+    # 幽灵账号：白名单里指向已删除账号的 id。
+    #
+    # 这不是用户手输的错误，而是**必然会发生**的：前端提交白名单时是基于
+    # 上一次 GET 的快照拼的，而快照与这次 PUT 之间可能有账号被删掉。此前
+    # 这里直接 400 整单拒绝 —— 而前端 savePool 当年不检查状态码，于是：
+    #   用户点「设为首选 / 停用」→ 后端 400 → 页面毫无变化
+    # 表现为「新账号的按钮点了没反应」（实测白名单里正躺着一个已删账号）。
+    #
+    # 现在的语义：**剔除幽灵 id 并继续保存**。用户意图是明确的（他点的是
+    # 某个真实账号），不该被一个自己都不知道存在的陈旧条目挡回去。
+    # 仍然保留「显式提交了非法格式」等硬错误的 400。
     unknown = [x for x in enabled if x not in known]
     if unknown:
-        raise HTTPException(status_code=400, detail={"unknownAccountIds": unknown})
+        enabled = [x for x in enabled if x in known]
 
     if "manualAccountId" in config:
         manual_id = config.get("manualAccountId")

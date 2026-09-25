@@ -1435,17 +1435,45 @@ COLLAPSE_SCRIPT = r"""
   }
 
   function savePool(payload, done) {
+    // 这里必须把**失败**也告知用户。此前的写法是 r.json() 后无条件走 done
+    // 回调，于是后端 400（例如 enabledAccountIds 里含已删除账号）时：
+    //   · 没有 toast —— 用户完全看不到出错；
+    //   · done 照常执行 —— refreshPool() 用旧缓存重绘，页面毫无变化。
+    // 合起来就是「点了没任何反应」。现在把 HTTP 状态与业务 detail 都转发出去。
     fetch("/api/account-pool", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     })
-      .then(function (r) { return r.json(); })
-      .then(function (res) {
-        if (res && res.status) { wbPoolCache = res.status; }
-        if (done) done(res);
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, status_code: r.status, body: body || {} };
+        });
       })
-      .catch(function () {});
+      .then(function (res) {
+        if (!res.ok) {
+          var d = res.body.detail;
+          var msg;
+          if (d && typeof d === "object" && d.unknownAccountIds) {
+            // 幽灵账号：白名单里指向了已被删除的账号。后端现已自动剔除，
+            // 正常不会再走到这里；保留分支以免旧版本网关下静默失真。
+            msg = "设置未生效：启用列表里有 " + d.unknownAccountIds.length + " 个已不存在的账号";
+          } else if (typeof d === "string" && d) {
+            msg = d;
+          } else {
+            msg = "设置未生效（HTTP " + res.status_code + "）";
+          }
+          wbToast(msg, "err");
+          if (done) done(null);
+          return;
+        }
+        if (res.body && res.body.status) { wbPoolCache = res.body.status; }
+        if (done) done(res.body);
+      })
+      .catch(function () {
+        wbToast("请求失败，请刷新页面后重试", "err");
+        if (done) done(null);
+      });
   }
 
   function injectAccountPool() {
