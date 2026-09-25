@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>面向 NAS 与服务器的 WorkBuddy / CodeBuddy 多账号管理面板与 OpenAI 兼容网关</strong>
+  <strong>面向 NAS 与服务器的多账号管理面板与 OpenAI 兼容网关</strong>
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 
 ## 📖 项目定位
 
-`AutoBuddy` 将 WorkBuddy / CodeBuddy 账号管理核心服务容器化，提供开箱即用的 Web 管理面板与 OpenAI 兼容 API 网关。
+`AutoBuddy` 将多账号管理核心服务容器化，提供开箱即用的 Web 管理面板与 OpenAI 兼容 API 网关。
 
 - **多账号集中管理**：自动签到保活、积分到期监控、Token 自动刷新与用量统计；
 - **并发智能分摊**：多账号并发请求自动路由轮询，支持账号级停用、首选指定与单次覆盖；

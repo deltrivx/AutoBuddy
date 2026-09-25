@@ -942,7 +942,7 @@ COLLAPSE_SCRIPT = r"""
     // 仅精准清理包含「如何授权」或「完全磁盘访问」的引导小卡片，绝不向上寻找普通大容器
     document.querySelectorAll("div.border-l-2, div.rounded-md.border").forEach(box => {
       const text = box.innerText || "";
-      if (text.includes("完全磁盘访问") || text.includes("如何授权") || text.includes("workbuddy-switch.app")) {
+      if (text.includes("完全磁盘访问") || text.includes("如何授权") || text.includes("workbuddy-switch.app") || text.includes("autobuddy")) {
         box.classList.add("wb-mac-block-hide");
       }
     });
@@ -4302,12 +4302,12 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
     # 等长约束只适用于 patch/patch_binary.py 打二进制的情形（详见二进制补丁规程）。
     #
     # 以下四条的定位与边界：
-    #   · `workbuddy-switch.app` → `workbuddy-switch`：官方文案里的 macOS 应用名，
+    #   · `autobuddy.app` → `autobuddy`：官方文案里的 macOS 应用名，
     #     容器里没有桌面应用，去掉 .app 后缀纯为了不让用户去找一个不存在的东西。
     #   · 后三条把展示用的品牌名统一成 AutoBuddy，覆盖带引号、尖括号（JSX 文本节点）
     #     与裸串三种形态；顺序必须是「先具体后笼统」，否则后面的规则会先吃掉前面的。
     #
-    # ⚠️ **不要**把 `/usr/lib/node_modules/workbuddy-switch` 或 `workbuddy-switch serve`
+    # ⚠️ **不要**把 `/usr/lib/node_modules/autobuddy` 或 `autobuddy serve`
     # 这类标识符改成 AutoBuddy：那是官方 npm 包名与可执行文件名，改了容器直接起不来。
     # 展示名与标识符是两码事，详见 entrypoint.sh 第 1 步的注释。
     replacements = [
@@ -4317,7 +4317,7 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
         (b":57890", b":18090"),
         (b"/icon-transparent.png", b"/icon.png"),
         (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"),
-        (b"workbuddy-switch.app", b"workbuddy-switch"),
+        (b"workbuddy-switch.app", b"autobuddy"),
         # JSX 文本节点：`>WorkBuddy Switch<` 与带引号的字符串字面量 {\"WorkBuddy Switch\"} 都要覆盖，
         # 否则侧边栏标题会留下半截旧名。
         (b'"WorkBuddy Switch"', b'"AutoBuddy"'),

@@ -17,13 +17,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get update && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# 全局安装官方 workbuddy-switch（底层服务 + WebUI）。本容器在其之上做定制。
-#
-# ⚠️ `workbuddy-switch` 是**官方 npm 包名与可执行文件名**，不是可以随便改的展示名。
-#   内容池里的品牌名（侧边栏标题、标签页标题等）由 gateway/web_proxy.py 的响应层
-#   替换为 AutoBuddy；这里的包名一旦改掉，npm 装不上、entrypoint 的
-#   `workbuddy-switch serve` 也找不到命令，容器直接起不来。
-#   判据：**展示名改，标识符不改**。
+# 全局安装并封装底层引擎。
+# 将底层服务二进制整合至 /usr/local/bin/autobuddy-engine，
+# 并创建标准 autobuddy 启动包装器，容器内彻底消除旧包名与旧进程名。
 #
 # 版本必须锁定，不能用 @latest：
 # patch/patch_binary.py 的锚点依赖官方前端的具体结构，上游发版会重排 minify 变量名
@@ -36,7 +32,10 @@ RUN apt-get update && apt-get install -y \
 #   改下面这行版本号 -> 构建
 ARG WB_SWITCH_VERSION=0.1.40
 RUN npm i -g "workbuddy-switch@${WB_SWITCH_VERSION}" \
-    && ln -sf /usr/bin/workbuddy-switch /usr/local/bin/autobuddy
+    && cp "$(find /usr/lib/node_modules/workbuddy-switch -type f -name 'wb-switch-linux-x64' | head -n 1)" /usr/local/bin/autobuddy-engine \
+    && chmod +x /usr/local/bin/autobuddy-engine \
+    && printf '#!/bin/sh\nexec /usr/local/bin/autobuddy-engine "$@"\n' > /usr/local/bin/autobuddy \
+    && chmod +x /usr/local/bin/autobuddy
 
 # 安装 API 网关依赖 (FastAPI + Uvicorn + HTTPX) 与 Playwright 驱动。
 #
@@ -86,9 +85,10 @@ RUN chmod +x /entrypoint.sh
 #   2. patch_binary.py 在任一锚点失配时会打印明细并以非零码退出；配合 `set -e`
 #      让构建直接失败，逼迫人工复核。
 RUN set -eux; \
-    BINS=$(find /usr/lib/node_modules/workbuddy-switch -type f -name 'wb-switch-linux-x64'); \
-    [ -n "$BINS" ] || { echo 'ERROR: 未找到 wb-switch 平台二进制'; exit 1; }; \
-    for b in $BINS; do python3 /app/patch/patch_binary.py "$b"; done
+    python3 /app/patch/patch_binary.py /usr/local/bin/autobuddy-engine; \
+    if [ -f /usr/lib/node_modules/workbuddy-switch/bin/wb-switch-linux-x64 ]; then \
+        python3 /app/patch/patch_binary.py /usr/lib/node_modules/workbuddy-switch/bin/wb-switch-linux-x64; \
+    fi
 
 ENV HOME=/data
 ENV AB_DATA_DIR=/data/.autobuddy

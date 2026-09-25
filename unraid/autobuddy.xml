@@ -11,7 +11,7 @@
   <Support>https://github.com/deltrivx/AutoBuddy/issues</Support>
   <Project>https://github.com/deltrivx/AutoBuddy</Project>
   <ReadMe>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/README.md</ReadMe>
-  <Overview>AutoBuddy 是面向 NAS 与服务器打造的 WorkBuddy / CodeBuddy 多账号管理套件与 OpenAI 兼容网关。内置 SQLite 数据库持久化存储系统配置与用户认证凭据；Web 控制台支持多账号自动签到保活、积分用量监控与 Token 调用流水；内置网关将大模型以标准 /v1 接口输出给各类 Agent 客户端；内置 GitHub 账号自动化接入（容器内置 Chromium 自动下载至挂载卷，配置在 WebUI 页面直接落库）。</Overview>
+  <Overview>AutoBuddy 是面向 NAS 与服务器打造的多账号管理套件与 OpenAI 兼容网关。内置 SQLite 数据库持久化存储系统配置与用户认证凭据；Web 控制台支持多账号自动签到保活、积分用量监控与 Token 调用流水；内置网关将大模型以标准 /v1 接口输出给各类 Agent 客户端；内置 GitHub 账号自动化接入（容器内置 Chromium 自动下载至挂载卷，配置在 WebUI 页面直接落库）。</Overview>
   <Category>AI:Tools:Productivity:</Category>
   <WebUI>http://[IP]:[PORT:18090]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/unraid/autobuddy.xml</TemplateURL>

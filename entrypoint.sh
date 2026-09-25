@@ -67,12 +67,9 @@ echo "[Proxy] 精确分流 NO_PROXY: $NO_PROXY"
 # 初始化数据库
 python3 -c "import gateway.db as db; db.init_db()" || true
 
-# 1. 启动官方底层服务（npm 包标识符固定为 workbuddy-switch，不可改动）。
-#    展示名是 AutoBuddy，但**包名/可执行文件名照旧**——
-#    改了这行容器立刻起不来（systemd 与前端反代都按这个名找进程）。
-#    展示名统一由 web_proxy.py 的响应层替换负责。
+# 1. 启动底层服务（统一通过 autobuddy 包装器启动）
 echo "[AutoBuddy] 正在启动底层服务..."
-workbuddy-switch serve --no-open &
+autobuddy serve --no-open &
 WB_PID=$!
 
 # 等待 57890 端口就绪
