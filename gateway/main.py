@@ -1247,6 +1247,50 @@ def _extract_api_key(request: Request) -> Optional[str]:
     return request.headers.get("x-api-key") or request.headers.get("api-key")
 
 
+# ---------------------------------------------------------------------------
+# 401 审计落盘：docker logs 会被 log-opt 轮转冲掉，而定位这类问题
+# **必须拿到失败请求当时的 Header 原始字节**，否则只能猜。
+# 落到 DATA_DIR 下的独立文件（挂载卷），永不被轮转清理，也便于事后取证。
+# ---------------------------------------------------------------------------
+_AUTH_FAIL_AUDIT = DATA_DIR / "auth_fail_audit.jsonl"
+
+
+def _audit_auth_failure(request: Request, gate: Dict[str, Any]) -> None:
+    """把一次鉴权失败的原貌落盘。写入失败一律吞掉——绝不能影响主流程。"""
+    try:
+        auth_raw = request.headers.get("authorization")
+        x_key = request.headers.get("x-api-key") or request.headers.get("api-key")
+        user_agent = request.headers.get("user-agent") or ""
+
+        client = getattr(request, "client", None)
+        record = {
+            "ts": int(time.time() * 1000),
+            "iso": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "client": str(getattr(client, "host", "") or ""),
+            "client_port": getattr(client, "port", None),
+            "mode": gate.get("mode"),
+            "detail": gate.get("detail"),
+            "path": str(request.url.path),
+            "method": request.method,
+            "user_agent": user_agent[:200],
+            # 关键证据：header 是否缺席 / 长度 / 字节十六进制。
+            # 不直接写明文密钥（审计文件可能被拷来拷去），但长度+头部明文
+            # 足以判断“空”“被截断”“格式错”还是“拼错”。
+            "auth_present": auth_raw is not None,
+            "auth_len": len(auth_raw) if auth_raw is not None else None,
+            "auth_prefix": (auth_raw or "")[:12],
+            "auth_hex": (auth_raw or "").encode("utf-8", "replace").hex()[:120],
+            "xkey_present": x_key is not None,
+            "xkey_len": len(x_key) if x_key is not None else None,
+            # 所有请求头名（不含值）——看清 OpenClaw 到底带了哪些头
+            "header_names": sorted(k.lower() for k in request.headers.keys()),
+        }
+        with open(_AUTH_FAIL_AUDIT, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[auth-audit] 落盘失败: {e}", flush=True)
+
+
 def _gateway_auth(request: Request) -> Dict[str, Any]:
     """统一的 /v1 访问校验。返回 ``{"ok": bool, ...}``，失败时由调用方转 401。"""
     state = api_keys.get_state()
@@ -1425,6 +1469,7 @@ def health():
 async def list_models(request: Request):
     gate = _gateway_auth(request)
     if not gate["ok"]:
+        _audit_auth_failure(request, gate)
         raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
     if gate.get("keyId"):
         api_keys.mark_used(gate["keyId"])
@@ -1470,6 +1515,7 @@ async def chat_completions(request: Request):
     # 或 x-api-key: <key>；容器内 WebUI 代理走 loopback 免校验，不会被自己的密钥挡住。
     gate = _gateway_auth(request)
     if not gate["ok"]:
+        _audit_auth_failure(request, gate)
         raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
     if gate.get("keyId"):
         api_keys.mark_used(gate["keyId"])

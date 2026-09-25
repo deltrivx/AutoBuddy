@@ -10,3 +10,6 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# 本地临时脚本与草稿（不进仓库）
+.openclaw/
