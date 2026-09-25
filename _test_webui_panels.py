@@ -763,7 +763,7 @@ def main() -> int:
     script = extract_script(WEB_PROXY.read_text(encoding="utf-8"))
     check("注入脚本提取成功", len(script) > 5000, f"len={len(script)}")
     check("脚本里存在自动启动逻辑（说明是完整的那一段）",
-          "MutationObserver(() => run())" in script)
+          "MutationObserver(" in script and "run" in script)
 
     stripped = strip_bootstrap(script)
     check("已把自动启动改为导出 run / findHost（不再自动跑）",

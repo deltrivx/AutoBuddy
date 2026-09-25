@@ -35,7 +35,8 @@ RUN apt-get update && apt-get install -y \
 #   python3 patch/patch_binary.py package/bin/wb-switch-linux-x64   # 本地先验证锚点
 #   改下面这行版本号 -> 构建
 ARG WB_SWITCH_VERSION=0.1.40
-RUN npm i -g "workbuddy-switch@${WB_SWITCH_VERSION}"
+RUN npm i -g "workbuddy-switch@${WB_SWITCH_VERSION}" \
+    && ln -sf /usr/bin/workbuddy-switch /usr/local/bin/autobuddy
 
 # 安装 API 网关依赖 (FastAPI + Uvicorn + HTTPX) 与 Playwright 驱动。
 #

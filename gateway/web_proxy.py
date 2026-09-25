@@ -704,9 +704,12 @@ COLLAPSE_SCRIPT = r"""
 
   /* ------------------- WebUI 用户安全认证与登录模态框 ------------------- */
   var __wbAuthChecked = false;
+  var __wbAuthChecking = false;
   var __wbCurrentUser = null;
 
   function wbCheckAuth() {
+    if (__wbAuthChecked || __wbAuthChecking) return;
+    __wbAuthChecking = true;
     fetch("/api/auth/status")
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -724,6 +727,9 @@ COLLAPSE_SCRIPT = r"""
       })
       .catch(function() {
         __wbAuthChecked = true;
+      })
+      .finally(function() {
+        __wbAuthChecking = false;
       });
   }
 
@@ -3416,20 +3422,16 @@ COLLAPSE_SCRIPT = r"""
       navLink.addEventListener("click", function(e) {
         e.preventDefault();
         window.location.hash = "#/account-connect";
-        wbUpdateAccountConnectView();
       });
 
       nav.querySelectorAll("a:not(#wb-nav-account-connect)").forEach(function(a) {
         a.addEventListener("click", function() {
           if (window.location.hash === "#/account-connect") {
             window.location.hash = "";
-            setTimeout(wbUpdateAccountConnectView, 20);
           }
         });
       });
     }
-
-    wbUpdateAccountConnectView();
   }
 
   function wbUpdateAccountConnectView() {
@@ -3481,9 +3483,6 @@ COLLAPSE_SCRIPT = r"""
   window.addEventListener("hashchange", wbUpdateAccountConnectView);
 
   // ---------------- 侧边栏「每日任务」入口与专属视图 ----------------
-  // WorkBuddy 成长中心自动化（内置 vendor 版 WorkBuddy-Daily 脚本）：
-  // 调度配置、参与账号、执行记录与实时日志。与「账号接入」同用 hash 路由范式，
-  // 两个自定义视图互相跳过对方的隐藏状态，避免互相对齐时打架。
   function wbFmtTs(ts) {
     if (!ts) return "—";
     try { return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }); } catch (e) { return String(ts); }
@@ -3516,20 +3515,16 @@ COLLAPSE_SCRIPT = r"""
       navLink.addEventListener("click", function(e) {
         e.preventDefault();
         window.location.hash = "#/wb-daily";
-        wbUpdateWbDailyView();
       });
 
       nav.querySelectorAll("a:not(#wb-nav-wb-daily)").forEach(function(a) {
         a.addEventListener("click", function() {
           if (window.location.hash === "#/wb-daily") {
             window.location.hash = "";
-            setTimeout(wbUpdateWbDailyView, 20);
           }
         });
       });
     }
-
-    wbUpdateWbDailyView();
   }
 
   function wbUpdateWbDailyView() {
@@ -4065,9 +4060,22 @@ COLLAPSE_SCRIPT = r"""
     injectWbDaily();
   }
 
-  const observer = new MutationObserver(() => run());
+  var __wbRunTimer = null;
+  function wbDebouncedRun() {
+    if (__wbRunTimer) return;
+    __wbRunTimer = requestAnimationFrame(function() {
+      __wbRunTimer = null;
+      run();
+    });
+  }
+
+  const observer = new MutationObserver(() => wbDebouncedRun());
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener("DOMContentLoaded", run);
+  window.addEventListener("DOMContentLoaded", function() {
+    run();
+    wbUpdateAccountConnectView();
+    wbUpdateWbDailyView();
+  });
 })();
 </script>
 """
