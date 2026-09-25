@@ -15,6 +15,23 @@
 
 - 暂无。
 
+## [v0.7.6] - 2026-09-25
+
+### 新增 401 鉴权失败审计落盘（取证用）
+
+- **背景**：排查「密钥正确却偶发 401」时，容器日志只有一行 `401 Unauthorized`，且受 `--log-opt max-file=1` 限制会被轮转冲掉，导致每次只能推测、无法定案。
+- **已排除的假设**（三轮压测，全部零 401）：纯并发（同密钥 12 路同打）、中断后继续（发起后立刻断 socket 模拟 abort 再继续）、跨进程文件竞态（18091 高频调用 + 18090 高频读密钥文件，同时监控 `api_keys.json` 的 keys 数量与内容长度，全程稳定无突变）。
+- **决定性形态**：容器日志显示同一源端口（keep-alive 复用连接）先 401 后 200，例 `192.168.31.5:41392 -> 401` 紧跟 `192.168.31.5:41392 -> 200`。AutoBuddy 鉴权是纯函数式（读内存 `_STATE` + `compare_digest`），不依赖连接/时间/并发，同端口连续两请求一败一成在此侧逻辑上不成立 —— 问题指向请求带上来的 Authorization 头本身。
+
+**本次改动只加取证，不改任何鉴权行为：**
+
+- 401 时把请求原貌追加写入挂载卷下的 `auth_fail_audit.jsonl`（JSONL，独立于 docker 日志，不被轮转清理）；
+- 记录 `auth_present` / `auth_len` / `auth_prefix` / `auth_hex`，用于区分「头缺失」「空串」「被截断」「与库中密钥不匹配」四种形态；
+- 记录 `xkey_present` / `user_agent` / `header_names`，看清客户端与请求头全貌；
+- 不写明文密钥（审计文件可能被拷走），长度 + 前缀足以定案；
+- 落盘失败一律吞掉，绝不影响主流程。
+
+
 ## [v0.7.5] - 2026-09-25
 
 ### 每日任务：签到与凭据合并为一行，不再重复列账号
@@ -1230,7 +1247,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.5...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.6...HEAD
+[v0.7.6]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.5...v0.7.6
 [v0.7.5]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.4...v0.7.5
 [v0.7.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.3...v0.7.4
 [v0.7.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.2...v0.7.3
