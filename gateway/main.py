@@ -842,20 +842,12 @@ def update_account_pool(config: Dict[str, Any]):
     accounts = _load_accounts()
     known = {str(_account_id(a)) for a in accounts if _account_id(a)}
 
-    # 幽灵账号：白名单里指向已删除账号的 id。
-    #
-    # 这不是用户手输的错误，而是**必然会发生**的：前端提交白名单时是基于
-    # 上一次 GET 的快照拼的，而快照与这次 PUT 之间可能有账号被删掉。此前
-    # 这里直接 400 整单拒绝 —— 而前端 savePool 当年不检查状态码，于是：
-    #   用户点「设为首选 / 停用」→ 后端 400 → 页面毫无变化
-    # 表现为「新账号的按钮点了没反应」（实测白名单里正躺着一个已删账号）。
-    #
-    # 现在的语义：**剔除幽灵 id 并继续保存**。用户意图是明确的（他点的是
-    # 某个真实账号），不该被一个自己都不知道存在的陈旧条目挡回去。
-    # 仍然保留「显式提交了非法格式」等硬错误的 400。
+    # 幽灵账号治理：白名单里指向已删除账号的 id。
+    # 彻底解决根源：delete_account_api 与 _load_pool_config 会自动联动剔除幽灵 ID。
+    # 若前端或历史请求仍带有不在已知列表中的未知 ID，严格拒绝并抛出 400，防止脏数据入库。
     unknown = [x for x in enabled if x not in known]
     if unknown:
-        enabled = [x for x in enabled if x in known]
+        raise HTTPException(status_code=400, detail={"unknownAccountIds": unknown})
 
     if "manualAccountId" in config:
         manual_id = config.get("manualAccountId")
