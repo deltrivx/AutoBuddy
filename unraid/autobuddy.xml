@@ -11,7 +11,7 @@
   <Support>https://github.com/deltrivx/AutoBuddy/issues</Support>
   <Project>https://github.com/deltrivx/AutoBuddy</Project>
   <ReadMe>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/README.md</ReadMe>
-  <Overview>AutoBuddy 是面向 NAS 与服务器打造的多账号管理套件与 OpenAI 兼容网关。内置 SQLite 数据库持久化存储系统配置与用户认证凭据；Web 控制台支持多账号自动签到保活、积分用量监控与 Token 调用流水；内置网关将大模型以标准 /v1 接口输出给各类 Agent 客户端；内置 GitHub 账号自动化接入（容器内置 Chromium 自动下载至挂载卷，配置在 WebUI 页面直接落库）。</Overview>
+  <Overview>AutoBuddy 是面向 NAS 与服务器打造的多账号管理套件与 OpenAI 兼容网关。内置 SQLite 数据库持久化存储系统配置与用户认证凭据；Web 控制台支持多账号自动签到保活、积分用量监控与 Token 调用流水；内置网关将大模型以标准 /v1 接口输出给各类 Agent 客户端。</Overview>
   <Category>AI:Tools:Productivity:</Category>
   <WebUI>http://[IP]:[PORT:18090]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/deltrivx/AutoBuddy/main/unraid/autobuddy.xml</TemplateURL>
@@ -29,7 +29,6 @@
   
   <!-- 持久化挂载路径（遵循全小写规范） -->
   <Config Name="数据持久化目录" Target="/data" Default="/mnt/user/appdata/autobuddy/data" Mode="rw" Description="数据根目录：存储 SQLite 数据库 (autobuddy.db)、账号 Token、系统配置与统计流水" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/data</Config>
-  <Config Name="浏览器缓存目录" Target="/data/.autobuddy/browsers" Default="/mnt/user/appdata/autobuddy/browsers" Mode="rw" Description="Playwright 浏览器内核持久化目录：首次启动自动下载并持久化，容器升级与重建无需重复下载" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/autobuddy/browsers</Config>
 
   <!-- 用户认证凭据（强制认证，可通过环境变量覆盖或在页面修改） -->
   <Config Name="WebUI 管理员账号" Target="AUTH_USERNAME" Default="admin" Mode="" Description="控制台登录账号（未配置时默认使用 admin）" Type="Variable" Display="always" Required="false" Mask="false">admin</Config>

@@ -37,30 +37,17 @@ RUN npm i -g "workbuddy-switch@${WB_SWITCH_VERSION}" \
     && printf '#!/bin/sh\nexec /usr/local/bin/autobuddy-engine "$@"\n' > /usr/local/bin/autobuddy \
     && chmod +x /usr/local/bin/autobuddy
 
-# 安装 API 网关依赖 (FastAPI + Uvicorn + HTTPX) 与 Playwright 驱动。
+# 安装 API 网关依赖 (FastAPI + Uvicorn + HTTPX)。
 #
-# **只装驱动，不装浏览器**。Chromium 体积大（解包后 100MB+）且随上游频繁发版，
-# 打进镜像会让每次构建都多背一份、推拉都变慢。改为运行时从 UI 手动下载到挂载目录
-# （挂载点见下方 PLAYWRIGHT_BROWSERS_PATH），一次下载多容器复用、升级不重建。
-#
-# 注意必须是 `patchright` 而不是内置浏览器：采用免检测底层自动化后者会在 pip 阶段
-# 就把浏览器拉下来，正是要避免的。浏览器改由 UI 触发 `patchright install chromium`。
+# v0.9.3 起「账号接入」功能已全线移除，不再需要 playwright / patchright
+# 及 Chromium 系统库，镜像体积与依赖面同步收敛。
 RUN pip3 install --no-cache-dir --break-system-packages \
     fastapi \
     uvicorn \
     httpx \
     requests \
-    patchright
-
-# Chromium 的运行时系统库（headless 下的共享库依赖）。
-# 这些是 apt 包、体积可控，且不随 Playwright 版本变化，留在镜像里比运行时再装可靠 ——
-# 运行时补装需要 apt 源与外网，NAS 上常常不具备。
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-        libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-        libgbm1 libasound2t64 libpango-1.0-0 libpangocairo-1.0-0 \
-        fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
+    \
+    && rm -rf /root/.cache/pip
 
 WORKDIR /app
 COPY gateway/ /app/gateway/
@@ -94,11 +81,6 @@ ENV HOME=/data
 ENV AB_DATA_DIR=/data/.autobuddy
 ENV PORT=18090
 ENV API_PORT=18091
-
-# 浏览器安装目录指向挂载卷（Unraid 模板里的「浏览器缓存目录」映射到这里）。
-# 镜像内不再打包 Chromium，改由 UI 触发 `playwright install chromium` 下载到此处；
-# 宿主机持久化后，容器重建/升级都不必重下。
-ENV PLAYWRIGHT_BROWSERS_PATH=/data/.autobuddy/browsers
 
 EXPOSE 18090 18091
 

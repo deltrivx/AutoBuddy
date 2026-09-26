@@ -38,8 +38,7 @@
 - **多账号集中管理**：自动签到保活、积分到期监控、Token 自动刷新与用量统计；
 - **并发智能分摊**：多账号并发请求自动路由轮询，支持账号级停用、首选指定与单次覆盖；
 - **模型级细粒度控制**：支持针对特定账号禁用指定模型，配合后台可用性巡检与自动降级；
-- **标准 API 转换**：将全系列大模型转换为标准 OpenAI `/v1` 接口，无缝接入各类下游客户端；
-- **自动化账号接入**：内置 GitHub 注册服务与浏览器运行时，全流程可视化。
+- **标准 API 转换**：将全系列大模型转换为标准 OpenAI `/v1` 接口，无缝接入各类下游客户端。
 
 ---
 
@@ -124,7 +123,8 @@ docker run -d \
 | 容器路径 | 宿主机推荐路径 | 说明 |
 | :--- | :--- | :--- |
 | `/data` | `/mnt/user/appdata/autobuddy/data` | 系统数据库、账号凭证、选号日志与策略配置。容器升级不丢失任何数据。 |
-| `/data/.autobuddy/browsers` | 可选独立挂载 | Playwright 浏览器内核持久化目录，避免重建重复下载。 |
+
+> 注：当前版本起不再需要独立的浏览器缓存目录（账号接入功能已移除）。
 
 ---
 
@@ -155,3 +155,15 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 - **更新日志**：详见 [CHANGELOG.md](CHANGELOG.md)
 - **版本归档**：详见 [RELEASES.md](RELEASES.md)
 - **开源协议**：本项目基于 [MIT License](LICENSE) 授权开发
+
+## 🙏 致谢
+
+本项目是 [WorkBuddy-Switch](https://www.npmjs.com/package/workbuddy-switch) 的容器化与网关化改造，
+将其原生客户端能力（账号管理、自动签到、Token 刷新）包装为标准 OpenAI 兼容网关，
+并补齐多账号轮询、模型级禁用控制、可用性巡检等 NAS/服务器场景所需的能力。
+
+- **底层引擎**：`workbuddy-switch`（通过 npm 安装的原生二进制，详见 Dockerfile 版本锁定说明）；
+- **每日任务**：内置 vendor 化的上游开源签到脚本 [L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)（MIT）；
+- **CI 构建**：GitHub Actions 云端构建并推送 GHCR，感谢 GitHub 提供免费构建资源。
+
+AutoBuddy 的每一项功能都建立在上述上游项目与开源生态之上，特此致谢。

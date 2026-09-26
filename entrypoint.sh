@@ -83,11 +83,6 @@ for f in /data/.wb-switch/*; do
 done
 
 
-# 浏览器安装目录（挂载卷，参考 MoviePilot 方案：镜像不内置浏览器，容器部署时自动下载并持久化）。
-export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.autobuddy/browsers}"
-mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
-
-
 # ==============================================================================
 # 代理环境与精确分流规则
 # 严格遵守局域网防回环与 Python SDK/httpx 对 NO_PROXY 精确 IP 列表的硬性约束：
