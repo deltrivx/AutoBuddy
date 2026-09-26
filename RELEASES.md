@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.1)
+**当前稳定版：** [v0.9.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.2)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.2) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.2.md) |
 | [v0.9.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.1) | 2026-09-26 | 修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.1.md) |
 | [v0.9.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.0) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.0.md) |
 | [v0.8.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.2) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.2.md) |
@@ -94,7 +95,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.1    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.2    # 锁定版本
 ```
 
 ## 部署产物
