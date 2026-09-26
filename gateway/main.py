@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.8.1"
+VERSION_DEFAULT = "0.8.2"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -389,7 +389,38 @@ _ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {
     "next_index": 0,
     "last_selected_id": None,
     "last_selected_source": None,
+    # 每个账号的「在飞请求数」：并发请求优先分配给当前最闲的账号，
+    # 而不是机械地按固定顺序轮询导致同一账号被连续命中。
+    "inflight": {},
 }
+
+
+def _acquire_account_slot(account_id: str) -> None:
+    """记一次在飞请求（进入上游调用前调用）。"""
+    if not account_id:
+        return
+    with _SELECTION_LOCK:
+        inflight = _ACCOUNT_POOL_RUNTIME.setdefault("inflight", {})
+        inflight[str(account_id)] = int(inflight.get(str(account_id), 0)) + 1
+
+
+def _release_account_slot(account_id: str) -> None:
+    """释放一次在飞请求（上游调用结束，无论成败都要调）。"""
+    if not account_id:
+        return
+    with _SELECTION_LOCK:
+        inflight = _ACCOUNT_POOL_RUNTIME.setdefault("inflight", {})
+        cur = int(inflight.get(str(account_id), 0))
+        if cur <= 1:
+            inflight.pop(str(account_id), None)
+        else:
+            inflight[str(account_id)] = cur - 1
+
+
+def inflight_snapshot() -> Dict[str, int]:
+    """当前各账号在飞请求数（供状态接口/前端展示并发分布）。"""
+    with _SELECTION_LOCK:
+        return {k: int(v) for k, v in (_ACCOUNT_POOL_RUNTIME.get("inflight") or {}).items()}
 
 # 选账号流水：用于观测「并发请求到底分摊到了哪些账号」。
 # 只保留最近 200 条，避免无界增长。
@@ -481,6 +512,7 @@ def selection_stats(limit: int = 20) -> Dict[str, Any]:
     return {
         "total": len(entries),
         "distinctAccounts": len(counts),
+        "inflight": inflight_snapshot(),
         "counts": [
             {"accountId": aid, "accountName": names.get(aid), "count": c}
             for aid, c in counts.most_common()
@@ -544,11 +576,26 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         candidates = explicit_pool
     if not candidates:
         return None
-    # 取号与递增必须在同一把锁内完成，否则并发下会重复命中同一账号。
+    # 并发优先：选「在飞请求数最少」的账号。
+    #
+    # 此前是固定顺序的单指针轮询（next_index 递增），在**串行**请求下看起来没问题，
+    # 但并发场景下同一个账号可能在别的请求还没返回时被反复命中——尤其是
+    # 「候选集里只有少数账号支持某模型」时，慢请求会把同一个账号拖成瓶颈。
+    # 改成按在飞数排序后：同分时沿用轮询起点保证均匀，整体上把并发真正摊开。
     with _SELECTION_LOCK:
-        index = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0)) % len(candidates)
-        _ACCOUNT_POOL_RUNTIME["next_index"] = (index + 1) % len(candidates)
-    acc = candidates[index]
+        inflight = _ACCOUNT_POOL_RUNTIME.setdefault("inflight", {})
+        base = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0))
+        n = len(candidates)
+        # 以固定起点做一次环形遍历，保证同分账号之间仍然是轮转的
+        ordered = [candidates[(base + i) % n] for i in range(n)]
+        ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
+        acc = ordered[0]
+        # 把起点推进到「刚选中的那个账号的下一个」，保持长期均匀
+        try:
+            picked_pos = candidates.index(acc)
+        except ValueError:
+            picked_pos = base
+        _ACCOUNT_POOL_RUNTIME["next_index"] = (picked_pos + 1) % n
     return _remember_selection(acc, "auto")
 
 
@@ -1609,6 +1656,11 @@ async def chat_completions(request: Request):
     served_account_id = _account_id(acc) or ""
     served_account_name = _account_label(acc)
 
+    # 标记一次在飞请求：让并发请求优先落到「当前最闲」的账号（select_account 据此排序），
+    # 而不是所有并发都压在同一个账号上。下游无论是流式还是非流式都必须释放，
+    # 所以统一挂在 finally / 生成器收尾两处。
+    _acquire_account_slot(served_account_id)
+
     requested_stream = body.get("stream", False)
 
     body["model"] = target_model
@@ -1644,6 +1696,7 @@ async def chat_completions(request: Request):
             finally:
                 await res.aclose()
                 await client.aclose()
+                _release_account_slot(served_account_id)
                 duration = time.time() - start_time
                 usage = scanner.usage
                 # 拿不到 usage 只有一种情况：客户端中途断开、末帧没到。
@@ -1674,6 +1727,7 @@ async def chat_completions(request: Request):
             content = await res.aread()
             await res.aclose()
             await client.aclose()
+            _release_account_slot(served_account_id)
             return Response(content=content, status_code=res.status_code, headers={"Content-Type": "application/json"})
 
         collected_content = ""
@@ -1708,6 +1762,7 @@ async def chat_completions(request: Request):
         finally:
             await res.aclose()
             await client.aclose()
+            _release_account_slot(served_account_id)
 
         duration = time.time() - start_time
         record_token_usage(

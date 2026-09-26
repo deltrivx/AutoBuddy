@@ -112,17 +112,38 @@ COLLAPSE_SCRIPT = r"""
     z-index: 9800;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px 6px 6px;
-    border-radius: 999px;
+    gap: 0;
+    padding: 0;
+    width: 44px;
+    height: 44px;
+    justify-content: center;
+    border-radius: 50%;
     background: var(--card, #ffffff);
     border: 1px solid var(--border, rgba(120,120,120,0.25));
     box-shadow: 0 6px 18px rgba(0,0,0,0.14);
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
+    overflow: hidden;
+    transition: width 0.18s ease, border-radius 0.18s ease, padding 0.18s ease, gap 0.18s ease;
   }
-  #wb-user-orb img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: block; }
+  /* 展开态：改回胶囊并露出昵称（点击或悬浮均可） */
+  #wb-user-orb.wb-orb-open {
+    width: auto;
+    height: 44px;
+    padding: 0 14px 0 5px;
+    gap: 8px;
+    border-radius: 999px;
+  }
+  #wb-user-orb img {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+    flex-shrink: 0;
+    margin: 0;
+  }
   #wb-user-orb .wb-orb-nick {
     display: none;
     max-width: 140px;
@@ -136,17 +157,20 @@ COLLAPSE_SCRIPT = r"""
   /* 平时只显示头像；点击展开浮窗时才露出昵称 */
   #wb-user-orb.wb-orb-open .wb-orb-nick { display: inline; }
   @media (max-width: 720px) {
-    #wb-user-orb { padding: 5px; right: 14px; bottom: 14px; }
+    #wb-user-orb { width: 40px; height: 40px; right: 14px; bottom: 14px; }
+    #wb-user-orb img { width: 32px; height: 32px; }
   }
-  /* 官方图标是方形 App 图标：圆形硬裁会切坏内容，改 contain + 底衬完整显示 */
-  img.wb-avatar-official {
-    object-fit: contain !important;
-    padding: 6%;
+  /* 官方图标是方形 App 图标：后端已用圆形 SVG 出口兜底，前端只负责保持正圆 */
+  img.wb-avatar-round {
+    border-radius: 50% !important;
+    object-fit: cover;
     background: var(--muted, rgba(120,120,120,0.12));
     box-sizing: border-box;
   }
   /* 右下角浮窗：有意义的信息行（剩余积分 / 今日消耗 / 账号数量） */
   .wb-pop-stats { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+  /* 密码掩码：等宽字体保证 * 等宽，视觉上能反映真实位数 */
+  .wb-pwd-mask { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; letter-spacing: 2px; color: var(--muted-foreground, #64748b); }
   .wb-pop-stat { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
   .wb-pop-stat-k { color: var(--muted-foreground, #64748b); }
   .wb-pop-stat-v { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -189,9 +213,10 @@ COLLAPSE_SCRIPT = r"""
   .wb-avatar-pick { display: flex; align-items: flex-start; gap: 12px; }
   .wb-avatar-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border, rgba(120,120,120,0.3)); flex-shrink: 0; }
   .wb-avatar-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .wb-avatar-opt { width: 42px; height: 42px; border-radius: 50%; border: 2px solid transparent; padding: 0; background: transparent; cursor: pointer; overflow: hidden; }
+  .wb-avatar-opt { width: 42px; height: 42px; border-radius: 50%; border: 2px solid transparent; padding: 0; background: transparent; cursor: pointer; overflow: hidden; box-sizing: border-box; flex-shrink: 0; }
   .wb-avatar-opt img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
   .wb-avatar-opt.active { border-color: #3b82f6; }
+  .wb-avatar-pick button { line-height: 1; }
   /* 隐藏桌面端专有无法在容器执行的操作按钮与完全磁盘访问提示块 */
   .wb-mac-btn-hide,
   .wb-mac-block-hide {
@@ -1038,12 +1063,14 @@ COLLAPSE_SCRIPT = r"""
       var p = WB_AVATAR_PRESETS[kind.slice(7)];
       return p ? wbSvgDataUri(p.svg) : "/icon.png";
     }
-    return (kind === "custom" ? "/api/auth/avatar?ts=" + (fresh ? Date.now() : "1") : "/icon.png");
+    return (kind === "custom" ? "/api/auth/avatar?ts=" + (fresh ? Date.now() : "1") : "/api/auth/avatar?official=1");
   }
 
   // 官方 App 图标是方形：圆形硬裁会切坏内容，套底衬完整显示；预设/自定义已是圆形构图，照常 cover
   function wbApplyAvatarImg(img, kind) {
-    img.className = (!kind || kind === "official") ? "wb-avatar-official" : "";
+    // 所有头像（官方 / 预设 / 自定义）统一圆形。官方图标由后端 SVG 出口
+    // 提供「纯圆底衬 + 居中 logo」，因此前端无需再区分 contain / cover。
+    img.className = "wb-avatar-round";
   }
 
   // 头像选择器（官方 + 内置风格预设）：弹窗与设置卡共用
@@ -1065,7 +1092,7 @@ COLLAPSE_SCRIPT = r"""
       var im = document.createElement("img");
       im.src = src;
       im.alt = label;
-      wbApplyAvatarImg(im, kind);
+      im.className = "wb-avatar-round";
       b.appendChild(im);
       b.onclick = function() { picked = kind; setActive(kind); onPick(kind); };
       wrap.appendChild(b);
@@ -1249,7 +1276,14 @@ COLLAPSE_SCRIPT = r"""
     var row3 = wbEl("div", "wb-api-row");
     var main3 = wbEl("div", "wb-api-main");
     main3.appendChild(wbEl("div", "wb-api-label", "登录密码"));
-    main3.appendChild(wbEl("div", "wb-api-desc", "会话有效期 " + (d.sessionHours || 24) + " 小时，到期后需重新登录。"));
+    // 密码掩码：已设定密码时按实际长度展示同位数 *（不泄露真实字符）
+    var maskLen = d.passwordLength || (d.passwordLocked ? 8 : 0);
+    if (maskLen > 0) {
+      var maskEl = wbEl("div", "wb-pwd-mask");
+      maskEl.textContent = new Array(Math.min(maskLen, 40) + 1).join("*");
+      maskEl.title = "密码已设定（共 " + maskLen + " 位）";
+      main3.appendChild(maskEl);
+    }
     row3.appendChild(main3);
     if (d.passwordLocked) {
       var lockBadge2 = wbEl("span", "wb-api-badge", "环境变量已设，不可修改");
@@ -1609,7 +1643,25 @@ COLLAPSE_SCRIPT = r"""
     }
     orb.addEventListener("click", function(e) {
       e.stopPropagation();
-      openPop();
+      if (pop) { closePop(); } else { openPop(); }
+    });
+    // 鼠标悬浮即自动展开（含浮窗），移开后由全局点击/悬浮判定收纳
+    orb.addEventListener("mouseenter", function() {
+      if (!pop) openPop();
+    });
+    orb.addEventListener("mouseleave", function() {
+      // 延迟收纳：给鼠标移向浮窗留出路径，避免中途闪烁
+      clearTimeout(orb.__wbLeaveTimer);
+      orb.__wbLeaveTimer = setTimeout(function() {
+        if (pop && !pop.matches(":hover")) closePop();
+      }, 220);
+    });
+    document.addEventListener("mousemove", function(ev) {
+      if (!pop) return;
+      var r = orb.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+      var inside = (ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom)
+                || (ev.clientX >= pr.left && ev.clientX <= pr.right && ev.clientY >= pr.top && ev.clientY <= pr.bottom);
+      if (!inside) closePop();
     });
   }
 
@@ -5092,6 +5144,18 @@ def _env_pass_set() -> bool:
     return bool((os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "").strip())
 
 
+def _env_pass_len() -> Optional[int]:
+    """返回环境变量密码的长度，供前端展示同位数掩码；未设置时返回 None。"""
+    pwd = (os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "").strip()
+    return len(pwd) if pwd else None
+
+
+try:
+    from gateway.official_avatar_svg import official_avatar_svg as _official_avatar_svg
+except Exception:
+    from official_avatar_svg import official_avatar_svg as _official_avatar_svg
+
+
 # 启动即把历史超长会话压回当前默认有效期上限：
 # 旧版本签发过 7 天票据，收紧到 24h 后必须让它们立即到期，
 # 否则「过了有效期必须重新登录」对老会话不生效。
@@ -5120,6 +5184,7 @@ async def auth_status(
         "avatar": db.get_avatar() if user else "official",
         "usernameLocked": _env_user_set(),
         "passwordLocked": _env_pass_set(),
+        "passwordLength": _env_pass_len(),
         "loginAt": int(info["created_at"] * 1000) if info else None,
         "expiresAt": int(info["expires_at"] * 1000) if info else None,
         "sessionHours": db.session_hours(),
@@ -5255,16 +5320,16 @@ async def auth_avatar_upload(request: Request, user: Optional[str] = Depends(get
 
 @app.get("/api/auth/avatar")
 async def auth_avatar_get():
-    """统一头像出口：自定义了头像回自定义图，否则回官方图标。"""
+    """统一头像出口：自定义回自定义图，否则回官方图标（圆形 SVG 底衬）。"""
     if db.get_avatar() == "custom" and AVATAR_PATH.exists():
         data = AVATAR_PATH.read_bytes()
         mime = _avatar_mime(data[:12]) or "image/png"
         return Response(content=data, media_type=mime, headers={"Cache-Control": "no-cache"})
-    if ICON_PATH.exists():
-        return Response(content=ICON_PATH.read_bytes(), media_type="image/png")
-    async with _internal_client() as client:
-        r = await client.get(f"{BACKEND_URL}/icon.png")
-        return Response(content=r.content, media_type="image/png")
+    return Response(
+        content=_official_avatar_svg(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.post("/api/auth/username")

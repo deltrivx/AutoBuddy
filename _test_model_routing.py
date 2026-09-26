@@ -75,7 +75,7 @@ ACCOUNTS = [
 ]
 ns["_load_accounts"] = lambda: ACCOUNTS
 ns["_account_is_usable"] = lambda a, now: True
-ns["_ACCOUNT_POOL_RUNTIME"] = {"next_index": 0, "last_selected_id": None, "last_selected_source": None}
+ns["_ACCOUNT_POOL_RUNTIME"] = {"next_index": 0, "last_selected_id": None, "last_selected_source": None, "inflight": {}}
 ns["_SELECTION_LOCK"] = __import__("threading").Lock()
 ns["_SELECTION_LOG"] = []
 ns["_save_selection_log_locked"] = lambda: None
