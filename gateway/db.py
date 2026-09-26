@@ -207,11 +207,33 @@ def verify_user(username: str, password: str) -> bool:
         return hash_password(password, row["salt"]) == row["password_hash"]
 
 
-def create_session(username: str, duration_hours: int = 168) -> str:
-    """创建会话，默认 7 天有效期。"""
+def session_hours() -> int:
+    """会话有效期（小时）。可用环境变量 AUTOBUDDY_SESSION_HOURS 调节，默认 24。"""
+    try:
+        h = int(os.getenv("AUTOBUDDY_SESSION_HOURS", "24"))
+        return h if h > 0 else 24
+    except (TypeError, ValueError):
+        return 24
+
+
+def clamp_sessions_to_default() -> None:
+    """把现存会话统一压到当前默认有效期上限。
+
+    用途：历史上签发过更长的票据（如 7 天），升级后立即让它们到期，
+    保证「过了有效期必须重新登录」的口径对旧会话同样生效。
+    """
+    horizon = time.time() + session_hours() * 3600
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE sessions SET expires_at = ? WHERE expires_at > ?", (horizon, horizon))
+        conn.commit()
+
+
+def create_session(username: str, duration_hours: Optional[int] = None) -> str:
+    """创建会话，默认 24 小时有效期（可用环境变量 AUTOBUDDY_SESSION_HOURS 调节）。"""
     token = secrets.token_hex(32)
     now = time.time()
-    expires_at = now + (duration_hours * 3600)
+    expires_at = now + ((duration_hours if duration_hours else session_hours()) * 3600)
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # 清理已过期会话
@@ -237,10 +259,34 @@ def validate_session(token: str) -> Optional[str]:
     return None
 
 
+def get_session_info(token: str) -> Optional[Dict[str, Any]]:
+    """返回会话详情（用户名 / 创建 / 过期时间），供前端显示登录时间与倒计时。"""
+    if not token:
+        return None
+    now = time.time()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT username, created_at, expires_at FROM sessions WHERE token = ?", (token,))
+        row = cursor.fetchone()
+        if row and row["expires_at"] > now:
+            return {"username": row["username"], "created_at": row["created_at"],
+                    "expires_at": row["expires_at"]}
+    return None
+
+
 def destroy_session(token: str) -> None:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.commit()
+
+
+def destroy_all_sessions(username: str) -> None:
+    """销毁某用户全部会话（改用户名 / 改密码后强制重新登录）。"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sessions WHERE username = ?", (username,))
         conn.commit()
 
 
@@ -256,6 +302,57 @@ def change_password(username: str, new_password: str) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+def change_username(old_username: str, new_username: str) -> bool:
+    """修改登录用户名。新名已存在时返回 False，由调用方提示。"""
+    if not new_username or new_username == old_username:
+        return False
+    now = time.time()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE username = ?", (new_username,))
+        if cursor.fetchone():
+            return False
+        cursor.execute(
+            "UPDATE users SET username = ?, updated_at = ? WHERE username = ?",
+            (new_username, now, old_username)
+        )
+        ok = cursor.rowcount > 0
+        if ok:
+            # 昵称若仍是旧用户名（从未自定义过），跟随新用户名；自定义过则保持不变
+            cursor.execute("SELECT value FROM system_config WHERE key = 'profile.nickname'")
+            row = cursor.fetchone()
+            if not row or row["value"] == json.dumps(old_username, ensure_ascii=False) or row["value"] == old_username:
+                cursor.execute(
+                    "INSERT INTO system_config (key, value, category, description, updated_at) VALUES ('profile.nickname', ?, 'profile', '用户昵称', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                    (new_username, now)
+                )
+        conn.commit()
+        return ok
+
+
+# ---------------- 用户资料（昵称 / 头像，存 system_config） ----------------
+
+def get_nickname(username: str) -> str:
+    """昵称默认等于用户名；用户自定义过则以 system_config 里那份为准。"""
+    val = get_config("profile.nickname")
+    return str(val).strip() if val and str(val).strip() else username
+
+
+def set_nickname(nickname: str) -> None:
+    set_config("profile.nickname", nickname.strip(), category="profile", description="用户昵称")
+
+
+def get_avatar() -> str:
+    """头像类型：'official'（默认官方图标）或 'custom'（自定义上传）。"""
+    val = get_config("profile.avatar")
+    return str(val) if val in ("official", "custom") else "official"
+
+
+def set_avatar(kind: str) -> None:
+    set_config("profile.avatar", kind, category="profile", description="头像类型 official/custom")
 
 
 # ---------------- 系统配置持久化 ----------------

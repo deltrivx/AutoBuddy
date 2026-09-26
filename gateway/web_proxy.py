@@ -85,6 +85,86 @@ COLLAPSE_SCRIPT = r"""
   aside.wb-collapsed nav a span.wb-nav-label {
     display: none !important;
   }
+  /* 收拢态导航悬停提示：图标模式下用悬浮气泡补偿名称，收拢后零文字残留 */
+  aside.wb-collapsed nav a { position: relative; }
+  aside.wb-collapsed nav a:hover::after {
+    content: attr(data-wb-label);
+    position: absolute;
+    left: calc(100% + 12px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--card, #ffffff);
+    color: var(--foreground, #0f172a);
+    border: 1px solid var(--border, rgba(120,120,120,0.25));
+    box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 80;
+    pointer-events: none;
+  }
+  /* 右下角用户球（头像 + 昵称，窄屏只留头像）与弹出层 */
+  #wb-user-orb {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 9800;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 6px;
+    border-radius: 999px;
+    background: var(--card, #ffffff);
+    border: 1px solid var(--border, rgba(120,120,120,0.25));
+    box-shadow: 0 6px 18px rgba(0,0,0,0.14);
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #wb-user-orb img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: block; }
+  #wb-user-orb .wb-orb-nick {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--foreground, #0f172a);
+  }
+  @media (max-width: 720px) {
+    #wb-user-orb { padding: 5px; right: 14px; bottom: 14px; }
+    #wb-user-orb .wb-orb-nick { display: none; }
+  }
+  #wb-user-pop {
+    position: fixed;
+    right: 18px;
+    bottom: 64px;
+    z-index: 9801;
+    width: 264px;
+    background: var(--card, #ffffff);
+    color: var(--foreground, #0f172a);
+    border: 1px solid var(--border, rgba(120,120,120,0.25));
+    border-radius: 14px;
+    box-shadow: 0 14px 34px rgba(0,0,0,0.2);
+    padding: 14px;
+    font-size: 12.5px;
+  }
+  @media (max-width: 720px) { #wb-user-pop { right: 12px; bottom: 60px; } }
+  .wb-pop-head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border, rgba(120,120,120,0.18)); }
+  .wb-pop-head img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+  .wb-pop-menu { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+  .wb-pop-item { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; color: inherit; cursor: pointer; }
+  .wb-pop-item:hover:not(:disabled) { background: var(--muted, rgba(120,120,120,0.12)); }
+  .wb-pop-item:disabled { opacity: 0.5; cursor: not-allowed; }
+  .wb-pop-item.danger { color: #ef4444; }
+  .wb-pop-meta { margin-top: 8px; font-size: 11.5px; color: var(--muted-foreground, #64748b); line-height: 1.7; }
+  .wb-modal-input { width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border, rgba(120,120,120,0.3)); background: var(--background, #ffffff); color: inherit; font-size: 13px; box-sizing: border-box; }
+  .wb-modal-btn { width: 100%; padding: 9px; border-radius: 8px; background: #3b82f6; color: #ffffff; font-size: 13px; font-weight: 600; border: none; cursor: pointer; }
+  .wb-modal-btn:disabled { opacity: 0.6; cursor: default; }
+  .wb-modal-err { color: #ef4444; font-size: 12px; display: none; }
+  .wb-avatar-pick { display: flex; align-items: center; gap: 12px; }
+  .wb-avatar-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border, rgba(120,120,120,0.3)); }
   /* 隐藏桌面端专有无法在容器执行的操作按钮与完全磁盘访问提示块 */
   .wb-mac-btn-hide,
   .wb-mac-block-hide {
@@ -730,7 +810,8 @@ COLLAPSE_SCRIPT = r"""
         } else {
           __wbAuthChecked = true;
           __wbCurrentUser = data.username;
-          wbRenderUserBadge(data.username);
+          __wbAuthData = data;
+          wbRenderUserOrb(data);
         }
       })
       .catch(function() {
@@ -884,7 +965,6 @@ COLLAPSE_SCRIPT = r"""
           overlay.remove();
           __wbAuthChecked = true;
           __wbCurrentUser = res.username;
-          wbRenderUserBadge(res.username);
           wbToast("登录成功，欢迎使用 AutoBuddy！", "ok");
           window.location.reload();
         } else {
@@ -908,25 +988,497 @@ COLLAPSE_SCRIPT = r"""
     setTimeout(function() { passIn.focus(); }, 100);
   }
 
-  function wbRenderUserBadge(username) {
-    var aside = document.querySelector("aside");
-    if (!aside || document.getElementById("wb-user-status-bar")) return;
-    var bar = document.createElement("div");
-    bar.id = "wb-user-status-bar";
-    bar.style.cssText = "margin-top:auto;padding-top:12px;border-top:1px solid var(--border,rgba(120,120,120,0.2));display:flex;align-items:center;justify-content:space-between;font-size:11.5px;";
-    bar.innerHTML = 
-      '<div style="display:flex;align-items:center;gap:6px;min-width:0;">' +
-        '<span style="width:7px;height:7px;border-radius:50%;background:#10b981;flex-shrink:0;"></span>' +
-        '<span class="wb-nav-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;">' + username + '</span>' +
-      '</div>' +
-      '<button id="wb-logout-btn" title="退出登录" style="background:transparent;border:none;color:var(--muted-foreground,#94a3b8);cursor:pointer;padding:2px 6px;border-radius:4px;font-size:11px;">退出</button>';
-    aside.appendChild(bar);
+  var __wbAuthData = null;
 
-    document.getElementById("wb-logout-btn").onclick = function() {
-      fetch("/api/auth/logout", { method: "POST" }).then(function() {
-        window.location.reload();
+  function wbAvatarSrc(kind, fresh) {
+    return (kind === "custom" ? "/api/auth/avatar" : "/icon.png") + (fresh ? "?ts=" + Date.now() : "");
+  }
+
+  function wbFmtLeft(ms) {
+    if (!ms) return "";
+    var left = ms - Date.now();
+    if (left <= 0) return "已过期";
+    var h = Math.floor(left / 3600000), m = Math.floor((left % 3600000) / 60000);
+    return h > 0 ? ("剩余约 " + h + " 小时") : ("剩余约 " + Math.max(1, m) + " 分钟");
+  }
+
+  function wbOpenModal(title, buildBody) {
+    var overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.6);z-index:9900;display:flex;align-items:center;justify-content:center;padding:16px;";
+    var card = document.createElement("div");
+    card.style.cssText = "background:var(--card,#ffffff);color:var(--foreground,#0f172a);border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,0.25);width:100%;max-width:360px;padding:22px 20px;border:1px solid var(--border,rgba(120,120,120,0.2));position:relative;";
+    var h = document.createElement("div");
+    h.style.cssText = "font-size:15px;font-weight:700;margin-bottom:14px;";
+    h.textContent = title;
+    card.appendChild(h);
+    var closeX = document.createElement("button");
+    closeX.textContent = "×";
+    closeX.style.cssText = "position:absolute;top:10px;right:12px;background:transparent;border:none;font-size:20px;line-height:1;color:var(--muted-foreground,#64748b);cursor:pointer;padding:2px 6px;";
+    closeX.onclick = function() { overlay.remove(); };
+    card.appendChild(closeX);
+    buildBody(card, function() { overlay.remove(); });
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function(e) { if (e.target === overlay) overlay.remove(); });
+    return overlay;
+  }
+
+  function wbRefreshAuthOrb() {
+    fetch("/api/auth/status", { cache: "no-store" })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.authenticated) { __wbAuthData = d; wbRenderUserOrb(d); }
+      })
+      .catch(function() {});
+  }
+
+  function wbSaveProfileFlow(picked, fileData, fileMime, nick, errEl, done) {
+    var finish = function() {
+      fetch("/api/auth/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname: nick, avatar: picked })
+      }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res.ok) { done(); }
+        else { errEl.textContent = res.error || "保存失败"; errEl.style.display = "block"; }
+      }).catch(function() { errEl.textContent = "保存请求失败"; errEl.style.display = "block"; });
+    };
+    if (picked === "custom" && fileData) {
+      var b64 = String(fileData).split(",")[1] || "";
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      fetch("/api/auth/avatar-upload", { method: "POST", body: bytes, headers: { "Content-Type": fileMime } })
+        .then(function(r) { return r.json(); })
+        .then(function(up) {
+          if (!up.ok) { errEl.textContent = up.error || "头像上传失败"; errEl.style.display = "block"; return; }
+          finish();
+        })
+        .catch(function() { errEl.textContent = "头像上传失败"; errEl.style.display = "block"; });
+    } else {
+      finish();
+    }
+  }
+
+  function wbRenderProfileSection(host, d) {
+    if (!host || document.getElementById("settings-profile")) return;
+    var section = wbEl("section", "min-w-0 space-y-2.5");
+    section.id = "settings-profile";
+    var head = wbEl("div", "px-1");
+    var h2 = wbEl("h2", "text-[13px] font-medium leading-5", "账号资料");
+    h2.id = "settings-profile-title";
+    head.appendChild(h2);
+    section.appendChild(head);
+    section.setAttribute("aria-labelledby", "settings-profile-title");
+
+    var card = wbEl("div", "wb-api-card");
+    var picked = d.avatar || "official";
+    var fileData = null, fileMime = null;
+
+    // ---- 1. 头像与昵称 ----
+    var row1 = wbEl("div", "wb-api-row wb-api-row-stack");
+    var pick = wbEl("div", "wb-avatar-pick");
+    var img = document.createElement("img");
+    img.src = wbAvatarSrc(picked, picked === "custom");
+    pick.appendChild(img);
+    var btns = wbEl("div", null);
+    btns.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+    var officialBtn = wbEl("button", "wb-api-btn", "使用官方图标");
+    officialBtn.onclick = function() { picked = "official"; fileData = null; img.src = wbAvatarSrc("official"); };
+    var uploadBtn = wbEl("button", "wb-api-btn", "上传自定义头像");
+    uploadBtn.title = "≤200KB，PNG / JPG / WebP";
+    var fileIn = document.createElement("input");
+    fileIn.type = "file";
+    fileIn.accept = "image/png,image/jpeg,image/webp";
+    fileIn.style.display = "none";
+    uploadBtn.onclick = function() { fileIn.click(); };
+    fileIn.onchange = function() {
+      var f = fileIn.files && fileIn.files[0];
+      if (!f) return;
+      if (f.size > 200 * 1024) { wbToast("图片超过 200KB，请压缩后再试", "err"); return; }
+      var rd = new FileReader();
+      rd.onload = function() {
+        fileData = rd.result;
+        fileMime = f.type || "image/png";
+        picked = "custom";
+        img.src = String(fileData);
+      };
+      rd.readAsDataURL(f);
+    };
+    btns.appendChild(officialBtn);
+    btns.appendChild(uploadBtn);
+    btns.appendChild(fileIn);
+    pick.appendChild(btns);
+    row1.appendChild(pick);
+
+    var nickLine = wbEl("div", null);
+    nickLine.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:10px;";
+    nickLine.appendChild(wbEl("span", "wb-api-label", "昵称"));
+    var nickIn = document.createElement("input");
+    nickIn.className = "wb-api-input";
+    nickIn.maxLength = 32;
+    nickIn.value = d.nickname || d.username || "";
+    nickLine.appendChild(nickIn);
+    var saveBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存资料");
+    var errEl = wbEl("span", null);
+    errEl.style.cssText = "color:#ef4444;font-size:12px;";
+    saveBtn.onclick = function() {
+      var nick = (nickIn.value || "").trim();
+      if (!nick) { errEl.textContent = "昵称不能为空"; return; }
+      saveBtn.disabled = true;
+      wbSaveProfileFlow(picked, fileData, fileMime, nick, errEl, function() {
+        saveBtn.disabled = false;
+        errEl.textContent = "";
+        wbToast("资料已保存", "ok");
+        wbRefreshAuthOrb();
       });
     };
+    nickLine.appendChild(saveBtn);
+    nickLine.appendChild(errEl);
+    row1.appendChild(nickLine);
+    var desc1 = wbEl("div", "wb-api-desc", "昵称显示在右下角；头像默认用官方图标，也可上传自定义图片。");
+    row1.appendChild(desc1);
+    card.appendChild(row1);
+
+    // ---- 2. 用户名 ----
+    var row2 = wbEl("div", "wb-api-row");
+    var main2 = wbEl("div", "wb-api-main");
+    main2.appendChild(wbEl("div", "wb-api-label", "用户名"));
+    main2.appendChild(wbEl("div", "wb-api-desc", d.username || ""));
+    row2.appendChild(main2);
+    if (d.usernameLocked) {
+      var lockBadge = wbEl("span", "wb-api-badge", "环境变量已设，不可修改");
+      lockBadge.title = "容器环境变量 AUTH_USERNAME 已设置，请修改环境变量后重建容器";
+      row2.appendChild(lockBadge);
+    } else {
+      var userBtn = wbEl("button", "wb-api-btn", "修改");
+      userBtn.onclick = function() { wbOpenUsernameModal(); };
+      row2.appendChild(userBtn);
+    }
+    card.appendChild(row2);
+
+    // ---- 3. 密码 ----
+    var row3 = wbEl("div", "wb-api-row");
+    var main3 = wbEl("div", "wb-api-main");
+    main3.appendChild(wbEl("div", "wb-api-label", "登录密码"));
+    main3.appendChild(wbEl("div", "wb-api-desc", "会话有效期 " + (d.sessionHours || 24) + " 小时，到期后需重新登录。"));
+    row3.appendChild(main3);
+    if (d.passwordLocked) {
+      var lockBadge2 = wbEl("span", "wb-api-badge", "环境变量已设，不可修改");
+      lockBadge2.title = "容器环境变量 AUTH_PASSWORD 已设置，请修改环境变量后重建容器";
+      row3.appendChild(lockBadge2);
+    } else {
+      var pwdBtn = wbEl("button", "wb-api-btn", "修改");
+      pwdBtn.onclick = function() { wbOpenPasswordModal(); };
+      row3.appendChild(pwdBtn);
+    }
+    card.appendChild(row3);
+
+    section.appendChild(card);
+    host.appendChild(section);
+  }
+
+  function injectProfile() {
+    var host = wbFindSettingsHost();
+    if (!host || document.getElementById("settings-profile")) return;
+    function render(d) {
+      var host2 = wbFindSettingsHost();
+      if (!host2 || document.getElementById("settings-profile")) return;
+      wbRenderProfileSection(host2, d);
+    }
+    if (__wbAuthData && __wbAuthData.username) { render(__wbAuthData); return; }
+    fetch("/api/auth/profile", { cache: "no-store" })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.username) { __wbAuthData = d; render(d); }
+      })
+      .catch(function() {});
+  }
+
+  function wbOpenProfileModal() {
+    var d = __wbAuthData || {};
+    var picked = d.avatar || "official";
+    var fileData = null, fileMime = null;
+    wbOpenModal("修改资料", function(card, close) {
+      var pick = document.createElement("div");
+      pick.className = "wb-avatar-pick";
+      pick.style.marginBottom = "14px";
+      var img = document.createElement("img");
+      img.src = wbAvatarSrc(picked, picked === "custom");
+      pick.appendChild(img);
+      var btns = document.createElement("div");
+      btns.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+      var officialBtn = document.createElement("button");
+      officialBtn.className = "wb-pop-item";
+      officialBtn.style.cssText = "border:1px solid var(--border,rgba(120,120,120,0.3));";
+      officialBtn.textContent = "使用官方图标";
+      officialBtn.onclick = function() { picked = "official"; fileData = null; img.src = wbAvatarSrc("official"); };
+      var uploadBtn = document.createElement("button");
+      uploadBtn.className = "wb-pop-item";
+      uploadBtn.style.cssText = "border:1px solid var(--border,rgba(120,120,120,0.3));";
+      uploadBtn.textContent = "上传自定义头像（≤200KB，PNG/JPG/WebP）";
+      var fileIn = document.createElement("input");
+      fileIn.type = "file";
+      fileIn.accept = "image/png,image/jpeg,image/webp";
+      fileIn.style.display = "none";
+      uploadBtn.onclick = function() { fileIn.click(); };
+      fileIn.onchange = function() {
+        var f = fileIn.files && fileIn.files[0];
+        if (!f) return;
+        if (f.size > 200 * 1024) { wbToast("图片超过 200KB，请压缩后再试", "err"); return; }
+        var rd = new FileReader();
+        rd.onload = function() {
+          fileData = rd.result;
+          fileMime = f.type || "image/png";
+          picked = "custom";
+          img.src = String(fileData);
+        };
+        rd.readAsDataURL(f);
+      };
+      btns.appendChild(officialBtn);
+      btns.appendChild(uploadBtn);
+      btns.appendChild(fileIn);
+      pick.appendChild(btns);
+      card.appendChild(pick);
+
+      var lab = document.createElement("label");
+      lab.style.cssText = "font-size:12px;font-weight:500;display:block;margin-bottom:4px;";
+      lab.textContent = "昵称";
+      card.appendChild(lab);
+      var nickIn = document.createElement("input");
+      nickIn.className = "wb-modal-input";
+      nickIn.maxLength = 32;
+      nickIn.value = d.nickname || d.username || "";
+      card.appendChild(nickIn);
+
+      var errEl = document.createElement("div");
+      errEl.className = "wb-modal-err";
+      errEl.style.margin = "8px 0 2px";
+      card.appendChild(errEl);
+
+      var save = document.createElement("button");
+      save.className = "wb-modal-btn";
+      save.style.marginTop = "14px";
+      save.textContent = "保存";
+      save.onclick = function() {
+        var nick = (nickIn.value || "").trim();
+        if (!nick) { errEl.textContent = "昵称不能为空"; errEl.style.display = "block"; return; }
+        save.disabled = true;
+        var finish = function() {
+          fetch("/api/auth/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nickname: nick, avatar: picked })
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+              wbToast("资料已保存", "ok");
+              close();
+              wbRefreshAuthOrb();
+            } else {
+              save.disabled = false;
+              errEl.textContent = res.error || "保存失败";
+              errEl.style.display = "block";
+            }
+          }).catch(function() {
+            save.disabled = false;
+            errEl.textContent = "保存请求失败";
+            errEl.style.display = "block";
+          });
+        };
+        if (picked === "custom" && fileData) {
+          // 先传原始字节（不走 multipart），服务端校验类型与大小
+          var b64 = String(fileData).split(",")[1] || "";
+          var bin = atob(b64);
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          fetch("/api/auth/avatar-upload", { method: "POST", body: bytes, headers: { "Content-Type": fileMime } })
+            .then(function(r) { return r.json(); })
+            .then(function(up) {
+              if (!up.ok) { save.disabled = false; errEl.textContent = up.error || "头像上传失败"; errEl.style.display = "block"; return; }
+              finish();
+            })
+            .catch(function() { save.disabled = false; errEl.textContent = "头像上传失败"; errEl.style.display = "block"; });
+        } else {
+          finish();
+        }
+      };
+      card.appendChild(save);
+    });
+  }
+
+  function wbOpenUsernameModal() {
+    wbOpenModal("修改用户名", function(card, close) {
+      var mk = function(label, type) {
+        var l = document.createElement("label");
+        l.style.cssText = "font-size:12px;font-weight:500;display:block;margin:10px 0 4px;";
+        l.textContent = label;
+        card.appendChild(l);
+        var inp = document.createElement("input");
+        inp.type = type;
+        inp.className = "wb-modal-input";
+        inp.maxLength = 32;
+        card.appendChild(inp);
+        return inp;
+      };
+      var pwdIn = mk("当前密码", "password");
+      var nameIn = mk("新用户名", "text");
+      var errEl = document.createElement("div");
+      errEl.className = "wb-modal-err";
+      errEl.style.margin = "8px 0 2px";
+      card.appendChild(errEl);
+      var save = document.createElement("button");
+      save.className = "wb-modal-btn";
+      save.style.marginTop = "14px";
+      save.textContent = "保存并重新登录";
+      save.onclick = function() {
+        save.disabled = true;
+        fetch("/api/auth/username", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ current_password: pwdIn.value, new_username: (nameIn.value || "").trim() })
+        }).then(function(r) { return r.json(); }).then(function(res) {
+          if (res.ok) { wbToast("用户名已更新，请重新登录", "ok"); setTimeout(function() { window.location.reload(); }, 800); }
+          else { save.disabled = false; errEl.textContent = res.error || "修改失败"; errEl.style.display = "block"; }
+        }).catch(function() { save.disabled = false; errEl.textContent = "请求失败"; errEl.style.display = "block"; });
+      };
+      card.appendChild(save);
+    });
+  }
+
+  function wbOpenPasswordModal() {
+    wbOpenModal("修改密码", function(card, close) {
+      var mk = function(label) {
+        var l = document.createElement("label");
+        l.style.cssText = "font-size:12px;font-weight:500;display:block;margin:10px 0 4px;";
+        l.textContent = label;
+        card.appendChild(l);
+        var inp = document.createElement("input");
+        inp.type = "password";
+        inp.className = "wb-modal-input";
+        card.appendChild(inp);
+        return inp;
+      };
+      var oldIn = mk("当前密码");
+      var newIn = mk("新密码（至少 6 位）");
+      var newIn2 = mk("确认新密码");
+      var errEl = document.createElement("div");
+      errEl.className = "wb-modal-err";
+      errEl.style.margin = "8px 0 2px";
+      card.appendChild(errEl);
+      var save = document.createElement("button");
+      save.className = "wb-modal-btn";
+      save.style.marginTop = "14px";
+      save.textContent = "保存并重新登录";
+      save.onclick = function() {
+        if (newIn.value !== newIn2.value) { errEl.textContent = "两次输入的新密码不一致"; errEl.style.display = "block"; return; }
+        save.disabled = true;
+        fetch("/api/auth/password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ old_password: oldIn.value, new_password: newIn.value })
+        }).then(function(r) { return r.json(); }).then(function(res) {
+          if (res.ok) { wbToast("密码已更新，请重新登录", "ok"); setTimeout(function() { window.location.reload(); }, 800); }
+          else { save.disabled = false; errEl.textContent = res.error || "修改失败"; errEl.style.display = "block"; }
+        }).catch(function() { save.disabled = false; errEl.textContent = "请求失败"; errEl.style.display = "block"; });
+      };
+      card.appendChild(save);
+    });
+  }
+
+  function wbRenderUserOrb(data) {
+    if (!data || !data.authenticated) return;
+    var nick = data.nickname || data.username || "";
+    var orb = document.getElementById("wb-user-orb");
+    if (orb) {
+      var oimg = orb.querySelector("img");
+      var onick = orb.querySelector(".wb-orb-nick");
+      if (oimg) oimg.src = wbAvatarSrc(data.avatar, true);
+      if (onick) onick.textContent = nick;
+      return;
+    }
+    orb = document.createElement("div");
+    orb.id = "wb-user-orb";
+    orb.title = "账号：" + (data.username || "") + "（点击查看）";
+    var img = document.createElement("img");
+    img.src = wbAvatarSrc(data.avatar, data.avatar === "custom");
+    img.alt = "用户头像";
+    orb.appendChild(img);
+    var nickEl = document.createElement("span");
+    nickEl.className = "wb-orb-nick";
+    nickEl.textContent = nick;
+    orb.appendChild(nickEl);
+    document.body.appendChild(orb);
+
+    var pop = null;
+    function closePop() { if (pop) { pop.remove(); pop = null; document.removeEventListener("click", onDoc); } }
+    function onDoc() { closePop(); }
+    function openPop() {
+      if (pop) { closePop(); return; }
+      pop = document.createElement("div");
+      pop.id = "wb-user-pop";
+      var head = document.createElement("div");
+      head.className = "wb-pop-head";
+      var himg = document.createElement("img");
+      himg.src = wbAvatarSrc(data.avatar, true);
+      head.appendChild(himg);
+      var hmain = document.createElement("div");
+      hmain.style.cssText = "min-width:0;";
+      var nrow = document.createElement("div");
+      nrow.style.cssText = "font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      nrow.textContent = nick;
+      hmain.appendChild(nrow);
+      if (data.username && data.username !== nick) {
+        var urow = document.createElement("div");
+        urow.style.cssText = "font-size:11px;color:var(--muted-foreground,#64748b);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+        urow.textContent = "@" + data.username;
+        hmain.appendChild(urow);
+      }
+      var srow = document.createElement("div");
+      srow.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11px;color:#10b981;margin-top:2px;";
+      var dot = document.createElement("span");
+      dot.style.cssText = "width:6px;height:6px;border-radius:50%;background:#10b981;display:inline-block;";
+      srow.appendChild(dot);
+      srow.appendChild(document.createTextNode("在线 · 会话 24 小时"));
+      hmain.appendChild(srow);
+      head.appendChild(hmain);
+      pop.appendChild(head);
+
+      var meta = document.createElement("div");
+      meta.className = "wb-pop-meta";
+      var lines = [];
+      if (data.loginAt) lines.push("登录时间：" + wbTime(data.loginAt));
+      if (data.expiresAt) lines.push("会话到期：" + wbTime(data.expiresAt) + (wbFmtLeft(data.expiresAt) ? "（" + wbFmtLeft(data.expiresAt) + "）" : ""));
+      meta.textContent = lines.join("\n");
+      meta.style.whiteSpace = "pre-line";
+      pop.appendChild(meta);
+
+      var menu = document.createElement("div");
+      menu.className = "wb-pop-menu";
+      function item(label, disabled, tip, danger, fn) {
+        var b = document.createElement("button");
+        b.className = "wb-pop-item" + (danger ? " danger" : "");
+        b.textContent = label;
+        b.disabled = !!disabled;
+        if (tip) b.title = tip;
+        if (fn) b.onclick = function() { closePop(); fn(); };
+        menu.appendChild(b);
+      }
+      item("修改资料（昵称 / 头像）", false, "", false, wbOpenProfileModal);
+      item("修改用户名", !!data.usernameLocked,
+        data.usernameLocked ? "AUTH_USERNAME 已通过环境变量设置，不可在此修改" : "", false, wbOpenUsernameModal);
+      item("修改密码", !!data.passwordLocked,
+        data.passwordLocked ? "AUTH_PASSWORD 已通过环境变量设置，不可在此修改" : "", false, wbOpenPasswordModal);
+      item("退出登录", false, "", true, function() {
+        fetch("/api/auth/logout", { method: "POST" }).then(function() { window.location.reload(); });
+      });
+      pop.appendChild(menu);
+      document.body.appendChild(pop);
+      setTimeout(function() { document.addEventListener("click", onDoc); }, 0);
+    }
+    orb.addEventListener("click", function(e) {
+      e.stopPropagation();
+      openPop();
+    });
   }
 
 
@@ -963,14 +1515,18 @@ COLLAPSE_SCRIPT = r"""
     btn.innerHTML = `<svg id="wb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`;
     
     aside.querySelectorAll("nav a").forEach(a => {
+      var label = "";
       Array.from(a.childNodes).forEach(node => {
         if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
           const span = document.createElement("span");
           span.className = "wb-nav-label";
           span.innerText = node.textContent;
+          label = node.textContent.trim();
           node.replaceWith(span);
         }
       });
+      // 收拢态只留图标：名称挪到 data 属性，悬停时用 CSS 气泡提示
+      if (label) a.setAttribute("data-wb-label", label);
     });
 
     // 窄屏（手机）上侧边栏不再是「可以收起」，而是**必须**收起：
@@ -4250,6 +4806,7 @@ COLLAPSE_SCRIPT = r"""
     wbPinAccountBlocks();
     injectApiAccess();
     injectModelHealth();
+    injectProfile();
     injectAbout();
     wbPinAboutLast();
     injectAccountConnect();
@@ -4357,7 +4914,7 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
 # ---------------------------------------------------------------------------
 # 用户认证与配置持久化 API (SQLite 驱动)
 # ---------------------------------------------------------------------------
-from fastapi import Cookie, Depends, Response
+from fastapi import Cookie, Depends, Response, HTTPException
 from pydantic import BaseModel
 
 class LoginReq(BaseModel):
@@ -4368,18 +4925,56 @@ class PwdChangeReq(BaseModel):
     old_password: str
     new_password: str
 
+class ProfileReq(BaseModel):
+    nickname: Optional[str] = None
+    avatar: Optional[str] = None  # "official" | "custom"
+
+class UsernameReq(BaseModel):
+    current_password: str
+    new_username: str
+
+
+def _env_user_set() -> bool:
+    """模板/环境里显式设置过 AUTH_USERNAME（或别名）时，用户名锁定不可改。"""
+    return bool((os.getenv("AUTH_USERNAME") or os.getenv("AUTH_USER") or os.getenv("AUTH_DEFAULT_USER") or "").strip())
+
+
+def _env_pass_set() -> bool:
+    """显式设置过 AUTH_PASSWORD（或别名）时，密码锁定不可改（每次启动都会被环境变量覆盖回去）。"""
+    return bool((os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "").strip())
+
+
+# 启动即把历史超长会话压回当前默认有效期上限：
+# 旧版本签发过 7 天票据，收紧到 24h 后必须让它们立即到期，
+# 否则「过了有效期必须重新登录」对老会话不生效。
+try:
+    db.clamp_sessions_to_default()
+except Exception as _clamp_err:
+    print(f"[auth] 历史会话压回失败（忽略）: {_clamp_err}")
+
 def get_current_user(autobuddy_session: Optional[str] = Cookie(None)) -> Optional[str]:
     if not autobuddy_session:
         return None
     return db.validate_session(autobuddy_session)
 
 @app.get("/api/auth/status")
-async def auth_status(user: Optional[str] = Depends(get_current_user)):
+async def auth_status(
+    user: Optional[str] = Depends(get_current_user),
+    autobuddy_session: Optional[str] = Cookie(None),
+):
     enabled = True
+    info = db.get_session_info(autobuddy_session) if user else None
     return {
         "enabled": enabled,
-        "authenticated": bool(user) if enabled else True,
-        "username": user or ("anonymous" if not enabled else None)
+        "authenticated": bool(user),
+        "username": user,
+        "nickname": db.get_nickname(user) if user else None,
+        "avatar": db.get_avatar() if user else "official",
+        "usernameLocked": _env_user_set(),
+        "passwordLocked": _env_pass_set(),
+        "loginAt": int(info["created_at"] * 1000) if info else None,
+        "expiresAt": int(info["expires_at"] * 1000) if info else None,
+        "sessionHours": db.session_hours(),
     }
 
 @app.post("/api/auth/login")
@@ -4387,16 +4982,24 @@ async def auth_login(req: LoginReq, response: Response):
     if not db.verify_user(req.username, req.password):
         return {"ok": False, "error": "用户名或密码错误"}
     token = db.create_session(req.username)
-    # 设置 HttpOnly Cookie，有效期 7 天
+    hours = db.session_hours()
     response.set_cookie(
         key="autobuddy_session",
         value=token,
-        max_age=7 * 24 * 3600,
+        max_age=hours * 3600,
         httponly=True,
         samesite="lax",
         path="/"
     )
-    return {"ok": True, "username": req.username}
+    return {
+        "ok": True,
+        "username": req.username,
+        "nickname": db.get_nickname(req.username),
+        "avatar": db.get_avatar(),
+        "usernameLocked": _env_user_set(),
+        "passwordLocked": _env_pass_set(),
+        "sessionHours": hours,
+    }
 
 @app.post("/api/auth/logout")
 async def auth_logout(response: Response, autobuddy_session: Optional[str] = Cookie(None)):
@@ -4406,15 +5009,128 @@ async def auth_logout(response: Response, autobuddy_session: Optional[str] = Coo
     return {"ok": True}
 
 @app.post("/api/auth/password")
-async def auth_change_pwd(req: PwdChangeReq, user: Optional[str] = Depends(get_current_user)):
+async def auth_change_pwd(req: PwdChangeReq, response: Response, user: Optional[str] = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="未登录或会话已失效")
+    if _env_pass_set():
+        return {"ok": False, "error": "AUTH_PASSWORD 已通过环境变量设置，此处不可修改（如需变更请修改容器环境变量）"}
     if not db.verify_user(user, req.old_password):
         return {"ok": False, "error": "当前密码不正确"}
     if len(req.new_password) < 6:
         return {"ok": False, "error": "新密码至少需要 6 个字符"}
     db.change_password(user, req.new_password)
-    return {"ok": True, "message": "密码修改成功"}
+    # 改密后作废该用户全部会话并清 Cookie，强制用新密码重新登录
+    db.destroy_all_sessions(user)
+    response.delete_cookie("autobuddy_session", path="/")
+    return {"ok": True, "message": "密码修改成功，请重新登录", "relogin": True}
+
+
+# ---------------- 用户资料（昵称 / 头像 / 用户名） ----------------
+
+AVATAR_PATH = db.DATA_DIR / "avatars" / "avatar.png"
+_AVATAR_MAX_BYTES = 200 * 1024
+
+
+def _avatar_mime(head: bytes) -> Optional[str]:
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:4] == b"RIFF" and len(head) >= 12 and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+@app.get("/api/auth/profile")
+async def auth_profile_get(user: Optional[str] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已失效")
+    return {
+        "username": user,
+        "nickname": db.get_nickname(user),
+        "avatar": db.get_avatar(),
+        "usernameLocked": _env_user_set(),
+        "passwordLocked": _env_pass_set(),
+        "sessionHours": db.session_hours(),
+    }
+
+
+@app.put("/api/auth/profile")
+async def auth_profile_put(req: ProfileReq, user: Optional[str] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已失效")
+    if req.nickname is not None:
+        nick = req.nickname.strip()
+        if not nick:
+            return {"ok": False, "error": "昵称不能为空"}
+        if len(nick) > 32:
+            return {"ok": False, "error": "昵称最长 32 个字符"}
+        db.set_nickname(nick)
+    if req.avatar is not None:
+        if req.avatar not in ("official", "custom"):
+            return {"ok": False, "error": "无效的头像类型"}
+        if req.avatar == "custom" and not AVATAR_PATH.exists():
+            return {"ok": False, "error": "尚未上传自定义头像"}
+        db.set_avatar(req.avatar)
+    return {"ok": True, "nickname": db.get_nickname(user), "avatar": db.get_avatar()}
+
+
+@app.post("/api/auth/avatar-upload")
+async def auth_avatar_upload(request: Request, user: Optional[str] = Depends(get_current_user)):
+    """直接收原始图片字节（不走 multipart，避免额外依赖），限 PNG/JPG/WebP、≤200KB。"""
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已失效")
+    data = await request.body()
+    if not data:
+        return {"ok": False, "error": "未收到图片数据"}
+    if len(data) > _AVATAR_MAX_BYTES:
+        return {"ok": False, "error": "图片需 ≤ 200KB"}
+    mime = _avatar_mime(data[:12])
+    if not mime:
+        return {"ok": False, "error": "仅支持 PNG / JPG / WebP 图片"}
+    try:
+        AVATAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        AVATAR_PATH.write_bytes(data)
+    except Exception as e:
+        return {"ok": False, "error": f"头像保存失败: {e}"}
+    db.set_avatar("custom")
+    return {"ok": True, "avatar": "custom"}
+
+
+@app.get("/api/auth/avatar")
+async def auth_avatar_get():
+    """统一头像出口：自定义了头像回自定义图，否则回官方图标。"""
+    if db.get_avatar() == "custom" and AVATAR_PATH.exists():
+        data = AVATAR_PATH.read_bytes()
+        mime = _avatar_mime(data[:12]) or "image/png"
+        return Response(content=data, media_type=mime, headers={"Cache-Control": "no-cache"})
+    if ICON_PATH.exists():
+        return Response(content=ICON_PATH.read_bytes(), media_type="image/png")
+    async with _internal_client() as client:
+        r = await client.get(f"{BACKEND_URL}/icon.png")
+        return Response(content=r.content, media_type="image/png")
+
+
+@app.post("/api/auth/username")
+async def auth_change_username(req: UsernameReq, response: Response, user: Optional[str] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已失效")
+    if _env_user_set():
+        return {"ok": False, "error": "AUTH_USERNAME 已通过环境变量设置，此处不可修改（如需变更请修改容器环境变量）"}
+    if not db.verify_user(user, req.current_password):
+        return {"ok": False, "error": "当前密码不正确"}
+    new_name = (req.new_username or "").strip()
+    if not new_name:
+        return {"ok": False, "error": "新用户名不能为空"}
+    if " " in new_name:
+        return {"ok": False, "error": "用户名不能包含空格"}
+    if len(new_name) > 32:
+        return {"ok": False, "error": "用户名最长 32 个字符"}
+    if not db.change_username(user, new_name):
+        return {"ok": False, "error": "新用户名已存在或不可用"}
+    db.destroy_all_sessions(new_name)
+    response.delete_cookie("autobuddy_session", path="/")
+    return {"ok": True, "username": new_name, "relogin": True}
 
 @app.get("/icon.png")
 @app.get("/icon-transparent.png")
