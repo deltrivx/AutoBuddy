@@ -9,6 +9,14 @@
 
 ---
 
+## [v0.9.1] - 2026-09-26
+
+### 修复
+
+- **修复能力矩阵重入死锁导致网关接口假死**：`_CAPABILITY_LOCK` 由 `threading.Lock()` 改为 `threading.RLock()`。在请求成功时调用 `record_capability()` 内部重入调用 `_load_capability()` 时会引发自身死锁，导致后续模型请求与健康检查挂起、网关报 502 的严重缺陷。
+- **Buddy 图标视觉统一**：移除 `.wb-nobuddy-badge` 外围虚线边框（`border: none !important`），确保无 Buddy 状态与未旅行、旅行中状态的外形视觉高度一致。
+
+
 ## [v0.9.0] - 2026-09-26
 
 ### 新增
@@ -1370,7 +1378,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.1...HEAD
+[v0.9.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.0...v0.9.1
 [v0.9.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.2...v0.9.0
 [v0.8.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.1...v0.8.2
 [v0.8.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.0...v0.8.1

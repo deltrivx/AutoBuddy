@@ -180,9 +180,9 @@ COLLAPSE_SCRIPT = r"""
     display: inline-flex !important;
     align-items: center;
     gap: 4px;
-    border: 1.5px dashed currentColor;
+    border: none !important;
     border-radius: 999px;
-    padding: 2px 7px 2px 5px;
+    padding: 2px 4px;
     vertical-align: middle;
   }
   /* 无 Buddy：虚线描边（未领养，无伙伴）——灰调 */

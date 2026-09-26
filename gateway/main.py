@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.0"
+VERSION_DEFAULT = "0.9.1"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -652,7 +652,7 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
 #   {"updatedAt": ms, "accounts": {"<account_id>": {"<model>": "yes|no", "at": ms}}}
 # ---------------------------------------------------------------------------
 _CAPABILITY_FILE = DATA_DIR / "model_capability.json"
-_CAPABILITY_LOCK = threading.Lock()
+_CAPABILITY_LOCK = threading.RLock()
 _CAPABILITY_CACHE: Dict[str, Any] = {"loadedAt": 0, "data": None}
 _CAPABILITY_CACHE_TTL_MS = 5000
 
