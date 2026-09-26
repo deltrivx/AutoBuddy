@@ -174,7 +174,8 @@ COLLAPSE_SCRIPT = r"""
   .wb-pop-stat { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
   .wb-pop-stat-k { color: var(--muted-foreground, #64748b); }
   .wb-pop-stat-v { font-weight: 600; font-variant-numeric: tabular-nums; }
-  /* 「无 Buddy」旅行徽章：文字换成虚线飞机图标，悬浮提示 */
+  /* Buddy 旅行三态徽章：同一枚官方飛機图标，仅以「线型 + 颜色」区分状态。
+     无 Buddy = 虚线灰 / 未旅行 = 实线中性 / 旅行中 = 实线主题色 */
   .wb-nobuddy-badge {
     display: inline-flex !important;
     align-items: center;
@@ -184,6 +185,15 @@ COLLAPSE_SCRIPT = r"""
     padding: 2px 7px 2px 5px;
     vertical-align: middle;
   }
+  /* 无 Buddy：虚线描边（未领养，无伙伴）——灰调 */
+  .wb-buddy-badge { display: inline-flex !important; align-items: center; gap: 4px; vertical-align: middle; }
+  .wb-buddy-badge svg { flex-shrink: 0; }
+  .wb-buddy-nobuddy { color: #94a3b8; }
+  .wb-buddy-nobuddy svg { stroke-dasharray: 3 2.4; }
+  /* 未旅行：实线（已领养，伙伴在家待命） */
+  .wb-buddy-idle { color: var(--muted-foreground, #64748b); }
+  /* 旅行中：实线 + 主题色（伙伴出门旅行） */
+  .wb-buddy-traveling { color: var(--primary, #3b82f6); }
   #wb-user-pop {
     position: fixed;
     right: 18px;
@@ -4983,14 +4993,35 @@ COLLAPSE_SCRIPT = r"""
   // 视觉重、信息重复。这里把它换成虚线描边的小飞机图标，悬浮时给出完整说明；
   // 账号领养 Buddy 后官方文案变成「未旅行 / 旅行中」等，本函数不再命中，
   // 徽章自然恢复官方原样 —— 无需任何持久化。
+  // Buddy 旅行三态徽章：统一用同一枚官方「起飞飞机」图标（plane-takeoff），
+  // 仅以「线型 + 颜色」区分状态，保证领养前后图标完全一致：
+  //   无 Buddy = 虚线灰   未旅行 = 实线中性   旅行中 = 实线主题色
+  // 官方文案落在徽章文本里，这里只替换图标与配色，不改动官方状态语义。
+  var WB_PLANE_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="22" x2="22" y2="22"></line><path d="M6.36 17.4 4 17l-2-4 1.1-.55a2 2 0 0 1 1.8 0l.17.1a2 2 0 0 0 1.8 0L8 12 5 6l.9-.45a2 2 0 0 1 2.09.2l4.02 3a2 2 0 0 0 2.1.2l4.19-2.06a2.41 2.41 0 0 1 1.73-.17L21 7a1.4 1.4 0 0 1 .87 1.99l-.38.76c-.23.46-.6.84-1.07 1.08L7.58 17.2a2 2 0 0 1-1.22.18Z"></path></svg>';
+  function wbBuddyBadgeKind(text) {
+    var t = (text || "").trim();
+    if (t === "无 Buddy") return "nobuddy";
+    if (t === "未旅行") return "idle";
+    if (t.indexOf("旅行中") === 0 || t.indexOf("剩余") === 0 || t.indexOf("即将到达") === 0) return "traveling";
+    return null;
+  }
   function wbTransformNoBuddyBadges() {
     document.querySelectorAll("span, div").forEach(function(el) {
-      if (el.classList.contains("wb-nobuddy-badge")) return;
+      if (el.classList.contains("wb-buddy-badge") || el.classList.contains("wb-nobuddy-badge")) return;
       if (el.childElementCount !== 0) return;
-      if ((el.textContent || "").trim() !== "无 Buddy") return;
-      el.classList.add("wb-nobuddy-badge");
-      el.title = "无 Buddy：还没有领养宠物伙伴。去官方端完成一次对话并领养 Buddy 后即可自动旅行";
-      el.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
+      var kind = wbBuddyBadgeKind(el.textContent);
+      if (!kind) return;
+      var cls = kind === "nobuddy" ? "wb-buddy-nobuddy"
+              : kind === "traveling" ? "wb-buddy-traveling" : "wb-buddy-idle";
+      el.classList.add("wb-buddy-badge", "wb-" + (kind === "nobuddy" ? "nobuddy-badge" : kind === "traveling" ? "traveling-badge" : "idle-badge"));
+      if (kind === "nobuddy") el.classList.add("wb-buddy-nobuddy");
+      if (kind === "traveling") el.classList.add("wb-buddy-traveling");
+      if (kind === "idle") el.classList.add("wb-buddy-idle");
+      el.title = kind === "nobuddy"
+        ? "无 Buddy：还没有领养宠物伙伴。去官方端完成一次对话并领养 Buddy 后即可自动旅行"
+        : (kind === "traveling" ? "Buddy 旅行中：伙伴正在出门旅行" : "未旅行：已领养 Buddy，当前在家待命");
+      el.innerHTML = WB_PLANE_SVG;
+      el.classList.add(cls);
     });
   }
 

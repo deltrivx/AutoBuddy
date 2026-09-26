@@ -858,6 +858,9 @@ ns = {
     "httpx": types.SimpleNamespace(Client=lambda **k: None),
     "model_health": model_health,
     "model_policy": model_policy,
+    # 生产代码里的日志去重输出（切片执行时同步注入，避免 NameError）。
+    # 用直接 print 的桩即可 —— 本测试只关心决策逻辑，不关心去重行为。
+    "lprint": lambda channel, msg, **kw: print(f"[{channel}] {msg}"),
     "_HEALTH_RUNTIME": {"running": False, "lastRunAt": None, "lastResult": None, "lastError": None},
     "_HEALTH_RUN_LOCK": __import__("threading").Lock(),
     "_load_accounts": lambda: [],

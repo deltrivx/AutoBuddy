@@ -9,6 +9,40 @@
 
 ---
 
+## [v0.9.0] - 2026-09-26
+
+### 新增
+
+- **模型级失败即时学习 + 换号重试**：上游返回「该账号不支持该模型」（11102 /
+  service info not found / not available for authorized users 等）时，立即把
+  「账号 × 模型」写入 auto 拉黑，并自动换下一个账号重试（上限 = 候选账号数）。
+  重试只发生在上游响应体尚未转发给客户端的阶段，对客户端透明。流式与非流式
+  两条路径都覆盖，因此不再出现「某个模型只有部分账号支持」导致的 model not found 报错。
+- **正向能力矩阵（账号 × 模型 支持情况）**：不止事后拉黑，还正向记录「某账号探过/
+  用过某模型且成功」。选号与换号重试时先按该矩阵优先挑「已知支持」的账号，
+  只有在确实存在支持者时才收窄候选集，避免矩阵过旧把整个账号池排除掉。
+  数据源有三条：请求成功即记 `yes`、上游拒绝即记 `no`、巡检结果回填
+  （`available` → yes，`unavailable` → no；`transient` / `probe_defect` /
+  `restricted` 不写，避免把探测侧问题伪装成模型不支持）。
+  落盘 `model_capability.json`（带 5 秒读缓存）。
+
+### 变更
+
+- **后台日志去重**：新增 `lprint()`，同一来源的相邻日志若与上一条完全相同则不再重复
+  输出，只累计次数；等出现不同日志时，先补一行「上一条重复 N 次」再输出新行，
+  观测不断档。账号选号（`[pool]`）、账号轮换（`[rotate]`）、模型巡检（`[health]`）
+  三处高频日志已切过去重输出，避免后台刷屏。
+- **Buddy 旅行徽章统一图标**：无 Buddy / 未旅行 / 旅行中三态改用**同一枚官方
+  `plane-takeoff` 起飞飞机图标**，仅以「线型 + 颜色」区分状态 ——
+  无 Buddy = 虚线灰、未旅行 = 实线中性、旅行中 = 实线主题色。
+  此前无 Buddy 用的是另一枚纸飞机且与领养后的图标不一致，现已对齐为同一枚。
+
+### 修复
+
+- 上游「账号不支持该模型」的错误形状新增识别（状态码 400/403/404 +
+  错误码 11102/11103 + 一揽子文案兜底），与限流/网络抖动/参数校验错误区分开
+  —— 后者换号也解决不了，不参与重试与学习。
+
 ## [未发布]
 
 ### 计划中
@@ -1336,7 +1370,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.0...HEAD
+[v0.9.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.2...v0.9.0
 [v0.8.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.1...v0.8.2
 [v0.8.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.0...v0.8.1
 [v0.8.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.8...v0.8.0

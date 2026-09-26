@@ -1,0 +1,21 @@
+{
+  "updatedAt": "2026-09-26 16:06",
+  "note": "AutoBuddy 网关模型可用性实测；thinking 档位按实测最优设置",
+  "partiallyAvailable": {
+    "workbuddy/gemini-3.5-flash": "仅部分账号有权，偶发 11102",
+    "workbuddy/gpt-5.6-terra": "仅部分账号有权，偶发 11102"
+  },
+  "unavailable": {
+    "workbuddy/default-model": "service info not found",
+    "workbuddy/primary-model": "service info not found",
+    "workbuddy/codewise-model-a9": "service info not found",
+    "workbuddy/gpt-5.4": "账号无权 11102",
+    "workbuddy/gpt-4o": "账号无权 11102（实为 gpt-5.4）",
+    "workbuddy/gpt-5.5": "账号无权 11102",
+    "workbuddy/gpt-5.6-sol": "账号无权 11102",
+    "workbuddy/gpt-5.3-codex": "账号无权 11102",
+    "workbuddy/claude-opus-4.6": "账号无权 11102",
+    "workbuddy/claude-sonnet-4.6": "账号无权 11102",
+    "workbuddy/gemini-3.1-pro": "账号无权 11102"
+  }
+}

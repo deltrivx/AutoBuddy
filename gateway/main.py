@@ -43,7 +43,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.8.2"
+VERSION_DEFAULT = "0.9.0"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -385,6 +385,39 @@ def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any],
     return [a for a in candidates if _account_is_usable(a, now_ms)]
 
 
+# ---------------------------------------------------------------------------
+# 后台日志去重
+#
+# 需求来源（用户 2026-09-26）：后台日志如果与上一条完全相同，就不要再打一遍；
+# 一直重复同一条会刷屏，只有当下一条不同日志出现时才显示。
+# 实现：按「通道」记录上一条原文，相同则丢弃并累计重复次数；不同则输出，
+# 若上一条曾被重复吞掉，先补一行 `(重复 N 次)` 交代清楚，不让观测断档。
+# ---------------------------------------------------------------------------
+_LOG_DEDUP_LOCK = threading.Lock()
+_LOG_DEDUP_LAST: Dict[str, str] = {}
+_LOG_DEDUP_COUNT: Dict[str, int] = {}
+
+
+def lprint(channel: str, msg: str) -> None:
+    """带去重的后台日志输出。
+
+    ``channel`` 用于隔离不同来源的日志（互不干扰），``msg`` 是要输出的原文。
+    与上一条完全相同则只累计计数、不输出；不同则输出，必要时补一行重复统计。
+    """
+    line = f"[{channel}] {msg}"
+    with _LOG_DEDUP_LOCK:
+        prev = _LOG_DEDUP_LAST.get(channel)
+        if prev == line:
+            _LOG_DEDUP_COUNT[channel] = _LOG_DEDUP_COUNT.get(channel, 0) + 1
+            return
+        repeat = _LOG_DEDUP_COUNT.get(channel, 0)
+        _LOG_DEDUP_LAST[channel] = line
+        _LOG_DEDUP_COUNT[channel] = 0
+    if repeat > 0:
+        print(f"[{channel}] (上一条重复 {repeat} 次)", flush=True)
+    print(line, flush=True)
+
+
 _ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {
     "next_index": 0,
     "last_selected_id": None,
@@ -497,7 +530,7 @@ def _remember_selection(acc: Dict[str, Any], source: str) -> Dict[str, Any]:
         # 不会出现两个线程的快照乱序覆盖。20 KB 的整份写，开销可忽略。
         _save_selection_log_locked()
     # 打日志便于 docker logs 直接核对并发分摊情况
-    print(f"[pool] {source:7s} -> {entry['accountName']} ({account_id})", flush=True)
+    lprint("pool", f"{source:7s} -> {entry['accountName']} ({account_id})")
     return acc
 
 
@@ -554,6 +587,15 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         # 让上游去返回真实错误，比在网关层编一个「无账号」更利于排查。
         if allowed:
             candidates = allowed
+        # 正向白名单（P1 能力矩阵）：探过「明确支持」的账号优先参与，
+        # 但只有在**确实存在**支持者时才收窄，避免矩阵过旧导致全池被排除。
+        try:
+            known_yes = [a for a in candidates
+                         if capability_state(_account_id(a), model) == "yes"]
+            if known_yes:
+                candidates = known_yes
+        except Exception:
+            pass
 
     by_id = {str(_account_id(a)): a for a in candidates if _account_id(a)}
 
@@ -597,6 +639,192 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
             picked_pos = base
         _ACCOUNT_POOL_RUNTIME["next_index"] = (picked_pos + 1) % n
     return _remember_selection(acc, "auto")
+
+
+# ---------------------------------------------------------------------------
+# 正向能力矩阵（账号 × 模型 支持情况）
+#
+# 与 model_policy 的「反向黑名单」互补：黑名单是事后学习（踩过才拉黑），
+# 能力矩阵是正向记录（探过支持即可放心选中）。巡检每轮的 verdicts 都会写进来，
+# 上游拒绝时也会即时记为「不支持」，两条路径共同保证选号时不撞墙。
+#
+# 存储：DATA_DIR/model_capability.json
+#   {"updatedAt": ms, "accounts": {"<account_id>": {"<model>": "yes|no", "at": ms}}}
+# ---------------------------------------------------------------------------
+_CAPABILITY_FILE = DATA_DIR / "model_capability.json"
+_CAPABILITY_LOCK = threading.Lock()
+_CAPABILITY_CACHE: Dict[str, Any] = {"loadedAt": 0, "data": None}
+_CAPABILITY_CACHE_TTL_MS = 5000
+
+
+def _load_capability() -> Dict[str, Any]:
+    """读取能力矩阵（带短暂缓存，避免每请求读盘）。"""
+    now_ms = int(time.time() * 1000)
+    with _CAPABILITY_LOCK:
+        cached = _CAPABILITY_CACHE.get("data")
+        if cached is not None and now_ms - int(_CAPABILITY_CACHE.get("loadedAt") or 0) < _CAPABILITY_CACHE_TTL_MS:
+            return cached
+        data: Dict[str, Any] = {"updatedAt": now_ms, "accounts": {}}
+        try:
+            if _CAPABILITY_FILE.exists():
+                raw = json.loads(_CAPABILITY_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and isinstance(raw.get("accounts"), dict):
+                    data["accounts"] = raw["accounts"]
+                    data["updatedAt"] = raw.get("updatedAt") or now_ms
+        except Exception as e:
+            print(f"[capability] 读取失败: {e}")
+        _CAPABILITY_CACHE["data"] = data
+        _CAPABILITY_CACHE["loadedAt"] = now_ms
+        return data
+
+
+def record_capability(account_id: Optional[str], model: Optional[str], supported: bool) -> None:
+    """记录「某账号支持/不支持某模型」。"""
+    if not account_id or not model:
+        return
+    acc_key, model_key = str(account_id), str(model)
+    with _CAPABILITY_LOCK:
+        data = dict(_load_capability())
+        accounts = dict(data.get("accounts") or {})
+        entry = dict(accounts.get(acc_key) or {})
+        now_ms = int(time.time() * 1000)
+        state = "yes" if supported else "no"
+        if entry.get(model_key) == state:
+            entry[model_key + "__at"] = now_ms
+        else:
+            entry[model_key] = state
+            entry[model_key + "__at"] = now_ms
+        accounts[acc_key] = entry
+        data["accounts"] = accounts
+        data["updatedAt"] = now_ms
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            _CAPABILITY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[capability] 写入失败: {e}")
+        _CAPABILITY_CACHE["data"] = data
+        _CAPABILITY_CACHE["loadedAt"] = now_ms
+
+
+def capability_state(account_id: Optional[str], model: Optional[str]) -> Optional[str]:
+    """查询能力状态："yes" / "no" / None（未知）。"""
+    if not account_id or not model:
+        return None
+    data = _load_capability()
+    entry = (data.get("accounts") or {}).get(str(account_id)) or {}
+    state = entry.get(str(model))
+    return state if state in ("yes", "no") else None
+
+
+def capability_snapshot() -> Dict[str, Any]:
+    """能力矩阵快照（供状态接口/前端展示）。"""
+    data = _load_capability()
+    accounts = data.get("accounts") or {}
+    summary: Dict[str, Any] = {"updatedAt": data.get("updatedAt"), "accounts": {}}
+    for aid, entry in accounts.items():
+        yes = sorted(k for k, v in entry.items() if v == "yes" and not k.endswith("__at"))
+        no = sorted(k for k, v in entry.items() if v == "no" and not k.endswith("__at"))
+        summary["accounts"][aid] = {"supported": yes, "unsupported": no,
+                                    "supportedCount": len(yes), "unsupportedCount": len(no)}
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# 上游「模型不可用」错误的识别、即时学习（auto 拉黑）与换号重试
+#
+# 需求来源（用户 2026-09-26）：如果某个模型只有部分账号支持，那么只有支持的账号
+# 参与调用，不支持的不该被选中 —— 也就不该出现 model not found 之类的报错。
+#
+# 现状缺口：模型级禁用黑名单是「事后学习」的，只有巡检跑过或人拉黑过的组合才在册。
+# 首次命中「账号 × 不支持该模型」时，网关会把上游错误直接透传给客户端。
+#
+# 本段补上：识别这类错误 → 立刻写入 auto 拉黑（下个请求起不再选中）→
+# 换下一个账号重试（上限 = 候选账号数），全部失败才把真实错误返回。
+# ---------------------------------------------------------------------------
+
+# 上游表达「这个账号用不了这个模型」的错误码/文案。
+# 11102 = 该模型仅对授权用户开放 / 服务信息不存在；其余为同类文案兜底。
+_MODEL_UNAVAILABLE_CODES = {"11102", "11103"}
+_MODEL_UNAVAILABLE_PATTERNS = (
+    "service info not found",
+    "is only available for authorized",
+    "model not found",
+    "model_not_found",
+    "not support",
+    "unsupported model",
+    "no permission to use the model",
+    "model is not available",
+)
+
+
+def _looks_like_model_unavailable(status_code: int, body_text: str) -> bool:
+    """判断上游响应是否属于「该账号不支持该模型」（可换号重试）。
+
+    只看**明确指向模型**的既有错误形状，不把限流/网络抖动/参数校验错误卷进来
+    —— 那些换号也解决不了，重试只会放大故障。
+    """
+    if status_code not in (400, 403, 404):
+        return False
+    raw = (body_text or "").strip()
+    if not raw:
+        return False
+    code = None
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            code = str(payload.get("code")) if payload.get("code") is not None else None
+            msg = str(payload.get("msg") or payload.get("message") or payload.get("error") or "")
+        else:
+            msg = raw
+    except Exception:
+        msg = raw
+    if code and code in _MODEL_UNAVAILABLE_CODES:
+        return True
+    low = msg.lower()
+    return any(p in low for p in _MODEL_UNAVAILABLE_PATTERNS)
+
+
+def _learn_model_unavailable(account_id: Optional[str], model: Optional[str]) -> bool:
+    """把这个「账号 × 模型」组合写入 auto 拉黑，返回是否真的新写入。
+
+    写的是 model_policy 的 auto 来源项：与手动禁用同一份策略，
+    巡检开启时才会被 auto-enable 放开（用户 2026-09-26 明确保留该语义）。
+    """
+    if not account_id or not model:
+        return False
+    try:
+        policy = model_policy.load_policy()
+        changed = model_policy.auto_disable(policy, str(account_id), str(model))
+        # 同步写正向能力矩阵：记为「不支持」，选号时即刻排除，不必等下次巡检。
+        record_capability(account_id, model, False)
+        if changed:
+            model_policy.save_policy(policy)
+            lprint("model-learn", f"账号 {account_id} 不支持模型 {model}，已自动拉黑（换号重试）")
+        return bool(changed)
+    except Exception as e:
+        print(f"[model-learn] 写入失败: {e}")
+        return False
+
+
+def _retry_candidates(model: Optional[str], exclude: set) -> List[Dict[str, Any]]:
+    """换号重试的候选账号：在可用池里排除已试过的，并叠加模型级禁用过滤。"""
+    accounts = _load_accounts()
+    config = _load_pool_config()
+    pool = _enabled_accounts(accounts, config)
+    if not pool:
+        pool = _enabled_accounts(accounts, config, include_disabled=True)
+    if model:
+        policy = _load_model_policy()
+        filtered = [a for a in pool if not _model_is_disabled(_account_id(a), model, policy)]
+        if filtered:
+            pool = filtered
+        try:
+            known_yes = [a for a in pool if capability_state(_account_id(a), model) == "yes"]
+            if known_yes:
+                pool = known_yes
+        except Exception:
+            pass
+    return [a for a in pool if str(_account_id(a)) not in exclude]
 
 
 _REFRESH_URLS = {
@@ -1681,9 +1909,53 @@ async def chat_completions(request: Request):
 
     client = httpx.AsyncClient(timeout=180.0)
 
+    # 已试过的账号：换号重试时用来去重，避免在同一个账号上反复撞墙。
+    tried_account_ids = {served_account_id} if served_account_id else set()
+    # 换号重试上限 = 候选账号数 + 1（首次那次不算重试）；不设死数字，
+    # 让「只有少数账号支持该模型」时能把所有可能都试一遍。
+    max_attempts = 1 + len(_retry_candidates(raw_model, tried_account_ids))
+
     if requested_stream:
         req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
         res = await client.send(req, stream=True)
+
+        # 换号重试：上游在**还没吐出任何正文**时就拒绝，且错误形状指向
+        # 「该账号不支持该模型」→ 拉黑这个组合 + 换个账号再试。
+        # 重试只发生在响应体尚未转发给客户端的阶段，所以对客户端是透明的。
+        attempt = 0
+        while True:
+            attempt += 1
+            if res.status_code == 200:
+                break
+            body_text = (await res.aread()).decode("utf-8", "ignore")
+            await res.aclose()
+            if not _looks_like_model_unavailable(res.status_code, body_text):
+                await client.aclose()
+                _release_account_slot(served_account_id)
+                return Response(content=body_text.encode("utf-8"),
+                                status_code=res.status_code,
+                                headers={"Content-Type": "application/json"})
+            # 学习 + 找下一个候选
+            _learn_model_unavailable(served_account_id, raw_model)
+            _release_account_slot(served_account_id)
+            nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
+            if not nxt or attempt >= max_attempts:
+                await client.aclose()
+                return Response(content=body_text.encode("utf-8"),
+                                status_code=res.status_code,
+                                headers={"Content-Type": "application/json"})
+            acc2 = nxt[0]
+            served_account_id = _account_id(acc2) or ""
+            served_account_name = _account_label(acc2)
+            tried_account_ids.add(served_account_id)
+            variant = acc2.get("variant", "ai")
+            base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
+            headers = {"Authorization": f"Bearer {acc2['access_token']}",
+                       "Content-Type": "application/json"}
+            _acquire_account_slot(served_account_id)
+            req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
+            res = await client.send(req, stream=True)
+            lprint("retry", f"换号重试第 {attempt} 次 -> {served_account_name}")
 
         async def stream_generator():
             # 逐块扫描而非缓冲：先 yield 把字节送出去，再解析这一块。
@@ -1715,6 +1987,12 @@ async def chat_completions(request: Request):
                     cache_write=usage["cacheWrite"] if usage else 0,
                 )
 
+        # 上游已经接受了这个「账号 × 模型」组合（200 且尚未换号），记入正向矩阵。
+        try:
+            record_capability(served_account_id, raw_model, True)
+        except Exception:
+            pass
+
         return StreamingResponse(
             stream_generator(),
             status_code=res.status_code,
@@ -1723,12 +2001,37 @@ async def chat_completions(request: Request):
     else:
         req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
         res = await client.send(req, stream=True)
-        if res.status_code != 200:
-            content = await res.aread()
+        # 非流式路径同样做「模型不可用 → 拉黑 + 换号重试」，
+        # 判定与流式一致：只在响应体尚未转发时重试。
+        while res.status_code != 200:
+            body_text = (await res.aread()).decode("utf-8", "ignore")
             await res.aclose()
-            await client.aclose()
+            if not _looks_like_model_unavailable(res.status_code, body_text):
+                await client.aclose()
+                _release_account_slot(served_account_id)
+                return Response(content=body_text.encode("utf-8"),
+                                status_code=res.status_code,
+                                headers={"Content-Type": "application/json"})
+            _learn_model_unavailable(served_account_id, raw_model)
             _release_account_slot(served_account_id)
-            return Response(content=content, status_code=res.status_code, headers={"Content-Type": "application/json"})
+            nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
+            if not nxt or len(tried_account_ids) >= max_attempts:
+                await client.aclose()
+                return Response(content=body_text.encode("utf-8"),
+                                status_code=res.status_code,
+                                headers={"Content-Type": "application/json"})
+            acc2 = nxt[0]
+            served_account_id = _account_id(acc2) or ""
+            served_account_name = _account_label(acc2)
+            tried_account_ids.add(served_account_id)
+            variant = acc2.get("variant", "ai")
+            base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
+            headers = {"Authorization": f"Bearer {acc2['access_token']}",
+                       "Content-Type": "application/json"}
+            _acquire_account_slot(served_account_id)
+            req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
+            res = await client.send(req, stream=True)
+            lprint("retry", f"非流式换号重试 -> {served_account_name}")
 
         collected_content = ""
         response_id = "chatcmpl-wb"
@@ -1981,9 +2284,9 @@ async def account_rotate_loop() -> None:
     while True:
         try:
             result = rotate_once()
-            print(f"[rotate] {result.get('status')}: {result.get('reason')}")
+            lprint("rotate", f"{result.get('status')}: {result.get('reason')}")
         except Exception as e:
-            print(f"[rotate] loop error: {e}")
+            lprint("rotate", f"loop error: {e}")
         await asyncio.sleep(ROTATE_INTERVAL_MINUTES * 60)
 
 
@@ -2185,6 +2488,28 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
                 base_models=_base_model_ids(),
             )
             summary = model_health.summarize(raw)
+            # 把巡检的有效结论回填正向能力矩阵（P1）：
+            # available -> 记为支持；unavailable -> 记为不支持。
+            # transient / probe_defect / restricted **不写** —— 那几类说明探测
+            # 没拿到有效结论（限流、参数被拒、风控拦截），写进矩阵会把探测侧
+            # 的问题伪装成「这个模型不支持」，反而让选号误伤好账号。
+            try:
+                backfilled = 0
+                for acc_report in raw.get("reports") or []:
+                    acc_id = acc_report.get("accountId")
+                    for item in acc_report.get("results") or []:
+                        verdict = item.get("verdict")
+                        model_id = item.get("model")
+                        if verdict == "available":
+                            record_capability(acc_id, model_id, True)
+                            backfilled += 1
+                        elif verdict == "unavailable":
+                            record_capability(acc_id, model_id, False)
+                            backfilled += 1
+                if backfilled:
+                    lprint("capability", f"巡检回填能力矩阵 {backfilled} 条")
+            except Exception as e:
+                print(f"[capability] 巡检回填失败: {e}")
             # 逐账号明细只在这种「手动触发」的响应里返回，便于排查；
             # 定时轮次不返回（没人看，只是白白撑大内存里的状态）。
             summary["reports"] = raw.get("reports", [])
@@ -2194,17 +2519,17 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
             # 「什么都没变」的正常巡检：整轮作废、探测被上游拒绝、账号凭据失效
             # 都属于「本轮结果不可信」，逐个给出原因。
             _HEALTH_RUNTIME["lastError"] = _health_problem_note(summary)
-            print(f"[health] round done: combos={summary.get('combos')} "
+            lprint("health", f"round done: combos={summary.get('combos')} "
                   f"available={summary['counts'].get('available')} "
                   f"unavailable={summary['counts'].get('unavailable')} "
                   f"transient={summary['counts'].get('transient')} "
                   f"probeDefect={summary['counts'].get('probe_defect')} "
                   f"authFailed={len(summary.get('authFailed') or [])} "
-                  f"aborted={summary.get('aborted')}", flush=True)
+                  f"aborted={summary.get('aborted')}")
             return summary
         except Exception as e:
             _HEALTH_RUNTIME["lastError"] = f"{type(e).__name__}: {e}"
-            print(f"[health] run failed: {e}", flush=True)
+            lprint("health", f"run failed: {e}")
             return {"error": _HEALTH_RUNTIME["lastError"]}
         finally:
             _HEALTH_RUNTIME["running"] = False
@@ -2231,7 +2556,7 @@ async def model_health_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            print(f"[health] loop error: {e}", flush=True)
+            lprint("health", f"loop error: {e}")
             await asyncio.sleep(60)
 
 if __name__ == "__main__":
