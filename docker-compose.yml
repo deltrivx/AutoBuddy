@@ -9,6 +9,12 @@ services:
     volumes:
       - ./autobuddy/data:/data
     environment:
+      # 控制台登录凭据。二者一旦设置，界面上即锁定为不可修改，
+      # 需改这里并重建容器才能变更。
+      AUTH_USERNAME: "admin"
+      AUTH_PASSWORD: "change-me"
+      # 登录会话有效期（小时）
+      AUTOBUDDY_SESSION_HOURS: "24"
       # 影响签到定时任务与统计流水的日期归属
       TZ: Asia/Shanghai
       # 容器内端口，一般无需修改；修改时两个端口映射需同步调整

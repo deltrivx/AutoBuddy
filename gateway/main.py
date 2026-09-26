@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import logging
 import threading
 import time
 from collections import Counter
@@ -43,7 +44,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.3"
+VERSION_DEFAULT = "0.9.4"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -2559,7 +2560,59 @@ async def model_health_loop() -> None:
             lprint("health", f"loop error: {e}")
             await asyncio.sleep(60)
 
+class _AccessNoiseFilter(logging.Filter):
+    """静音高频轮询与探活的 access log，只保留真正有意义的请求。
+
+    背景（用户 2026-09-26 反馈「后台日志优化你自己看优化了没」）：
+    v0.9.0 只对自家 ``lprint`` 通道做了相邻去重，但 **uvicorn 的 access log
+    完全没管** —— 实测容器日志最近 500 行里有 251 行是 ``INFO: ... GET ...``，
+    WebUI 每几秒轮询一次 /api/status、/gateway/info、/model-health/config，
+    探活每 60s 打一次 /health，页面加载再补一堆 /assets/ 静态资源，
+    真实请求（POST /v1/chat/completions）反而被淹掉。
+
+    这里按「路径 + 2xx」过滤：只有明确无信息量的成功轮询才丢弃，
+    4xx/5xx 与真实业务请求一律保留，避免把故障线索一起静音。
+    """
+
+    # WebUI 定时轮询 / 健康探活 / 静态资源 —— 成功时无信息量。
+    NOISY_PATHS = (
+        "/health",
+        "/api/status",
+        "/api/gateway-info",
+        "/gateway/info",
+        "/api/model-health",
+        "/model-health/config",
+        "/api-keys/status",
+        "/api/api-keys",
+        "/api/checkin/logs",
+        "/api/rotate/logs",
+        "/api/rotate/status",
+        "/api/rate-limits",
+        "/assets/",
+        "/icon.png",
+        "/favicon.ico",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        # 只静音成功响应；4xx/5xx 保留线索。
+        if " 2" not in msg or " OK" not in msg:
+            return True
+        return not any(p in msg for p in self.NOISY_PATHS)
+
+
+def _install_access_filter() -> None:
+    """把噪声过滤器挂到 uvicorn.access 上（幂等）。"""
+    lg = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _AccessNoiseFilter) for f in lg.filters):
+        lg.addFilter(_AccessNoiseFilter())
+
+
 if __name__ == "__main__":
     import uvicorn
+    _install_access_filter()
     port = int(os.getenv("API_PORT", 18091))
     uvicorn.run(app, host="0.0.0.0", port=port)

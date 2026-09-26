@@ -9,6 +9,30 @@
 
 ---
 
+## [v0.9.4] - 2026-09-26
+
+### 新增
+
+- **README 全面重写**：从「功能清单式罗列」改为「解决什么问题 → 功能详解 → 部署 →
+  接入 → 运维排障」的完整结构。新增账号×模型能力矩阵、可用性巡检四种状态、
+  每日任务两种模式、后台日志两层降噪、常见问题排查表等具体说明。
+
+### 优化
+
+- **后台日志彻底降噪（access log 过滤）**：此前只对自家业务日志做了相邻去重，
+  但 uvicorn 的 access log 完全没治理 —— 实测容器日志最近 500 行里有 **251 行**
+  是 `INFO: ... GET ...`（健康探活、WebUI 每几秒的轮询、静态资源），
+  真实业务请求反被淹没。现按「路径 + 2xx」过滤无信息量的成功轮询，
+  **4xx / 5xx 与真实业务请求一律保留**，故障线索不受影响。
+  WebUI 面板（:18090）与 API 网关（:18091）两个进程各自生效。
+
+### 修复
+
+- **设置页「上传自定义头像」不再被压扁在选择器下方**：该按钮此前独占一行，
+  视觉上被挤在头像网格下。现改为**与官方 / 预设头像同排的一枚圆形按钮**
+  （虚线边框 + 加号，悬浮变主题色），设置页与「修改资料」弹窗两处统一。
+  窄屏放不下时自然换行，不会挤出容器。
+
 ## [v0.9.3] - 2026-09-26
 
 ### 移除
@@ -1400,7 +1424,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.3...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.4...HEAD
+[v0.9.4]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.3...v0.9.4
 [v0.9.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.1...v0.9.3
 [v0.9.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.0...v0.9.1
 [v0.9.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.2...v0.9.0

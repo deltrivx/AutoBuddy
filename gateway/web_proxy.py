@@ -223,6 +223,33 @@ COLLAPSE_SCRIPT = r"""
   .wb-avatar-pick { display: flex; align-items: flex-start; gap: 12px; }
   .wb-avatar-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border, rgba(120,120,120,0.3)); flex-shrink: 0; }
   .wb-avatar-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* 头像选择器与「上传自定义头像」共用同一行：
+     官方 + 6 个预设 = 7 个 42px 圆钮，加上上传钮刚好排满一行，
+     上传钮不再被压到选择器下方单独占一行。
+     wrap 保留：窄屏（手机）放不下时自然换行，不会挤出容器。 */
+  .wb-avatar-grid-inline { flex: 1; min-width: 0; align-items: center; }
+  .wb-avatar-upload {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--muted-foreground, #64748b);
+    border: 2px dashed var(--border, rgba(120,120,120,0.45)) !important;
+    background: transparent !important;
+    cursor: pointer;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    transition: color .15s, border-color .15s;
+  }
+  .wb-avatar-upload:hover {
+    color: var(--primary, #3b82f6);
+    border-color: var(--primary, #3b82f6) !important;
+  }
   .wb-avatar-opt { width: 42px; height: 42px; border-radius: 50%; border: 2px solid transparent; padding: 0; background: transparent; cursor: pointer; overflow: hidden; box-sizing: border-box; flex-shrink: 0; }
   .wb-avatar-opt img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
   .wb-avatar-opt.active { border-color: #3b82f6; }
@@ -1080,9 +1107,11 @@ COLLAPSE_SCRIPT = r"""
   }
 
   // 头像选择器（官方 + 内置风格预设）：弹窗与设置卡共用
-  function wbBuildAvatarPicker(current, onPick) {
+  // extraBtn：可选。传进来就作为网格内的**最后一个圆钮**参与排布
+  // （上传自定义头像就挂在这里），而不是另起一行压在下面。
+  function wbBuildAvatarPicker(current, onPick, extraBtn) {
     var wrap = document.createElement("div");
-    wrap.className = "wb-avatar-grid";
+    wrap.className = "wb-avatar-grid wb-avatar-grid-inline";
     var picked = current || "official";
     function setActive(kind) {
       wrap.querySelectorAll(".wb-avatar-opt").forEach(function(x) { x.classList.remove("active"); });
@@ -1107,6 +1136,7 @@ COLLAPSE_SCRIPT = r"""
     Object.keys(WB_AVATAR_PRESETS).forEach(function(k) {
       mkBtn("preset:" + k, WB_AVATAR_PRESETS[k].name, wbSvgDataUri(WB_AVATAR_PRESETS[k].svg));
     });
+    if (extraBtn) wrap.appendChild(extraBtn);
     return {
       wrap: wrap,
       get: function() { return picked; },
@@ -1197,21 +1227,22 @@ COLLAPSE_SCRIPT = r"""
     }
     refreshCardImg(picked);
     pick.appendChild(img);
-    var btns = wbEl("div", null);
-    btns.style.cssText = "display:flex;flex-direction:column;gap:8px;min-width:0;flex:1;";
-    var picker = wbBuildAvatarPicker(picked, function(kind) {
-      picked = kind;
-      fileData = null;
-      refreshCardImg(kind);
-    });
-    btns.appendChild(picker.wrap);
-    var uploadBtn = wbEl("button", "wb-api-btn", "上传自定义头像");
-    uploadBtn.title = "≤200KB，PNG / JPG / WebP";
+    // 上传按钮与头像圆钮排在同一行（作为网格内最后一枚圆钮），
+    // 不再被压到选择器下方单独占一行 —— 用户 2026-09-26 反馈。
+    // 圆钮化后与官方/预设按钮视觉等高，一行排满 8 枚刚好。
+    var uploadBtn = wbEl("button", "wb-avatar-upload", "+");
+    uploadBtn.type = "button";
+    uploadBtn.title = "上传自定义头像（≤200KB，PNG / JPG / WebP）";
     var fileIn = document.createElement("input");
     fileIn.type = "file";
     fileIn.accept = "image/png,image/jpeg,image/webp";
     fileIn.style.display = "none";
     uploadBtn.onclick = function() { fileIn.click(); };
+    var picker = wbBuildAvatarPicker(picked, function(kind) {
+      picked = kind;
+      fileData = null;
+      refreshCardImg(kind);
+    }, uploadBtn);
     fileIn.onchange = function() {
       var f = fileIn.files && fileIn.files[0];
       if (!f) return;
@@ -1227,9 +1258,8 @@ COLLAPSE_SCRIPT = r"""
       };
       rd.readAsDataURL(f);
     };
-    btns.appendChild(uploadBtn);
-    btns.appendChild(fileIn);
-    pick.appendChild(btns);
+    pick.appendChild(picker.wrap);
+    pick.appendChild(fileIn);
     row1.appendChild(pick);
 
     var nickLine = wbEl("div", null);
@@ -1338,21 +1368,22 @@ COLLAPSE_SCRIPT = r"""
       }
       refreshModalImg(picked);
       pick.appendChild(img);
-      var picker = wbBuildAvatarPicker(picked, function(kind) {
-        picked = kind;
-        fileData = null;
-        refreshModalImg(kind);
-      });
-      pick.appendChild(picker.wrap);
+      // 与设置页保持一致：上传钮作为网格内最后一枚圆钮，同排展示。
       var uploadBtn = document.createElement("button");
-      uploadBtn.className = "wb-pop-item";
-      uploadBtn.style.cssText = "border:1px solid var(--border,rgba(120,120,120,0.3));margin-top:10px;";
-      uploadBtn.textContent = "上传自定义头像（≤200KB，PNG/JPG/WebP）";
+      uploadBtn.type = "button";
+      uploadBtn.className = "wb-avatar-upload";
+      uploadBtn.textContent = "+";
+      uploadBtn.title = "上传自定义头像（≤200KB，PNG / JPG / WebP）";
       var fileIn = document.createElement("input");
       fileIn.type = "file";
       fileIn.accept = "image/png,image/jpeg,image/webp";
       fileIn.style.display = "none";
       uploadBtn.onclick = function() { fileIn.click(); };
+      var picker = wbBuildAvatarPicker(picked, function(kind) {
+        picked = kind;
+        fileData = null;
+        refreshModalImg(kind);
+      }, uploadBtn);
       fileIn.onchange = function() {
         var f = fileIn.files && fileIn.files[0];
         if (!f) return;
@@ -1368,7 +1399,7 @@ COLLAPSE_SCRIPT = r"""
         };
         rd.readAsDataURL(f);
       };
-      pick.appendChild(uploadBtn);
+      pick.appendChild(picker.wrap);
       pick.appendChild(fileIn);
       card.appendChild(pick);
 
@@ -5794,6 +5825,50 @@ async def proxy_all(request: Request, path: str):
             headers=res_headers
         )
 
+class _AccessNoiseFilter(logging.Filter):
+    """静音高频轮询与探活的 access log（与 gateway/main.py 中同名实现保持一致）。
+
+    见 main.py 里的详细说明：WebUI 定时轮询与健康探活会在 access log 里刷屏，
+    真实请求反而被淹没。这里按「路径 + 2xx」过滤，4xx/5xx 一律保留。
+    两个进程各自过滤自己监听端口上的请求：WebUI 面板（本文件，:18090）
+    与 API 网关（main.py，:18091）。
+    """
+
+    NOISY_PATHS = (
+        "/health",
+        "/api/status",
+        "/api/gateway-info",
+        "/gateway/info",
+        "/api/model-health",
+        "/model-health/config",
+        "/api-keys/status",
+        "/api/api-keys",
+        "/api/checkin/logs",
+        "/api/rotate/logs",
+        "/api/rotate/status",
+        "/api/rate-limits",
+        "/assets/",
+        "/icon.png",
+        "/favicon.ico",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        if " 2" not in msg or " OK" not in msg:
+            return True
+        return not any(p in msg for p in self.NOISY_PATHS)
+
+
+def _install_access_filter() -> None:
+    lg = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _AccessNoiseFilter) for f in lg.filters):
+        lg.addFilter(_AccessNoiseFilter())
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 18090))
+    _install_access_filter()
     uvicorn.run(app, host="0.0.0.0", port=port)
