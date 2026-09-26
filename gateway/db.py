@@ -314,15 +314,20 @@ def change_username(old_username: str, new_username: str) -> bool:
         return ok
 
 
-# ---------------- 用户资料（昵称 / 头像，存 system_config） ----------------
+# ---------------- 用户资料（头像，存 system_config） ----------------
+#
+# 昵称已整体取消（用户 2026-09-26）：显示名一律以登录用户名为准。
+# 下面两个函数**保留但不再被任何代码调用**，仅为兼容旧数据与旧版本调用方；
+# 新代码请直接用 username，不要引入第二套可改的显示名。
 
 def get_nickname(username: str) -> str:
-    """昵称默认等于用户名；用户自定义过则以 system_config 里那份为准。"""
+    """（遗留）昵称默认等于用户名；自定义过则以 system_config 里那份为准。"""
     val = get_config("profile.nickname")
     return str(val).strip() if val and str(val).strip() else username
 
 
 def set_nickname(nickname: str) -> None:
+    """（遗留）写入昵称。新代码不应调用。"""
     set_config("profile.nickname", nickname.strip(), category="profile", description="用户昵称")
 
 

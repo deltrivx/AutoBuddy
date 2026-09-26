@@ -220,8 +220,26 @@ COLLAPSE_SCRIPT = r"""
   .wb-modal-btn { width: 100%; padding: 9px; border-radius: 8px; background: #3b82f6; color: #ffffff; font-size: 13px; font-weight: 600; border: none; cursor: pointer; }
   .wb-modal-btn:disabled { opacity: 0.6; cursor: default; }
   .wb-modal-err { color: #ef4444; font-size: 12px; display: none; }
-  .wb-avatar-pick { display: flex; align-items: flex-start; gap: 12px; }
-  .wb-avatar-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border, rgba(120,120,120,0.3)); flex-shrink: 0; }
+  /* 头像预览独占一行并放大（用户 2026-09-26）：
+     之前预览与选择器并排，52px 挤在左侧，看不清换成什么样。
+     现在预览居中独占一行 88px，选择器整行排在下方，视线从上到下走。 */
+  .wb-avatar-pick {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  .wb-avatar-pick img {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--border, rgba(120,120,120,0.3));
+    box-shadow: 0 4px 14px rgba(0,0,0,0.10);
+    flex-shrink: 0;
+  }
+  /* 选择器整行：预览下方，桌面端居中排布 */
+  .wb-avatar-pick .wb-avatar-grid { justify-content: center; }
   .wb-avatar-grid { display: flex; flex-wrap: wrap; gap: 8px; }
   /* 头像选择器与「上传自定义头像」共用同一行：
      官方 + 6 个预设 = 7 个 42px 圆钮，加上上传钮刚好排满一行，
@@ -1174,12 +1192,12 @@ COLLAPSE_SCRIPT = r"""
       .catch(function() {});
   }
 
-  function wbSaveProfileFlow(picked, fileData, fileMime, nick, errEl, done) {
+  function wbSaveProfileFlow(picked, fileData, fileMime, errEl, done) {
     var finish = function() {
       fetch("/api/auth/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nickname: nick, avatar: picked })
+        body: JSON.stringify({ avatar: picked })
       }).then(function(r) { return r.json(); }).then(function(res) {
         if (res.ok) { done(); }
         else { errEl.textContent = res.error || "保存失败"; errEl.style.display = "block"; }
@@ -1262,32 +1280,26 @@ COLLAPSE_SCRIPT = r"""
     pick.appendChild(fileIn);
     row1.appendChild(pick);
 
-    var nickLine = wbEl("div", null);
-    nickLine.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:10px;";
-    nickLine.appendChild(wbEl("span", "wb-api-label", "昵称"));
-    var nickIn = document.createElement("input");
-    nickIn.className = "wb-api-input";
-    nickIn.maxLength = 32;
-    nickIn.value = d.nickname || d.username || "";
-    nickLine.appendChild(nickIn);
-    var saveBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存资料");
+    // 昵称已取消（用户 2026-09-26）：显示名一律以登录用户名为准，
+    // 这里只保留「保存头像」，不再出现第二套可改的显示名。
+    var saveLine = wbEl("div", null);
+    saveLine.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:12px;";
+    var saveBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存头像");
     var errEl = wbEl("span", null);
     errEl.style.cssText = "color:#ef4444;font-size:12px;";
     saveBtn.onclick = function() {
-      var nick = (nickIn.value || "").trim();
-      if (!nick) { errEl.textContent = "昵称不能为空"; return; }
       saveBtn.disabled = true;
-      wbSaveProfileFlow(picked, fileData, fileMime, nick, errEl, function() {
+      wbSaveProfileFlow(picked, fileData, fileMime, errEl, function() {
         saveBtn.disabled = false;
         errEl.textContent = "";
-        wbToast("资料已保存", "ok");
+        wbToast("头像已保存", "ok");
         wbRefreshAuthOrb();
       });
     };
-    nickLine.appendChild(saveBtn);
-    nickLine.appendChild(errEl);
-    row1.appendChild(nickLine);
-    var desc1 = wbEl("div", "wb-api-desc", "昵称显示在右下角；头像默认用官方图标，也可上传自定义图片。");
+    saveLine.appendChild(saveBtn);
+    saveLine.appendChild(errEl);
+    row1.appendChild(saveLine);
+    var desc1 = wbEl("div", "wb-api-desc", "头像默认用官方图标，也可上传自定义图片（≤200KB，PNG / JPG / WebP）。");
     row1.appendChild(desc1);
     card.appendChild(row1);
 
@@ -1403,16 +1415,7 @@ COLLAPSE_SCRIPT = r"""
       pick.appendChild(fileIn);
       card.appendChild(pick);
 
-      var lab = document.createElement("label");
-      lab.style.cssText = "font-size:12px;font-weight:500;display:block;margin-bottom:4px;";
-      lab.textContent = "昵称";
-      card.appendChild(lab);
-      var nickIn = document.createElement("input");
-      nickIn.className = "wb-modal-input";
-      nickIn.maxLength = 32;
-      nickIn.value = d.nickname || d.username || "";
-      card.appendChild(nickIn);
-
+      // 昵称已取消：显示名以用户名为准，弹窗只负责换头像。
       var errEl = document.createElement("div");
       errEl.className = "wb-modal-err";
       errEl.style.margin = "8px 0 2px";
@@ -1421,19 +1424,17 @@ COLLAPSE_SCRIPT = r"""
       var save = document.createElement("button");
       save.className = "wb-modal-btn";
       save.style.marginTop = "14px";
-      save.textContent = "保存";
+      save.textContent = "保存头像";
       save.onclick = function() {
-        var nick = (nickIn.value || "").trim();
-        if (!nick) { errEl.textContent = "昵称不能为空"; errEl.style.display = "block"; return; }
         save.disabled = true;
         var finish = function() {
           fetch("/api/auth/profile", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nickname: nick, avatar: picked })
+            body: JSON.stringify({ avatar: picked })
           }).then(function(r) { return r.json(); }).then(function(res) {
             if (res.ok) {
-              wbToast("资料已保存", "ok");
+              wbToast("头像已保存", "ok");
               close();
               wbRefreshAuthOrb();
             } else {
@@ -1549,7 +1550,8 @@ COLLAPSE_SCRIPT = r"""
 
   function wbRenderUserOrb(data) {
     if (!data || !data.authenticated) return;
-    var nick = data.nickname || data.username || "";
+    // 昵称已取消：显示名一律用登录用户名（用户 2026-09-26）。
+    var nick = data.username || "";
     var orb = document.getElementById("wb-user-orb");
     if (orb) {
       var oimg = orb.querySelector("img");
@@ -1595,12 +1597,7 @@ COLLAPSE_SCRIPT = r"""
       nrow.style.cssText = "font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
       nrow.textContent = nick;
       hmain.appendChild(nrow);
-      if (data.username && data.username !== nick) {
-        var urow = document.createElement("div");
-        urow.style.cssText = "font-size:11px;color:var(--muted-foreground,#64748b);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-        urow.textContent = "@" + data.username;
-        hmain.appendChild(urow);
-      }
+      // 不再单列一行 "@用户名"：显示名就是用户名，重复一遍是噪声。
       var srow = document.createElement("div");
       srow.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11px;color:#10b981;margin-top:2px;";
       var dot = document.createElement("span");
@@ -4509,7 +4506,8 @@ class PwdChangeReq(BaseModel):
     new_password: str
 
 class ProfileReq(BaseModel):
-    nickname: Optional[str] = None
+    # 昵称已整体取消（用户 2026-09-26）：显示名一律以登录用户名为准，
+    # 多一个「能改的显示名」只会让「我是谁」出现两种答案。
     avatar: Optional[str] = None  # "official" | "custom"
 
 class UsernameReq(BaseModel):
@@ -4563,7 +4561,6 @@ async def auth_status(
         "enabled": enabled,
         "authenticated": bool(user),
         "username": user,
-        "nickname": db.get_nickname(user) if user else None,
         "avatar": db.get_avatar() if user else "official",
         "usernameLocked": _env_user_set(),
         "passwordLocked": _env_pass_set(),
@@ -4590,7 +4587,6 @@ async def auth_login(req: LoginReq, response: Response):
     return {
         "ok": True,
         "username": req.username,
-        "nickname": db.get_nickname(req.username),
         "avatar": db.get_avatar(),
         "usernameLocked": _env_user_set(),
         "passwordLocked": _env_pass_set(),
@@ -4651,7 +4647,6 @@ async def auth_profile_get(user: Optional[str] = Depends(get_current_user)):
         raise HTTPException(status_code=401, detail="未登录或会话已失效")
     return {
         "username": user,
-        "nickname": db.get_nickname(user),
         "avatar": db.get_avatar(),
         "usernameLocked": _env_user_set(),
         "passwordLocked": _env_pass_set(),
@@ -4663,20 +4658,13 @@ async def auth_profile_get(user: Optional[str] = Depends(get_current_user)):
 async def auth_profile_put(req: ProfileReq, user: Optional[str] = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="未登录或会话已失效")
-    if req.nickname is not None:
-        nick = req.nickname.strip()
-        if not nick:
-            return {"ok": False, "error": "昵称不能为空"}
-        if len(nick) > 32:
-            return {"ok": False, "error": "昵称最长 32 个字符"}
-        db.set_nickname(nick)
     if req.avatar is not None:
         if not _valid_avatar_kind(req.avatar):
             return {"ok": False, "error": "无效的头像类型"}
         if req.avatar == "custom" and not AVATAR_PATH.exists():
             return {"ok": False, "error": "尚未上传自定义头像"}
         db.set_avatar(req.avatar)
-    return {"ok": True, "nickname": db.get_nickname(user), "avatar": db.get_avatar()}
+    return {"ok": True, "username": user, "avatar": db.get_avatar()}
 
 
 @app.post("/api/auth/avatar-upload")

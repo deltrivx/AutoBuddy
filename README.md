@@ -1,178 +1,114 @@
 # AutoBuddy
 
-<p align="center">
-  <a href="https://github.com/deltrivx/AutoBuddy">
-    <img src="./icon.png" width="120" height="120" alt="AutoBuddy Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);" />
-  </a>
-</p>
+多账号统一管理面板与 OpenAI 兼容 API 网关，面向 NAS 与服务器部署。
 
-<p align="center">
-  <strong>多账号统一管理面板 · OpenAI 兼容 API 网关 · 定时签到保活</strong>
-</p>
+将 WorkBuddy / CodeBuddy 客户端的账号管理、签到保活与模型调用能力容器化，
+对外提供标准 OpenAI 接口，并补齐多账号并发分摊、账号 × 模型能力矩阵、
+可用性巡检等单机客户端不具备的能力。
 
-<p align="center">
-  <a href="https://github.com/deltrivx/AutoBuddy/releases"><img src="https://img.shields.io/github/v/release/deltrivx/AutoBuddy?display_name=tag&sort=semver&label=Release" alt="最新版本" /></a>
-  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" />
+<p>
+  <a href="https://github.com/deltrivx/AutoBuddy/releases"><img src="https://img.shields.io/github/v/release/deltrivx/AutoBuddy?display_name=tag&sort=semver&label=Release" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/Unraid-Compatible-F15A24?logo=unraid&logoColor=white" alt="Unraid" />
   <img src="https://img.shields.io/badge/FastAPI-Gateway-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/OpenAI_API-Compatible-412991?logo=openai&logoColor=white" alt="OpenAI API" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License" /></a>
 </p>
 
-<p align="center">
-  <a href="#-这个项目解决什么问题">项目定位</a> ·
-  <a href="#-功能详解">功能详解</a> ·
-  <a href="#-部署方式">部署方式</a> ·
-  <a href="#-端口与持久化">端口与持久化</a> ·
-  <a href="#-接入与调用">接入与调用</a> ·
-  <a href="#-运维与排障">运维与排障</a> ·
-  <a href="CHANGELOG.md">更新日志</a> ·
-  <a href="RELEASES.md">版本索引</a>
-</p>
+[功能](#功能) · [快速开始](#快速开始) · [配置](#配置) · [接入](#接入) ·
+[运维](#运维) · [实现说明](#实现说明) · [许可](#许可) · [致谢](#致谢) ·
+[更新日志](CHANGELOG.md) · [版本索引](RELEASES.md)
 
 ---
 
-## 📖 这个项目解决什么问题
+## 功能
 
-WorkBuddy / CodeBuddy 官方客户端在单机上只能登录**一个**账号，额度用尽就得手动换号；
-官方能力也没有标准 API 接口，没法直接喂给自己常用的 AI 客户端。
+### 账号池
 
-AutoBuddy 把官方客户端能力搬到容器里跑，解决三件事：
+- **请求级分摊**：每次请求独立分配账号，上下文与计费互不串扰。
+- **并发优先空闲**：按「在飞请求数最少」挑选账号，避免慢请求集中在同一账号。
+- **账号级控制**：启用 / 停用、设为首选（固定单一账号）、检测账号（轻量鉴权探活）。
+- **停用来源区分**：手动停用与巡检自动停用在界面以不同配色呈现，可分辨归属。
 
-| 痛点 | AutoBuddy 的做法 |
-| :--- | :--- |
-| 单账号额度不够、手动换号麻烦 | **多账号账号池**：请求级自动分摊，并发时优先挑最空闲的账号 |
-| 有些账号不支持某些模型，一调就报 `model not found` | **账号 × 模型 双向学习**：调通了记住、被拒了记住，下次自动绕开 |
-| 官方没有 API，接不进自己的客户端 | **OpenAI 兼容网关**：输出标准 `/v1/chat/completions`、`/v1/models`，支持流式 |
-| 账号长期不用会被回收，每天手动点签到 | **定时签到保活**：内置每日成长任务自动化，按间隔自动跑 |
-| 某个账号登录过期了没人知道，直到调用失败 | **可用性巡检**：后台定期探活，区分「凭据失效」与「模型不可用」 |
+### 账号 × 模型能力矩阵
 
-> 本项目是 [WorkBuddy-Switch](https://www.npmjs.com/package/workbuddy-switch) 的**容器化 + 网关化**改造，
-> 并非从零实现。上游项目与开源依赖的致谢见文末。
+上游部分模型仅对特定账号开放，直接调用会返回模型不存在的错误。
 
----
+- **负向学习**：识别上游「账号不支持该模型」响应（400/403/404 及错误码
+  `11102`/`11103` 等），记录该组合并自动换号重试，重试次数上限等于候选账号数。
+  重试发生在响应体转发给客户端之前，对调用方透明；流式与非流式路径均覆盖。
+- **正向学习**：同时记录调用成功的组合，选号时优先选择已知支持的账号。
+  仅在确实存在支持者时才收窄候选集，避免矩阵过期导致账号池被整体排除。
+- **手动禁用优先**：界面点击禁用记为该组合的长期策略，巡检不会自动放开；
+  巡检因探测失败自动禁用的条目会单独标注，并在恢复后自动解除。
+- **批量恢复**：账号卡片提供「全部恢复」，一次性放回该账号所有被禁用的模型。
 
-## ⚡ 功能详解
+### 可用性巡检
 
-### 1. 账号池：多账号自动分摊
+后台独立线程定期探测各账号 × 模型组合，结论分为四种状态：
 
-- **请求级轮询**：每次请求独立分配账号，上下文与计费互不串扰（不会串号）。
-- **并发智能分摊**：按「在飞请求数最少」挑账号 —— 并发请求自动落到最闲的账号，
-  不会因为慢请求全压在同一个人身上。状态接口的 `inflight` 字段可实时查看各账号在飞数。
-- **手动干预**：
-  - 账号级 **启用 / 停用** —— 停用后不参与自动轮询（显式指定它的请求仍可用）；
-  - **设为首选** —— 固定只用某一个账号，适合「先把某个号跑满」的场景；
-  - **检测账号** —— 发一次轻量鉴权请求，就地报告这个账号现在能不能用（不改配置）。
-- **两种「不可用」分开说**：手动停用（灰）与巡检自动停用（琥珀）在界面上颜色不同，
-  一眼能看出「这不是我点的」，恢复方式也明确标注。
-
-### 2. 模型级控制：账号 × 模型 能力矩阵
-
-这是项目的核心差异点。上游很多模型**只有部分账号有权**，默认行为是一调用就报错。
-
-- **负向学习**：上游返回「该账号不支持该模型」时（状态码 400/403/404 + 错误码
-  `11102`/`11103` + `service info not found` 等一揽子文案），立即把该组合写入 auto 拉黑，
-  **并自动换下一个账号重试**（上限 = 候选账号数），对客户端完全透明。
-- **正向学习**：不止事后拉黑 —— 正向记录「某账号用过某模型且成功」。选号时优先挑
-  「已知支持」的账号，且**只在确实存在支持者时才收窄候选集**，避免矩阵过旧把整个账号池排除掉。
-- **界面上直接点**：账号卡片下方列出该账号的可用模型标签，点一下禁用、再点恢复；
-  被巡检自动禁用的用不同颜色标出。**手动禁用不会被巡检自动放开** —— 你关的就是你关的。
-- **一键恢复**：卡片上显示「已禁用 N / 巡检 N」两个互不重叠的计数，
-  以及一个「全部恢复」按钮，不必逐个点标签。
-
-### 3. 可用性巡检：把「凭据坏」和「模型不支持」分开
-
-后台独立轻量线程定期探活，结论明确区分四种状态：
-
-| 状态 | 含义 | 界面配色 |
+| 状态 | 含义 | 处理 |
 | :--- | :--- | :--- |
-| `valid` | 账号可用 | 绿 |
-| `invalid` | 凭据失效，需要重新登录 | 红 |
-| `restricted` | 凭据是好的，但请求被上游拦截 | 琥珀 |
-| `unknown` | 探测侧问题，结论不确定 | 琥珀 |
+| `valid` | 账号可用 | 正常参与调度 |
+| `invalid` | 凭据失效 | 需重新登录 |
+| `restricted` | 凭据有效但请求被上游拦截 | 重新登录无效 |
+| `unknown` | 探测过程本身异常 | 结论不定，需复检 |
 
-这一点很重要：**受限账号（restricted）的凭据其实是好的**，如果一律标红，
-用户会以为凭据坏了跑去重新登录 —— 而重登对这种情况毫无帮助。
+`transient`、`probe_defect`、`restricted` 三种探测结果不写入能力矩阵，
+只有明确的 `available` / `unavailable` 才回填，避免把探测侧问题记为模型不支持。
 
-- **不会把探测侧问题伪装成模型不支持**：`transient` / `probe_defect` / `restricted`
-  三种探测结果**不写入**能力矩阵，只有真正的 `available` / `unavailable` 才回填。
-- **一致性自检**：把每个账号的「凭据结论」与「模型结论」并排摆出来，
-  连同**判据与建议**一起列出，消除「检测说有效、巡检说失效」这种口径矛盾。
+设置页「一致性自检」并列展示各账号的凭据结论与模型结论，同时列出判定依据，
+用于区分「凭据有效但被拦截」与「模型无权限」两种情况。
 
-### 4. 每日任务：签到与成长自动化
+### 每日任务
 
-内置 vendor 化的上游开源脚本（[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)，MIT），
-由本服务托管执行，侧边栏「每日任务」页统一配置：
+内置 vendor 化的签到脚本，由容器内独立服务托管执行。
 
-- **四种任务**：积分与成长查询、成长任务、互动玩法、开学季活动与自动领奖；
-- **两种模式**：`完整任务`（签到 / 玩法 / 领奖）与 `仅查询`（只读积分与用量，不产生任何任务状态变更）；
-- **定时调度**：可设执行间隔（小时）与保活阈值，启动时立即核验服务端状态，未签到账号自动补签；
-- **账号自动关联**：直接读取账号池里的**国内版（cn）账号**，新增账号无需在此登记 ——
-  账号池就是唯一权威来源，不会出现「哪些账号在跑」有两个答案的情况；
-- **凭据只读共用**：用账号池的 refresh_token 生成脚本所需凭据，
-  **绝不写回、绝不覆盖**账号池文件（实测续期后旧令牌仍有效，无烧号风险）；
-- **进度可视化**：执行中显示阶段明细与进度条，可中止；账号签到与凭据状态一账号一行展示。
+- **任务类型**：积分与成长查询、成长任务、互动玩法、活动与自动领奖。
+- **执行模式**：`完整任务`（执行签到与领奖）与 `仅查询`（只读，不改变任何任务状态）。
+- **调度**：可配置执行间隔与保活阈值，启动时校验服务端状态并补签未完成的账号。
+- **账号来源**：直接读取账号池中的国内版账号，无需单独登记。
+- **凭据处理**：只读使用账号池的 refresh token，不写回、不覆盖账号池文件。
 
-### 5. OpenAI 兼容网关
+### API 网关
 
-- **标准接口**：`/v1/chat/completions`（支持流式非流式）与 `/v1/models`，
-  直接对接 Sub2API / Cherry Studio / NextChat / LobeChat 等任何 OpenAI 兼容客户端。
-- **模型目录自动发现**：上游模型清单自动映射，无需手写；`/v1/models` 实时反映可用模型。
-- **API 访问密钥**：可选的 Bearer 密钥校验，支持密钥新建 / 启停 / 删除、
-  白名单、**连通性回环自检**与配额统计。
-- **Token 用量统计**：按账号与模型聚合 Token 消耗与调用流水。
+- 提供 `/v1/chat/completions`（支持流式）与 `/v1/models`，兼容标准 OpenAI 客户端。
+- 上游模型清单自动发现并映射，无需手工维护。
+- 可选的 Bearer 密钥校验，支持密钥新建、启停、删除、IP 白名单与连通性自检。
+- 按账号与模型聚合 Token 用量与调用记录。
 
-### 6. 容器专属控制台
+### 界面
 
-- **账号资料**：头像（官方图标 / 6 款预设 / 自定义上传）、昵称、用户名与密码修改；
-- **右下角用户球**：44px 圆形头像，悬浮或点击展开浮窗，显示剩余积分 / 今日消耗 / 账号池规模；
-- **侧边栏自动收起**：窄屏（≤720px）自动收起侧栏，避免在手机上吃掉一半屏幕；
-- **移除桌面依赖**：宿主桌面程序专有的入口（Finder、完全磁盘访问、IDE / CLI 切换等）
-  已在二进制层面物理移除，容器内不再出现点了没反应的按钮；
-- **响应禁用缓存**：注入脚本与文案替换全部 `no-store`，避免「改了但没生效」。
+- 账号资料：头像（官方图标、内置预设、自定义上传）。
+- 右下角用户球：显示当前用户与积分、当日消耗、账号池规模。
+- 窄屏适配：宽度不足时侧边栏自动收起。
+- 已移除依赖宿主桌面客户端的入口（文件管理器、权限检测、IDE / CLI 切换等）。
 
 ---
 
-## 🚀 部署方式
+## 快速开始
 
-> 容器镜像全部通过 GitHub Actions **云端自动化构建**并推送至 GitHub Packages (GHCR)，
-> 严禁本地私有构建（本地构建会跳过 CI 里的单测门禁）。
+镜像通过 GitHub Actions 构建并推送至 GHCR，不在本地构建
+（本地构建会跳过 CI 中的单元测试门禁）。
 
-### 方式一：Unraid 容器模板（强烈推荐）
+### Unraid 模板
 
-1. Unraid 控制台 → **Docker** → 底部 **Template Repositories** 填入本仓库地址并刷新；
-2. 或直接下载模板文件 [unraid/autobuddy.xml](./unraid/autobuddy.xml)，
-   放到 `/boot/config/plugins/dockerMan/templates-user/` 下；
-3. **Add Container** → 选择 `AutoBuddy` 模板 → 确认端口与 AppData 路径 → 应用。
+1. Docker 页面 → **Template Repositories** 添加本仓库地址并刷新；
+2. 或下载 [unraid/autobuddy.xml](./unraid/autobuddy.xml) 放入
+   `/boot/…ates-user/`；
+3. **Add Container** → 选择 `AutoBuddy` → 确认端口与数据目录 → 应用。
 
-后续升级：在模板页点 **Force Update** 即可拉取最新镜像重建容器，数据不受影响。
+升级：在模板页面执行 **Force Update**，容器重建后数据保留。
 
-### 方式二：Docker Compose
-
-```yaml
-services:
-  autobuddy:
-    image: ghcr.io/deltrivx/autobuddy:latest
-    container_name: AutoBuddy
-    restart: unless-stopped
-    ports:
-      - "18090:18090"   # Web 控制面板
-      - "18091:18091"   # OpenAI API 网关
-    volumes:
-      - /mnt/user/appdata/autobuddy/data:/data
-    environment:
-      TZ: Asia/Shanghai
-      AUTH_USERNAME: admin        # 控制台登录账号
-      AUTH_PASSWORD: change-me    # 控制台登录密码（务必修改）
-```
+### Docker Compose
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
-> 完整可运行示例见仓库根目录 [docker-compose.yml](./docker-compose.yml)。
+完整示例见 [docker-compose.yml](./docker-compose.yml)。
 
-### 方式三：Docker CLI
+### Docker CLI
 
 ```bash
 docker run -d \
@@ -182,56 +118,59 @@ docker run -d \
   -v /mnt/user/appdata/autobuddy/data:/data \
   -e TZ=Asia/Shanghai \
   -e AUTH_USERNAME=admin \
-  -e AUTH_PASSWORD=change-me \
+  -e AUTH_PASSWORD=<你的密码> \
   --restart unless-stopped \
   ghcr.io/deltrivx/autobuddy:latest
 ```
 
+启动后访问 `http://<服务器IP>:18090` 进入管理面板。
+
 ---
 
-## 📂 端口与持久化
+## 配置
 
 ### 端口
 
-| 容器内端口 | 默认宿主端口 | 协议 | 用途 |
+| 容器端口 | 默认宿主端口 | 协议 | 用途 |
 | :--- | :--- | :--- | :--- |
-| `18090` | `18090` | HTTP | **Web 控制面板** —— 账号管理、每日任务、模型策略、API 密钥 |
-| `18091` | `18091` | HTTP | **OpenAI API 网关** —— 标准 `/v1` 接口，对接下游客户端 |
-| `18093` | 不对外 | HTTP | 每日任务内部服务（仅容器内 loopback，由面板转发） |
+| `18090` | `18090` | HTTP | 管理面板 |
+| `18091` | `18091` | HTTP | OpenAI 兼容 API |
+| `18093` | 不映射 | HTTP | 每日任务服务（仅容器内 loopback） |
 
 ### 持久化
 
-| 容器路径 | 推荐宿主路径 | 说明 |
+| 容器路径 | 推荐宿主路径 | 内容 |
 | :--- | :--- | :--- |
-| `/data` | `/mnt/user/appdata/autobuddy/data` | **唯一需要挂载的目录**：SQLite 数据库、账号凭据、模型策略、用量流水、头像等全部在这里。升级 / 重建容器不丢数据。 |
+| `/data` | `/mnt/user/appdata/autobuddy/data` | 数据库、账号凭据、模型策略、用量记录、头像。升级与重建容器不丢失。 |
 
 ### 环境变量
 
-| 变量 | 默认 | 说明 |
+| 变量 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `AUTH_USERNAME` | `admin` | 控制台登录账号。**设置后界面上锁定为不可修改**，需改环境变量并重建容器。 |
-| `AUTH_PASSWORD` | `password` | 控制台登录密码。同样在设置后锁定。 |
+| `AUTH_USERNAME` | `admin` | 面板登录用户名。设置后界面锁定，需改环境变量并重建容器。 |
+| `AUTH_PASSWORD` | `password` | 面板登录密码。同上。 |
 | `AUTOBUDDY_SESSION_HOURS` | `24` | 登录会话有效期（小时）。 |
 | `TZ` | `Asia/Shanghai` | 时区，影响签到调度与用量按日归集。 |
-| `PORT` / `API_PORT` | `18090` / `18091` | 服务端口，改这里要同步改端口映射。 |
-| `WB_DAILY_ENABLED` / `WB_DAILY_PORT` | `1` / `18093` | 每日任务服务开关与端口。 |
+| `PORT` | `18090` | 面板端口，修改时需同步调整端口映射。 |
+| `API_PORT` | `18091` | 网关端口，同上。 |
+| `WB_DAILY_ENABLED` | `1` | 是否启用每日任务服务。 |
+| `WB_DAILY_PORT` | `18093` | 每日任务服务端口（仅容器内）。 |
 
 ---
 
-## 🔌 接入与调用
+## 接入
 
-### 下游客户端配置
+```
+Base URL: http://<服务器IP>:18091/v1
+API Key:  面板「设置 → API 接入」中创建的密钥
+```
 
-- **Base URL**：`http://<服务器IP>:18091/v1`
-- **API Key**：控制台【设置】→【API 接入】中创建的密钥
-  （未开启强制校验时可随意填写）
-
-### cURL 快速测试
+未开启密钥校验时，API Key 可填写任意非空值。
 
 ```bash
-curl -X POST http://localhost:18091/v1/chat/completions \
+curl -X POST http://<服务器IP>:18091/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <你的密钥>" \
+  -H "Authorization: Bearer <API Key>" \
   -d '{
     "model": "<模型名>",
     "messages": [{"role": "user", "content": "你好"}],
@@ -239,11 +178,11 @@ curl -X POST http://localhost:18091/v1/chat/completions \
   }'
 ```
 
-模型清单可通过 `GET /v1/models` 获取，或在控制台的模型策略页查看。
+可用模型通过 `GET /v1/models` 获取，也可在面板的模型策略页面查看。
 
 ---
 
-## 🔧 运维与排障
+## 运维
 
 ### 健康检查
 
@@ -251,54 +190,87 @@ curl -X POST http://localhost:18091/v1/chat/completions \
 curl -fsS http://<服务器IP>:18091/health
 ```
 
-返回 `status`、`version`、当前活跃账号与轮询状态，可直接用于容器 healthcheck。
+返回 `status`、`version`、当前活跃账号与轮换状态，可直接用作容器 healthcheck。
 
-### 后台日志
+### 日志
 
-日志经过**两层降噪**，只留有用信息：
+日志经过两层过滤，仅保留有效信息：
 
-1. **access log 过滤**：健康探活、WebUI 定时轮询、静态资源等成功请求不再刷屏；
-   **4xx / 5xx 一律保留线索**，真实业务请求（如 `/v1/chat/completions`）全部保留。
-2. **业务日志去重**：账号选号、轮换、巡检等高频日志若与上一条完全相同，
-   只累计次数不重复输出；出现不同内容时先补一行 `(上一条重复 N 次)`，观测不断档。
+1. **访问日志过滤**：健康探活、面板定时轮询、静态资源等成功请求不输出；
+   4xx 与 5xx 响应、业务请求（如 `/v1/chat/completions`）全部保留。
+2. **业务日志去重**：账号选号、轮换、巡检等高频日志与上一条相同时只累计计数，
+   内容变化时补输出重复次数，不丢失观测信息。
 
 ```bash
-docker logs -f AutoBuddy          # 实时跟踪
-docker logs --tail 200 AutoBuddy  # 看最近 200 行
+docker logs -f AutoBuddy
+docker logs --tail 200 AutoBuddy
 ```
 
 ### 常见问题
 
-| 现象 | 原因与处理 |
+| 现象 | 处理 |
 | :--- | :--- |
-| 下游报 `model not found` | 该模型当前没有任何账号支持。到模型策略页查看；首次调用会自动学习并重试，若仍失败说明确实无可用账号。 |
-| 某个账号反复失败 | 到该账号卡片点 **检测账号** 看结论：红=凭据失效需重新登录，琥珀=被上游拦截（重登无用）。 |
-| 界面改了没生效 | 浏览器缓存了旧资源。服务端已 `no-store`，强制刷新（Ctrl/Cmd + Shift + R）即可。 |
-| 忘记控制台密码 | 若通过环境变量设置，修改 `AUTH_PASSWORD` 后重建容器；否则删除 `/data` 下认证记录重新初始化。 |
+| 下游返回 `model not found` | 该模型当前无可用账号。首次调用会自动学习并换号重试；仍失败则说明账号池中确无支持者，可在模型策略页面查看。 |
+| 某账号持续调用失败 | 在账号卡片执行「检测账号」。红色表示凭据失效，需重新登录；琥珀色表示被上游拦截，重新登录无效。 |
+| 界面修改后未生效 | 服务端已禁用缓存。执行强制刷新（Ctrl / Cmd + Shift + R）。 |
+| 忘记面板密码 | 若由环境变量设置，修改 `AUTH_PASSWORD` 后重建容器。 |
 
 ---
 
-## 📄 版本与许可
+## 实现说明
 
-- **更新日志**：[CHANGELOG.md](CHANGELOG.md)
-- **版本索引**：[RELEASES.md](RELEASES.md)
-- **开源协议**：[MIT License](LICENSE)
+### 结构
+
+```
+gateway/
+  main.py            API 网关（:18091）：账号调度、账号×模型矩阵、巡检
+  web_proxy.py       管理面板反向代理与界面注入（:18090）
+  wb_daily.py        每日任务服务（:18093，仅容器内）
+  db.py              SQLite 持久化
+  vendor/            上游签到脚本（vendor 化）
+patch/
+  patch_binary.py    对上游二进制打补丁，移除桌面客户端专有入口
+docker/
+  Dockerfile         镜像构建定义
+unraid/
+  autobuddy.xml      Unraid 容器模板
+_test_*.py           单元测试（CI 在构建前执行）
+```
+
+### 界面注入
+
+管理面板在上游前端的基础上做增量修改，而非重写：
+
+- 反向代理在 HTML 响应中注入脚本，追加「每日任务」页面与设置页各功能区块；
+- 在 JS 资源中替换 UI 文案，统一品牌与命名；
+- 上游桌面前端专有的入口在 `patch_binary.py` 中于二进制层面移除，
+  注入脚本仅做兜底清理。
+
+注入脚本若存在语法错误会导致整段不执行、界面上相关区块静默消失，
+因此 `_test_webui_panels.py` 会对注入脚本执行 `node --check` 语法校验。
+
+### 构建约束
+
+- 上游二进制版本在 Dockerfile 中显式锁定。`patch_binary.py` 的匹配锚点依赖
+  上游前端的具体结构，上游发版可能重排压缩变量名或改动 DOM，锚点失配时构建失败，
+  需人工复核后更新锚点，不可直接跟随 `latest`。
+- 镜像不在本地构建，统一走 CI。
 
 ---
 
-## 🙏 致谢
+## 许可
 
-AutoBuddy 站在以下项目之上，特此致谢：
+[MIT License](LICENSE)
 
-- **[WorkBuddy-Switch](https://www.npmjs.com/package/workbuddy-switch)** —— 本项目的基础。
-  AutoBuddy 将其原生客户端能力（账号管理、Token 刷新、前端界面）容器化，
-  并补上多账号池、模型能力矩阵、可用性巡检、OpenAI 兼容网关等 NAS / 服务器场景所需能力。
-  底层二进制通过 npm 安装，版本在 Dockerfile 中**显式锁定**（不打补丁锚点会失配）。
-- **[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)**（MIT）——
-  每日成长任务签到脚本，以 vendor 形式内置，由本项目的每日任务服务托管执行。
-- **[FastAPI](https://fastapi.tiangolo.com/)** / **[Uvicorn](https://www.uvicorn.org/)** /
-  **[HTTPX](https://www.python-httpx.org/)** —— 网关与面板服务的技术栈。
-- **GitHub Actions / GHCR** —— 提供免费的多架构镜像构建与托管。
-- 以及所有账号管理、代理与自动化领域的开源作者。
+## 致谢
 
-如有遗漏或希望调整署名方式，欢迎提 Issue。
+本项目基于以下工作：
+
+- **[WorkBuddy-Switch](https://www.npmjs.com/package/workbuddy-switch)**
+  提供底层能力与前端界面。AutoBuddy 对其做容器化、网关化改造，
+  并实现多账号池、账号 × 模型能力矩阵、可用性巡检与 OpenAI 兼容网关。
+- **[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)**（MIT）
+  提供每日成长任务脚本，以 vendor 形式内置。
+- **[FastAPI](https://fastapi.tiangolo.com/)**、**[Uvicorn](https://www.uvicorn.org/)**、
+  **[HTTPX](https://www.python-httpx.org/)** 构成本项目的服务端技术栈。
+- **GitHub Actions** 与 **GHCR** 提供镜像构建与托管。

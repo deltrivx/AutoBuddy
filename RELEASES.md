@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.4](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.4)
+**当前稳定版：** [v0.9.5](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.5)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,13 +13,14 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v0.9.4](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.4) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.4.md) |
-| [v0.9.3](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.3) | 2026-09-26 | 移除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.3.md) |
-| [v0.9.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.1) | 2026-09-26 | 修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.1.md) |
-| [v0.9.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.0) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.0.md) |
-| [v0.8.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.2) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.2.md) |
-| [v0.8.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.1) | 2026-09-26 | 修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.1.md) |
-| [v0.8.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.0) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.0.md) |
+| [v0.9.5](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.5) | 2026-09-26 | 取消昵称统一显示名、头像预览独立放大、CHANGELOG 与 README 规范化 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.5.md) |
+| [v0.9.4](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.4) | 2026-09-26 | README 重写为可照做的文档，后台日志彻底降噪，头像上传钮排版修正 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.4.md) |
+| [v0.9.3](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.3) | 2026-09-26 | 移除「账号接入」（GitHub 自动注册）功能，修复误删的每日任务与 Buddy 徽章函数 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.3.md) |
+| [v0.9.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.1) | 2026-09-26 | 修复能力矩阵重入死锁导致网关 502 / 挂起，统一 Buddy 徽章图标 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.1.md) |
+| [v0.9.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.0) | 2026-09-26 | 模型失败即时学习并换号重试、正向能力矩阵、后台日志去重、Buddy 徽章统一图标 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.0.md) |
+| [v0.8.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.2) | 2026-09-26 | 账号并发分摊、头像全面圆形化、用户球悬浮展开、密码位数掩码 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.2.md) |
+| [v0.8.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.1) | 2026-09-26 | 品牌统一、浮窗积分信息、无 Buddy 虚线徽章、头像体系升级 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.1.md) |
+| [v0.8.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.0) | 2026-09-26 | 右下角用户球与账号资料管理，会话收紧为 24 小时 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.0.md) |
 | [v0.7.8](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.8) | 2026-09-25 | 彻底根除「幽灵账号」残留并保障所有账号按钮功能一致性 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.8.md) |
 | [v0.7.7](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.7) | 2026-09-25 | 移除 401 审计落盘（恢复纯净镜像） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.7.md) |
 | [v0.7.6](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.6) | 2026-09-25 | 新增 401 鉴权失败审计落盘（取证用） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.6.md) |
@@ -89,6 +90,7 @@
 | [v0.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.2.0) | 2026-09-18 | 容器化体验升级与全量模型网关支持 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.2.0.md) |
 | [v0.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.2) | 2026-09-18 | 图标全链路对齐与 Sub2API 对接 | — |
 | [v0.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0) | 2026-09-18 | 初始版本发布 | — |
+| [vX.Y.Z](https://github.com/deltrivx/autobuddy/releases/tag/vX.Y.Z) | YYYY-MM-DD | 一句话说清这个版本做了什么 | — |
 
 ## 镜像标签
 
@@ -96,7 +98,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.4    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.5    # 锁定版本
 ```
 
 ## 部署产物
