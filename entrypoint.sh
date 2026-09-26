@@ -87,14 +87,6 @@ done
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/data/.autobuddy/browsers}"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
 
-# 浏览器内核由 gh_register 服务自己托管下载（见其 startup 钩子）。
-# 这里只负责建目录与提示，**不再**自己拉 playwright —— 两个进程同时下载会抢
-# __dirlock，结果是目录一直是空的、进度卡住不动。
-if ls -1 "$PLAYWRIGHT_BROWSERS_PATH" 2>/dev/null | grep -q '^chromium'; then
-    echo "[browsers] 已检测到持久化 Chromium 内核：$(ls -1 "$PLAYWRIGHT_BROWSERS_PATH" | tr '\n' ' ')"
-else
-    echo "[browsers] 未检测到持久化 Chromium，将由注册服务在后台自动下载（进度见 WebUI「账号接入」）"
-fi
 
 # ==============================================================================
 # 代理环境与精确分流规则
@@ -113,7 +105,6 @@ else
 fi
 
 # 全局服务直连国内上游与局域网，不导出代理到环境变量，防止模型网关 18091 误走代理导致 ConnectTimeout
-# 代理仅在 WebUI「账号接入」由用户配置 register_proxy，专用于 GitHub 注册流程
 unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy 2>/dev/null || true
 echo "[Proxy] 精确分流 NO_PROXY: $NO_PROXY"
 
@@ -144,15 +135,7 @@ echo "[Gateway] 正在启动 OpenAI API 网关 (端口: ${API_PORT:-18091})..."
 python3 /app/gateway/main.py &
 GW_PID=$!
 
-# 4. 启动 GitHub 自动化注册服务 (内部端口: ${GH_REGISTER_PORT:-18092})
-#    仅跑在容器内网（loopback），由 web_proxy 的三条路由转发，不对外映射端口。
-if [ "${GH_REGISTER_ENABLED:-1}" = "1" ]; then
-  echo "[gh-register] 正在启动 GitHub 注册服务 (端口: ${GH_REGISTER_PORT:-18092})..."
-  python3 /app/gateway/gh_register.py &
-  GH_PID=$!
-fi
-
-# 5. 启动 WorkBuddy 每日成长任务服务 (内部端口: ${WB_DAILY_PORT:-18093})
+# 4. 启动 WorkBuddy 每日成长任务服务 (内部端口: ${WB_DAILY_PORT:-18093})
 #    仅跑在容器内网（loopback），由 web_proxy 转发；托管 vendor 版签到脚本，
 #    账号池国内版账号只读共用凭据，定时调度在服务内实现。
 if [ "${WB_DAILY_ENABLED:-1}" = "1" ]; then
@@ -161,6 +144,6 @@ if [ "${WB_DAILY_ENABLED:-1}" = "1" ]; then
   DAILY_PID=$!
 fi
 
-trap "kill -TERM $WB_PID $PROXY_PID $GW_PID ${GH_PID:-0} ${DAILY_PID:-0} 2>/dev/null || true" SIGTERM SIGINT
+trap "kill -TERM $WB_PID $PROXY_PID $GW_PID ${DAILY_PID:-0} 2>/dev/null || true" SIGTERM SIGINT
 
 wait -n

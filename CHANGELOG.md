@@ -9,6 +9,28 @@
 
 ---
 
+## [v0.9.3] - 2026-09-26
+
+### 移除
+
+- **「账号接入」（GitHub 自动注册）功能全线移除**：该功能依赖容器内 658MB 的
+  Chromium 内核与 playwright 自动化，实际使用率极低却长期占用磁盘与内存。
+  本次从容器中彻底摘除：
+  - 删除后端注册服务 `gateway/gh_register.py` 与 `/api/gh-register/*` 转发路由；
+  - 删除前端「账号接入」侧边栏入口与专属管理视图（约 687 行）；
+  - `entrypoint.sh` 移除注册服务启动段与 `GH_PID`，启动编号顺延；
+  - `docker-compose.yml` 移除 `GH_REGISTER_*` 环境变量与代理说明；
+  - `db.py` 移除 `gh_register_config.json` 迁移逻辑；
+  - 解耦「每日任务」模块中对该视图的 3 处引用，改为直接锚定设置入口。
+
+### 修复
+
+- **每日任务面板与 Buddy 徽章适配函数被误删**：移除「账号接入」过程中，
+  `wbCreateWbDailyView` / `wbUpdateWbDailyView` / `injectWbDaily` /
+  `wbBuddyBadgeKind` 四个顶层函数被一并清除，而文件尾部仍在调用
+  `wbUpdateWbDailyView()`，导致注入 JS 语法错误、前端整段脚本不执行。
+  已按模块边界精确恢复，并补充注入 JS 的 `node --check` 回归校验。
+
 ## [v0.9.1] - 2026-09-26
 
 ### 修复
@@ -1378,7 +1400,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.1...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.3...HEAD
+[v0.9.3]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.1...v0.9.3
 [v0.9.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.0...v0.9.1
 [v0.9.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.2...v0.9.0
 [v0.8.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.1...v0.8.2

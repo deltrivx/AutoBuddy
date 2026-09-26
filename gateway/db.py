@@ -169,25 +169,6 @@ def init_db() -> None:
                 )
                 print(f"[Database] 环境变量显式指定密码，已同步更新账号：{env_user}")
 
-        # 迁移既有的 gh_register_config.json 进数据库（如存在）
-        cfg_file = DATA_DIR / "gh_register_config.json"
-        if cfg_file.exists():
-            try:
-                with open(cfg_file, "r", encoding="utf-8") as f:
-                    cfg_json = json.load(f)
-                if isinstance(cfg_json, dict):
-                    for k, v in cfg_json.items():
-                        cursor.execute("SELECT key FROM system_config WHERE key = ?", (k,))
-                        if not cursor.fetchone():
-                            now = time.time()
-                            val_str = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool, int, float)) else str(v)
-                            cursor.execute(
-                                "INSERT INTO system_config (key, value, category, updated_at) VALUES (?, ?, 'gh_register', ?)",
-                                (k, val_str, now)
-                            )
-            except Exception as e:
-                print(f"[Database] 迁移旧配置文件出错: {e}")
-
         conn.commit()
 
 
