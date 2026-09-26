@@ -124,7 +124,8 @@ COLLAPSE_SCRIPT = r"""
   }
   #wb-user-orb img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: block; }
   #wb-user-orb .wb-orb-nick {
-    max-width: 120px;
+    display: none;
+    max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -132,9 +133,32 @@ COLLAPSE_SCRIPT = r"""
     font-weight: 600;
     color: var(--foreground, #0f172a);
   }
+  /* 平时只显示头像；点击展开浮窗时才露出昵称 */
+  #wb-user-orb.wb-orb-open .wb-orb-nick { display: inline; }
   @media (max-width: 720px) {
     #wb-user-orb { padding: 5px; right: 14px; bottom: 14px; }
-    #wb-user-orb .wb-orb-nick { display: none; }
+  }
+  /* 官方图标是方形 App 图标：圆形硬裁会切坏内容，改 contain + 底衬完整显示 */
+  img.wb-avatar-official {
+    object-fit: contain !important;
+    padding: 6%;
+    background: var(--muted, rgba(120,120,120,0.12));
+    box-sizing: border-box;
+  }
+  /* 右下角浮窗：有意义的信息行（剩余积分 / 今日消耗 / 账号数量） */
+  .wb-pop-stats { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .wb-pop-stat { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
+  .wb-pop-stat-k { color: var(--muted-foreground, #64748b); }
+  .wb-pop-stat-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* 「无 Buddy」旅行徽章：文字换成虚线飞机图标，悬浮提示 */
+  .wb-nobuddy-badge {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 4px;
+    border: 1.5px dashed currentColor;
+    border-radius: 999px;
+    padding: 2px 7px 2px 5px;
+    vertical-align: middle;
   }
   #wb-user-pop {
     position: fixed;
@@ -158,13 +182,16 @@ COLLAPSE_SCRIPT = r"""
   .wb-pop-item:hover:not(:disabled) { background: var(--muted, rgba(120,120,120,0.12)); }
   .wb-pop-item:disabled { opacity: 0.5; cursor: not-allowed; }
   .wb-pop-item.danger { color: #ef4444; }
-  .wb-pop-meta { margin-top: 8px; font-size: 11.5px; color: var(--muted-foreground, #64748b); line-height: 1.7; }
   .wb-modal-input { width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border, rgba(120,120,120,0.3)); background: var(--background, #ffffff); color: inherit; font-size: 13px; box-sizing: border-box; }
   .wb-modal-btn { width: 100%; padding: 9px; border-radius: 8px; background: #3b82f6; color: #ffffff; font-size: 13px; font-weight: 600; border: none; cursor: pointer; }
   .wb-modal-btn:disabled { opacity: 0.6; cursor: default; }
   .wb-modal-err { color: #ef4444; font-size: 12px; display: none; }
-  .wb-avatar-pick { display: flex; align-items: center; gap: 12px; }
-  .wb-avatar-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border, rgba(120,120,120,0.3)); }
+  .wb-avatar-pick { display: flex; align-items: flex-start; gap: 12px; }
+  .wb-avatar-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border, rgba(120,120,120,0.3)); flex-shrink: 0; }
+  .wb-avatar-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .wb-avatar-opt { width: 42px; height: 42px; border-radius: 50%; border: 2px solid transparent; padding: 0; background: transparent; cursor: pointer; overflow: hidden; }
+  .wb-avatar-opt img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+  .wb-avatar-opt.active { border-color: #3b82f6; }
   /* 隐藏桌面端专有无法在容器执行的操作按钮与完全磁盘访问提示块 */
   .wb-mac-btn-hide,
   .wb-mac-block-hide {
@@ -837,7 +864,7 @@ COLLAPSE_SCRIPT = r"""
     card.innerHTML = 
       '<div style="text-align:center;margin-bottom:20px;">' +
         '<img src="/icon.png" style="width:56px;height:56px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,0.12);margin:0 auto 12px;display:block;" />' +
-        '<div style="font-size:18px;font-weight:700;letter-spacing:-0.02em;">AutoBuddy 控制台</div>' +
+        '<div style="font-size:18px;font-weight:700;letter-spacing:-0.02em;">AutoBuddy</div>' +
         '<div style="font-size:12px;color:var(--muted-foreground,#64748b);margin-top:4px;">&nbsp;</div>' +
       '</div>' +
       '<div style="display:flex;flex-direction:column;gap:12px;">' +
@@ -990,16 +1017,68 @@ COLLAPSE_SCRIPT = r"""
 
   var __wbAuthData = null;
 
-  function wbAvatarSrc(kind, fresh) {
-    return (kind === "custom" ? "/api/auth/avatar" : "/icon.png") + (fresh ? "?ts=" + Date.now() : "");
+  // 内置圆形头像候选：与官方图标同风格（渐变底 + 简约符号），全部为内联 SVG。
+  // 选中的候选由后端存为 "preset:<key>"，/api/auth/avatar 按其返回。
+  var WB_AVATAR_PRESETS = {
+    moon: { name: "月牙", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b82f6"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><circle cx="32" cy="32" r="32" fill="url(#g)"/><path d="M42 40a14 14 0 0 1-16-21 16 16 0 1 0 22 15 14 14 0 0 1-6 6z" fill="#fff"/></svg>' },
+    star: { name: "星辰", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0ea5e9"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs><circle cx="32" cy="32" r="32" fill="url(#g)"/><path d="M32 16l4.6 10.2L48 28l-8.4 7.6L41.8 47 32 41.4 22.2 47l2.2-11.4L16 28l11.4-1.8z" fill="#fff"/></svg>' },
+    leaf: { name: "新叶", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#10b981"/><stop offset="1" stop-color="#14b8a6"/></linearGradient></defs><circle cx="32" cy="32" r="32" fill="url(#g)"/><path d="M44 20c0 14-9 22-22 24 2-13 10-22 22-24z" fill="#fff"/><path d="M22 44c4-9 10-15 18-19" stroke="rgba(255,255,255,0.55)" stroke-width="2" fill="none"/></svg>' },
+    sun: { name: "暖阳", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs><circle cx="32" cy="32" r="32" fill="url(#g)"/><circle cx="32" cy="32" r="10" fill="#fff"/><g stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M32 12v6"/><path d="M32 46v6"/><path d="M12 32h6"/><path d="M46 32h6"/><path d="M18 18l4.2 4.2"/><path d="M41.8 41.8L46 46"/><path d="M18 46l4.2-4.2"/><path d="M41.8 22.2L46 18"/></g></svg>' },
+    heart: { name: "心动", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f43f5e"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs><circle cx="32" cy="32" r="32" fill="url(#g)"/><path d="M32 46s-12-7.4-12-16a7 7 0 0 1 12-4.9A7 7 0 0 1 44 30c0 8.6-12 16-12 16z" fill="#fff"/></svg>' },
+    gem: { name: "宝石", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#64748b"/><stop offset="1" stop-color="#334155"/></linearGradient></defs><circle cx="32" cy="32" r="32" fill="url(#g)"/><path d="M22 22h20l6 8-16 14-16-14z" fill="#fff"/></svg>' }
+  };
+
+  function wbSvgDataUri(svg) {
+    return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
   }
 
-  function wbFmtLeft(ms) {
-    if (!ms) return "";
-    var left = ms - Date.now();
-    if (left <= 0) return "已过期";
-    var h = Math.floor(left / 3600000), m = Math.floor((left % 3600000) / 60000);
-    return h > 0 ? ("剩余约 " + h + " 小时") : ("剩余约 " + Math.max(1, m) + " 分钟");
+  function wbAvatarSrc(kind, fresh) {
+    // 预设图标：直接内联渲染，不额外请求
+    if (kind && kind.indexOf("preset:") === 0) {
+      var p = WB_AVATAR_PRESETS[kind.slice(7)];
+      return p ? wbSvgDataUri(p.svg) : "/icon.png";
+    }
+    return (kind === "custom" ? "/api/auth/avatar?ts=" + (fresh ? Date.now() : "1") : "/icon.png");
+  }
+
+  // 官方 App 图标是方形：圆形硬裁会切坏内容，套底衬完整显示；预设/自定义已是圆形构图，照常 cover
+  function wbApplyAvatarImg(img, kind) {
+    img.className = (!kind || kind === "official") ? "wb-avatar-official" : "";
+  }
+
+  // 头像选择器（官方 + 内置风格预设）：弹窗与设置卡共用
+  function wbBuildAvatarPicker(current, onPick) {
+    var wrap = document.createElement("div");
+    wrap.className = "wb-avatar-grid";
+    var picked = current || "official";
+    function setActive(kind) {
+      wrap.querySelectorAll(".wb-avatar-opt").forEach(function(x) { x.classList.remove("active"); });
+      var hit = wrap.querySelectorAll(".wb-avatar-opt[data-av=\"" + kind + "\"]");
+      if (hit.length) hit[0].classList.add("active");
+    }
+    function mkBtn(kind, label, src) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "wb-avatar-opt" + (picked === kind ? " active" : "");
+      b.setAttribute("data-av", kind);
+      b.title = label;
+      var im = document.createElement("img");
+      im.src = src;
+      im.alt = label;
+      wbApplyAvatarImg(im, kind);
+      b.appendChild(im);
+      b.onclick = function() { picked = kind; setActive(kind); onPick(kind); };
+      wrap.appendChild(b);
+    }
+    mkBtn("official", "官方图标", wbAvatarSrc("official"));
+    Object.keys(WB_AVATAR_PRESETS).forEach(function(k) {
+      mkBtn("preset:" + k, WB_AVATAR_PRESETS[k].name, wbSvgDataUri(WB_AVATAR_PRESETS[k].svg));
+    });
+    return {
+      wrap: wrap,
+      get: function() { return picked; },
+      markNone: function() { setActive(""); }
+    };
   }
 
   function wbOpenModal(title, buildBody) {
@@ -1079,12 +1158,20 @@ COLLAPSE_SCRIPT = r"""
     var row1 = wbEl("div", "wb-api-row wb-api-row-stack");
     var pick = wbEl("div", "wb-avatar-pick");
     var img = document.createElement("img");
-    img.src = wbAvatarSrc(picked, picked === "custom");
+    function refreshCardImg(kind) {
+      img.src = wbAvatarSrc(kind, kind === "custom");
+      wbApplyAvatarImg(img, kind);
+    }
+    refreshCardImg(picked);
     pick.appendChild(img);
     var btns = wbEl("div", null);
-    btns.style.cssText = "display:flex;flex-direction:column;gap:6px;";
-    var officialBtn = wbEl("button", "wb-api-btn", "使用官方图标");
-    officialBtn.onclick = function() { picked = "official"; fileData = null; img.src = wbAvatarSrc("official"); };
+    btns.style.cssText = "display:flex;flex-direction:column;gap:8px;min-width:0;flex:1;";
+    var picker = wbBuildAvatarPicker(picked, function(kind) {
+      picked = kind;
+      fileData = null;
+      refreshCardImg(kind);
+    });
+    btns.appendChild(picker.wrap);
     var uploadBtn = wbEl("button", "wb-api-btn", "上传自定义头像");
     uploadBtn.title = "≤200KB，PNG / JPG / WebP";
     var fileIn = document.createElement("input");
@@ -1102,10 +1189,11 @@ COLLAPSE_SCRIPT = r"""
         fileMime = f.type || "image/png";
         picked = "custom";
         img.src = String(fileData);
+        wbApplyAvatarImg(img, "custom");
+        picker.markNone();
       };
       rd.readAsDataURL(f);
     };
-    btns.appendChild(officialBtn);
     btns.appendChild(uploadBtn);
     btns.appendChild(fileIn);
     pick.appendChild(btns);
@@ -1201,21 +1289,24 @@ COLLAPSE_SCRIPT = r"""
     var fileData = null, fileMime = null;
     wbOpenModal("修改资料", function(card, close) {
       var pick = document.createElement("div");
-      pick.className = "wb-avatar-pick";
       pick.style.marginBottom = "14px";
       var img = document.createElement("img");
-      img.src = wbAvatarSrc(picked, picked === "custom");
+      img.style.cssText = "width:56px;height:56px;border-radius:50%;object-fit:cover;border:1px solid var(--border,rgba(120,120,120,0.3));display:block;margin:0 auto 10px;";
+      function refreshModalImg(kind) {
+        img.src = wbAvatarSrc(kind, kind === "custom");
+        wbApplyAvatarImg(img, kind);
+      }
+      refreshModalImg(picked);
       pick.appendChild(img);
-      var btns = document.createElement("div");
-      btns.style.cssText = "display:flex;flex-direction:column;gap:6px;";
-      var officialBtn = document.createElement("button");
-      officialBtn.className = "wb-pop-item";
-      officialBtn.style.cssText = "border:1px solid var(--border,rgba(120,120,120,0.3));";
-      officialBtn.textContent = "使用官方图标";
-      officialBtn.onclick = function() { picked = "official"; fileData = null; img.src = wbAvatarSrc("official"); };
+      var picker = wbBuildAvatarPicker(picked, function(kind) {
+        picked = kind;
+        fileData = null;
+        refreshModalImg(kind);
+      });
+      pick.appendChild(picker.wrap);
       var uploadBtn = document.createElement("button");
       uploadBtn.className = "wb-pop-item";
-      uploadBtn.style.cssText = "border:1px solid var(--border,rgba(120,120,120,0.3));";
+      uploadBtn.style.cssText = "border:1px solid var(--border,rgba(120,120,120,0.3));margin-top:10px;";
       uploadBtn.textContent = "上传自定义头像（≤200KB，PNG/JPG/WebP）";
       var fileIn = document.createElement("input");
       fileIn.type = "file";
@@ -1232,13 +1323,13 @@ COLLAPSE_SCRIPT = r"""
           fileMime = f.type || "image/png";
           picked = "custom";
           img.src = String(fileData);
+          wbApplyAvatarImg(img, "custom");
+          picker.markNone();
         };
         rd.readAsDataURL(f);
       };
-      btns.appendChild(officialBtn);
-      btns.appendChild(uploadBtn);
-      btns.appendChild(fileIn);
-      pick.appendChild(btns);
+      pick.appendChild(uploadBtn);
+      pick.appendChild(fileIn);
       card.appendChild(pick);
 
       var lab = document.createElement("label");
@@ -1392,7 +1483,10 @@ COLLAPSE_SCRIPT = r"""
     if (orb) {
       var oimg = orb.querySelector("img");
       var onick = orb.querySelector(".wb-orb-nick");
-      if (oimg) oimg.src = wbAvatarSrc(data.avatar, true);
+      if (oimg) {
+        oimg.src = wbAvatarSrc(data.avatar, true);
+        wbApplyAvatarImg(oimg, data.avatar);
+      }
       if (onick) onick.textContent = nick;
       return;
     }
@@ -1402,6 +1496,7 @@ COLLAPSE_SCRIPT = r"""
     var img = document.createElement("img");
     img.src = wbAvatarSrc(data.avatar, data.avatar === "custom");
     img.alt = "用户头像";
+    wbApplyAvatarImg(img, data.avatar);
     orb.appendChild(img);
     var nickEl = document.createElement("span");
     nickEl.className = "wb-orb-nick";
@@ -1410,7 +1505,7 @@ COLLAPSE_SCRIPT = r"""
     document.body.appendChild(orb);
 
     var pop = null;
-    function closePop() { if (pop) { pop.remove(); pop = null; document.removeEventListener("click", onDoc); } }
+    function closePop() { if (pop) { pop.remove(); pop = null; orb.classList.remove("wb-orb-open"); document.removeEventListener("click", onDoc); } }
     function onDoc() { closePop(); }
     function openPop() {
       if (pop) { closePop(); return; }
@@ -1420,6 +1515,8 @@ COLLAPSE_SCRIPT = r"""
       head.className = "wb-pop-head";
       var himg = document.createElement("img");
       himg.src = wbAvatarSrc(data.avatar, true);
+      himg.alt = "用户头像";
+      wbApplyAvatarImg(himg, data.avatar);
       head.appendChild(himg);
       var hmain = document.createElement("div");
       hmain.style.cssText = "min-width:0;";
@@ -1438,41 +1535,76 @@ COLLAPSE_SCRIPT = r"""
       var dot = document.createElement("span");
       dot.style.cssText = "width:6px;height:6px;border-radius:50%;background:#10b981;display:inline-block;";
       srow.appendChild(dot);
-      srow.appendChild(document.createTextNode("在线 · 会话 24 小时"));
+      srow.appendChild(document.createTextNode("在线"));
       hmain.appendChild(srow);
       head.appendChild(hmain);
       pop.appendChild(head);
 
-      var meta = document.createElement("div");
-      meta.className = "wb-pop-meta";
-      var lines = [];
-      if (data.loginAt) lines.push("登录时间：" + wbTime(data.loginAt));
-      if (data.expiresAt) lines.push("会话到期：" + wbTime(data.expiresAt) + (wbFmtLeft(data.expiresAt) ? "（" + wbFmtLeft(data.expiresAt) + "）" : ""));
-      meta.textContent = lines.join("\n");
-      meta.style.whiteSpace = "pre-line";
-      pop.appendChild(meta);
+      // 有意义的信息行：剩余积分 / 今日消耗 / 账号数量。
+      // 有效期倒计时已移除——过期了重新登录即可，倒计时只会制造焦虑。
+      var stats = document.createElement("div");
+      stats.className = "wb-pop-stats";
+      function statRow(k, v) {
+        var row = document.createElement("div");
+        row.className = "wb-pop-stat";
+        var kk = document.createElement("span");
+        kk.className = "wb-pop-stat-k";
+        kk.textContent = k;
+        var vv = document.createElement("span");
+        vv.className = "wb-pop-stat-v";
+        vv.textContent = v;
+        row.appendChild(kk);
+        row.appendChild(vv);
+        return row;
+      }
+      var creditRow = statRow("剩余积分", "…");
+      var todayRow = statRow("今日消耗", "…");
+      var acctRow = statRow("账号池", "…");
+      stats.appendChild(creditRow);
+      stats.appendChild(todayRow);
+      stats.appendChild(acctRow);
+      pop.appendChild(stats);
 
+      // 积分数据：官方 credits/stats（代理层已过滤僵尸账号并校准汇总）
+      fetch("/api/credits/stats", { cache: "no-store" })
+        .then(function(r) { return r.ok ? r.json() : {}; })
+        .then(function(d) {
+          var sum = (d && d.summary) || {};
+          creditRow.querySelector(".wb-pop-stat-v").textContent =
+            sum.currentRemaining != null ? (Math.round(sum.currentRemaining * 100) / 100 + "") : "—";
+          todayRow.querySelector(".wb-pop-stat-v").textContent =
+            sum.usageToday != null ? (Math.round(sum.usageToday * 100) / 100 + "") : "—";
+        })
+        .catch(function() {
+          creditRow.querySelector(".wb-pop-stat-v").textContent = "—";
+          todayRow.querySelector(".wb-pop-stat-v").textContent = "—";
+        });
+      // 账号池：网关信息里的账号统计
+      fetch("/api/gateway-info", { cache: "no-store" })
+        .then(function(r) { return r.ok ? r.json() : {}; })
+        .then(function(d) {
+          var acc = (d && d.accounts) || {};
+          acctRow.querySelector(".wb-pop-stat-v").textContent =
+            acc.total != null ? ((acc.usable != null ? acc.usable + "/" : "") + acc.total + " 个") : "—";
+        })
+        .catch(function() {
+          acctRow.querySelector(".wb-pop-stat-v").textContent = "—";
+        });
+
+      // 资料与凭据的修改入口统一收在设置页「账号资料」，浮窗只留退出
       var menu = document.createElement("div");
       menu.className = "wb-pop-menu";
-      function item(label, disabled, tip, danger, fn) {
-        var b = document.createElement("button");
-        b.className = "wb-pop-item" + (danger ? " danger" : "");
-        b.textContent = label;
-        b.disabled = !!disabled;
-        if (tip) b.title = tip;
-        if (fn) b.onclick = function() { closePop(); fn(); };
-        menu.appendChild(b);
-      }
-      item("修改资料（昵称 / 头像）", false, "", false, wbOpenProfileModal);
-      item("修改用户名", !!data.usernameLocked,
-        data.usernameLocked ? "AUTH_USERNAME 已通过环境变量设置，不可在此修改" : "", false, wbOpenUsernameModal);
-      item("修改密码", !!data.passwordLocked,
-        data.passwordLocked ? "AUTH_PASSWORD 已通过环境变量设置，不可在此修改" : "", false, wbOpenPasswordModal);
-      item("退出登录", false, "", true, function() {
+      var out = document.createElement("button");
+      out.className = "wb-pop-item danger";
+      out.textContent = "退出登录";
+      out.onclick = function() {
+        closePop();
         fetch("/api/auth/logout", { method: "POST" }).then(function() { window.location.reload(); });
-      });
+      };
+      menu.appendChild(out);
       pop.appendChild(menu);
       document.body.appendChild(pop);
+      orb.classList.add("wb-orb-open");
       setTimeout(function() { document.addEventListener("click", onDoc); }, 0);
     }
     orb.addEventListener("click", function(e) {
@@ -4795,11 +4927,27 @@ COLLAPSE_SCRIPT = r"""
     }).catch(function() { wbToast("中止失败", "err"); });
   }
 
+  // 「无 Buddy」旅行徽章改造：官方在账号卡片右上角输出的是文字徽章「无 Buddy」，
+  // 视觉重、信息重复。这里把它换成虚线描边的小飞机图标，悬浮时给出完整说明；
+  // 账号领养 Buddy 后官方文案变成「未旅行 / 旅行中」等，本函数不再命中，
+  // 徽章自然恢复官方原样 —— 无需任何持久化。
+  function wbTransformNoBuddyBadges() {
+    document.querySelectorAll("span, div").forEach(function(el) {
+      if (el.classList.contains("wb-nobuddy-badge")) return;
+      if (el.childElementCount !== 0) return;
+      if ((el.textContent || "").trim() !== "无 Buddy") return;
+      el.classList.add("wb-nobuddy-badge");
+      el.title = "无 Buddy：还没有领养宠物伙伴。去官方端完成一次对话并领养 Buddy 后即可自动旅行";
+      el.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
+    });
+  }
+
   function run() {
     sanitizeSidebarBrand();
     wbCheckAuth();
     initCollapse();
     sanitizeMacUI();
+    wbTransformNoBuddyBadges();
     enforceTitle();
     injectAccountModels();
     injectAccountPool();
@@ -5029,6 +5177,14 @@ async def auth_change_pwd(req: PwdChangeReq, response: Response, user: Optional[
 
 AVATAR_PATH = db.DATA_DIR / "avatars" / "avatar.png"
 _AVATAR_MAX_BYTES = 200 * 1024
+# 内置圆形头像候选的 key（与前端 WB_AVATAR_PRESETS 保持同步）
+AVATAR_PRESET_KEYS = {"moon", "star", "leaf", "sun", "heart", "gem"}
+
+
+def _valid_avatar_kind(kind: str) -> bool:
+    if kind in ("official", "custom"):
+        return True
+    return isinstance(kind, str) and kind.startswith("preset:") and kind[7:] in AVATAR_PRESET_KEYS
 
 
 def _avatar_mime(head: bytes) -> Optional[str]:
@@ -5067,7 +5223,7 @@ async def auth_profile_put(req: ProfileReq, user: Optional[str] = Depends(get_cu
             return {"ok": False, "error": "昵称最长 32 个字符"}
         db.set_nickname(nick)
     if req.avatar is not None:
-        if req.avatar not in ("official", "custom"):
+        if not _valid_avatar_kind(req.avatar):
             return {"ok": False, "error": "无效的头像类型"}
         if req.avatar == "custom" and not AVATAR_PATH.exists():
             return {"ok": False, "error": "尚未上传自定义头像"}

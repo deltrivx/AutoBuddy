@@ -15,6 +15,20 @@
 
 - 暂无。
 
+## [v0.8.1] - 2026-09-26
+
+### 修复
+
+- **品牌统一**：登录认证页标题「AutoBuddy 控制台」改为「AutoBuddy」，与页面标题、侧边栏品牌一致。
+
+### 变更
+
+- **右下角用户球交互简化**：平时只显示头像圆，点击展开浮窗时才露出昵称；浮窗不再显示会话有效期倒计时（过期重新登录即可），改为展示**剩余积分 / 今日消耗 / 账号池可用数**三项实时信息；修改资料 / 用户名 / 密码入口统一收进设置页「账号资料」，浮窗只保留退出登录。
+- **「无 Buddy」旅行徽章轻量化**：账号卡片右上角的「无 Buddy」文字徽章改为虚线描边小飞机图标，悬浮提示完整说明；账号领养 Buddy 后自动恢复官方原样徽章。
+- **头像体系升级**：官方方形 App 图标圆形展示改为 contain + 底衬（不再硬裁切坏内容）；新增 6 款同风格内置圆形图标（月牙 / 星辰 / 新叶 / 暖阳 / 心动 / 宝石），资料弹窗与设置页共用一组九宫格选择器。
+
+---
+
 ## [v0.8.0] - 2026-09-26
 
 ### 新增
@@ -1307,7 +1321,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.1...HEAD
+[v0.8.1]: https://github.com/deltrivx/AutoBuddy/compare/v0.8.0...v0.8.1
 [v0.8.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.8...v0.8.0
 [v0.7.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.7...v0.7.8
 [v0.7.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.7.6...v0.7.7

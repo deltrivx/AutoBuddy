@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.8.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.0)
+**当前稳定版：** [v0.8.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.1)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.8.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.1) | 2026-09-26 | 修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.1.md) |
 | [v0.8.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.8.0) | 2026-09-26 | 新增 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.8.0.md) |
 | [v0.7.8](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.8) | 2026-09-25 | 彻底根除「幽灵账号」残留并保障所有账号按钮功能一致性 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.8.md) |
 | [v0.7.7](https://github.com/deltrivx/autobuddy/releases/tag/v0.7.7) | 2026-09-25 | 移除 401 审计落盘（恢复纯净镜像） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.7.7.md) |
@@ -90,7 +91,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.8.0    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.8.1    # 锁定版本
 ```
 
 ## 部署产物

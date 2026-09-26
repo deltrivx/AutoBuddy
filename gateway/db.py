@@ -346,9 +346,13 @@ def set_nickname(nickname: str) -> None:
 
 
 def get_avatar() -> str:
-    """头像类型：'official'（默认官方图标）或 'custom'（自定义上传）。"""
+    """头像类型：'official'（默认官方图标）/ 'custom'（自定义上传）/ 'preset:<key>'（内置风格图标）。"""
     val = get_config("profile.avatar")
-    return str(val) if val in ("official", "custom") else "official"
+    if val in ("official", "custom"):
+        return str(val)
+    if isinstance(val, str) and val.startswith("preset:"):
+        return val
+    return "official"
 
 
 def set_avatar(kind: str) -> None:
