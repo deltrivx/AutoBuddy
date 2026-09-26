@@ -4,7 +4,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any
 from fastapi import FastAPI, Request, Response
 import httpx
 import uvicorn
@@ -5043,138 +5043,10 @@ COLLAPSE_SCRIPT = r"""
     });
   }
 
-  // -------------------------------------------------------------------------
-  // 积分统计页：总积分趋势折线图
-  //
-  // 需求（用户 2026-09-26）：官方页面已有「消耗（柱状）」与「按模型分类（横向条形）」，
-  // 缺一张**总积分**折线图。这里按同一套卡片样式补齐：
-  // 同样的 rounded-xl 容器、13px 标题、同样的配色，插在消耗趋势之前。
-  //
-  // 数据：/api/credits/stats 的 creditHistory（B 倒推 + A 实测快照，实测优先）。
-  // -------------------------------------------------------------------------
-  function wbBuildCreditTrendChart(points) {
-    if (!points || points.length < 2) return "";
-    var W = 720, H = 200, PAD_L = 48, PAD_R = 12, PAD_T = 14, PAD_B = 26;
-    var vals = points.map(function(p) { return Number(p.remaining) || 0; });
-    var maxV = Math.max.apply(null, vals), minV = Math.min.apply(null, vals);
-    // 上下留 8% 余量，避免折线贴边
-    var span = Math.max(maxV - minV, 1);
-    var top = maxV + span * 0.08, bottom = Math.max(0, minV - span * 0.08);
-    var innerW = W - PAD_L - PAD_R, innerH = H - PAD_T - PAD_B;
-    var n = points.length;
-
-    function X(i) { return PAD_L + (n === 1 ? innerW / 2 : innerW * i / (n - 1)); }
-    function Y(v) { return PAD_T + innerH * (1 - (v - bottom) / Math.max(top - bottom, 1)); }
-    function fmt(v) {
-      if (v >= 10000) return (Math.round(v / 1000)) + "k";
-      return String(Math.round(v));
-    }
-
-    // 折线 + 渐变填充
-    var line = "", area = "";
-    points.forEach(function(p, i) {
-      var x = X(i).toFixed(1), y = Y(Number(p.remaining) || 0).toFixed(1);
-      line += (i === 0 ? "M" : "L") + x + " " + y + " ";
-    });
-    area = line + "L" + X(n - 1).toFixed(1) + " " + (PAD_T + innerH) + " L" + X(0).toFixed(1) + " " + (PAD_T + innerH) + " Z";
-
-    // Y 轴刻度（4 条）
-    var gridlines = "";
-    for (var g = 0; g <= 4; g++) {
-      var v = bottom + (top - bottom) * g / 4;
-      var gy = Y(v).toFixed(1);
-      gridlines += '<line x1="' + PAD_L + '" y1="' + gy + '" x2="' + (W - PAD_R) + '" y2="' + gy +
-        '" stroke="currentColor" stroke-opacity="0.10" stroke-width="1"></line>' +
-        '<text x="' + (PAD_L - 6) + '" y="' + (Number(gy) + 3.5).toFixed(1) +
-        '" text-anchor="end" font-size="9" fill="currentColor" fill-opacity="0.55">' + fmt(v) + '</text>';
-    }
-
-    // X 轴日期（最多 6 个标签，避免拥挤）
-    var step = Math.max(1, Math.ceil(n / 6));
-    var xlabels = "";
-    points.forEach(function(p, i) {
-      if (i % step !== 0 && i !== n - 1) return;
-      var d = String(p.date || "").slice(5);
-      xlabels += '<text x="' + X(i).toFixed(1) + '" y="' + (H - 8) +
-        '" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.55">' + d + '</text>';
-    });
-
-    // 数据点（实测点实心、倒推点空心，一眼看出哪些是估算）
-    var dots = "";
-    points.forEach(function(p, i) {
-      var v = Number(p.remaining) || 0;
-      dots += '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(v).toFixed(1) + '" r="2.6" fill="' +
-        (p.estimated ? "var(--card,#fff)" : "#10b981") + '" stroke="#10b981" stroke-width="1.6">' +
-        '<title>' + (p.date || "") + "：剩余 " + Math.round(v * 100) / 100 + (p.estimated ? "（推算）" : "（实测）") + '</title></circle>';
-    });
-
-    var last = points[n - 1];
-    var lastVal = Math.round((Number(last.remaining) || 0) * 100) / 100;
-
-    return '<section class="min-w-0 space-y-2.5" aria-labelledby="wb-credit-trend-title">' +
-      '<div class="px-1"><h2 id="wb-credit-trend-title" class="text-[13px] font-medium leading-5">总积分趋势</h2></div>' +
-      '<div class="min-w-0 gap-0 overflow-hidden rounded-xl border py-0 shadow-none" style="border-color:var(--border,rgba(120,120,120,.2));background:var(--card,#fff)">' +
-        '<div class="flex min-w-0 flex-wrap items-center justify-between gap-2 px-4 pt-3 sm:px-5">' +
-          '<span class="text-xs" style="opacity:.62">当前剩余 <b>' + lastVal + '</b></span>' +
-          '<span class="text-xs" style="opacity:.62">实心点为实测 · 空心点为按每日消耗推算</span>' +
-        '</div>' +
-        '<div class="px-2 pb-2 sm:px-3" style="overflow-x:auto">' +
-          '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="200" preserveAspectRatio="none" style="color:var(--foreground,#0f172a)">' +
-            '<defs><linearGradient id="wb-credit-grad" x1="0" y1="0" x2="0" y2="1">' +
-              '<stop offset="0%" stop-color="#10b981" stop-opacity="0.28"></stop>' +
-              '<stop offset="100%" stop-color="#10b981" stop-opacity="0.02"></stop>' +
-            '</linearGradient></defs>' +
-            gridlines +
-            '<path d="' + area + '" fill="url(#wb-credit-grad)"></path>' +
-            '<path d="' + line + '" fill="none" stroke="#10b981" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>' +
-            dots + xlabels +
-          '</svg>' +
-        '</div>' +
-      '</div>' +
-    '</section>';
-  }
-
-  // 把折线图插到官方「消耗趋势」卡片之前（找不到锚点就插在第一个 section 之后）
-  function wbInjectCreditTrendChart() {
-    if (document.getElementById("wb-credit-trend-title")) return;
-    var sections = document.querySelectorAll("main section, section");
-    var anchor = null;
-    for (var i = 0; i < sections.length; i++) {
-      var t = (sections[i].textContent || "");
-      if (t.indexOf("总消耗") >= 0 || t.indexOf("消耗趋势") >= 0 || t.indexOf("官方积分消耗") >= 0 || t.indexOf("本地观察积分消耗") >= 0) {
-        anchor = sections[i];
-        break;
-      }
-    }
-    if (!anchor) return;
-    fetch("/api/credits/stats", { cache: "no-store" })
-      .then(function(r) { return r.ok ? r.json() : {}; })
-      .then(function(d) {
-        var pts = (d && d.creditHistory) || [];
-        var html = wbBuildCreditTrendChart(pts);
-        if (!html) return;
-        var wrap = document.createElement("div");
-        wrap.innerHTML = html;
-        var node = wrap.firstChild;
-        anchor.parentNode.insertBefore(node, anchor);
-      })
-      .catch(function() {});
-  }
-
   function run() {
     sanitizeSidebarBrand();
     wbCheckAuth();
     initCollapse();
-    // 积分统计页折线图：官方是 React 渲染，DOM 出现的时机不定，
-    // 用轻量轮询等待锚点出现（命中即停，最多 20 次 / 10 秒）。
-    (function waitCreditChart() {
-      var tries = 0;
-      var timer = setInterval(function() {
-        tries += 1;
-        wbInjectCreditTrendChart();
-        if (document.getElementById("wb-credit-trend-title") || tries >= 20) clearInterval(timer);
-      }, 500);
-    })();
     sanitizeMacUI();
     wbTransformNoBuddyBadges();
     enforceTitle();
@@ -5652,111 +5524,6 @@ def _checkin_status_store(payload: Any) -> None:
     _CHECKIN_STATUS_CACHE["at"] = time.time()
 
 
-# ---------------------------------------------------------------------------
-# 总积分历史曲线（积分统计页折线图）
-#
-# 需求来源（用户 2026-09-26）：积分统计页已有「消耗（柱状）」与「模型分类（横向条形）」，
-# 需要一个**总积分统计**折线图，用相同类型的样式呈现。
-#
-# 数据来源两条腿走路（用户拍板 B+A）：
-#   B. 倒推：官方 ``daily[]`` 是每日消耗序列，``currentRemaining`` 是当前剩余。
-#      从今天往回累加每日消耗，即可还原「历史上每天的剩余积分」，
-#      一上线就有完整曲线，不必等积累。
-#   A. 快照：每次成功取到 credits/stats 时，把当天的 (剩余, 总额度) 落一条，
-#      后续真实数据逐渐覆盖倒推值 —— 倒推是估算，快照是实测，实测优先。
-#
-# 存储：DATA_DIR/credit_snapshots.json
-#   {"<YYYY-MM-DD>": {"remaining": float, "capacity": float, "at": ms}}
-# ---------------------------------------------------------------------------
-_CREDIT_SNAP_FILE = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "credit_snapshots.json"
-_CREDIT_SNAP_MAX_DAYS = 400
-
-
-def _load_credit_snapshots() -> Dict[str, Any]:
-    try:
-        if _CREDIT_SNAP_FILE.exists():
-            raw = json.loads(_CREDIT_SNAP_FILE.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                return raw
-    except Exception as e:
-        logging.warning("[credits] 快照读取失败: %s", e)
-    return {}
-
-
-def _save_credit_snapshots(data: Dict[str, Any]) -> None:
-    try:
-        _CREDIT_SNAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-        keys = sorted(data.keys())[-_CREDIT_SNAP_MAX_DAYS:]
-        trimmed = {k: data[k] for k in keys}
-        _CREDIT_SNAP_FILE.write_text(json.dumps(trimmed, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception as e:
-        logging.warning("[credits] 快照写入失败: %s", e)
-
-
-def _record_credit_snapshot(remaining: Optional[float], capacity: Optional[float]) -> None:
-    """记录当天快照（同一天重复调用覆盖，取最新实测值）。"""
-    if remaining is None:
-        return
-    day = time.strftime("%Y-%m-%d")
-    snaps = _load_credit_snapshots()
-    snaps[day] = {"remaining": round(float(remaining), 2),
-                  "capacity": round(float(capacity), 2) if capacity is not None else None,
-                  "at": int(time.time() * 1000)}
-    _save_credit_snapshots(snaps)
-
-
-def _build_credit_history(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """构造总积分历史曲线：倒推序列 + 实测快照覆盖（实测优先）。"""
-    summary = data.get("summary") or {}
-    current = summary.get("currentRemaining")
-    if current is None:
-        return []
-
-    # --- B. 倒推：从今天往回累加官方每日消耗 ---
-    daily = data.get("daily") or []
-    # daily 按日期升序；用 {日期: 消耗} 便于查表
-    usage_by_day: Dict[str, float] = {}
-    for item in daily:
-        if isinstance(item, dict) and item.get("date"):
-            try:
-                usage_by_day[str(item["date"])] = float(item.get("usage") or 0.0)
-            except (TypeError, ValueError):
-                continue
-
-    points: List[Dict[str, Any]] = []
-    if usage_by_day:
-        # 从今天往回走：今天的剩余 = current；前一天的剩余 = 今天剩余 + 今天的消耗
-        days = sorted(usage_by_day.keys())
-        # 今天（若序列里没有今天就补上）作为起点
-        today = time.strftime("%Y-%m-%d")
-        if today not in usage_by_day:
-            days.append(today)
-            usage_by_day[today] = 0.0
-            days = sorted(set(days))
-
-        remaining = float(current)
-        for day in reversed(days):
-            points.append({"date": day, "remaining": round(remaining, 2), "estimated": True})
-            # 再往前一天：加上「这一天」的消耗
-            remaining += float(usage_by_day.get(day, 0.0))
-        points.reverse()
-    else:
-        points = [{"date": time.strftime("%Y-%m-%d"), "remaining": round(float(current), 2),
-                   "estimated": True}]
-
-    # --- A. 实测快照覆盖倒推值 ---
-    snaps = _load_credit_snapshots()
-    by_date = {p["date"]: p for p in points}
-    for day, snap in snaps.items():
-        rem = snap.get("remaining")
-        if rem is None:
-            continue
-        by_date[day] = {"date": day, "remaining": round(float(rem), 2),
-                        "capacity": snap.get("capacity"), "estimated": False}
-    merged = [by_date[d] for d in sorted(by_date.keys())]
-    return merged[-90:]
-
-
 @app.get("/api/credits/stats")
 async def credits_stats_proxy(request: Request):
     """过滤官方 credits/stats 中的已删除僵尸账号，只保留当前账号池真实账号，并校准汇总指标。"""
@@ -5806,20 +5573,7 @@ async def credits_stats_proxy(request: Request):
             data["summary"]["usage7Days"] = round(usage_7d, 2)
             data["summary"]["usageToday"] = round(usage_today, 4)
 
-        # A. 记录当天实测快照（真实数据逐渐覆盖倒推估算）
-        try:
-            _record_credit_snapshot(total_remaining, total_capacity)
-        except Exception as e:
-            logging.warning("[credits] 快照记录失败: %s", e)
-
     _reconcile_official_usage(data, valid_account_ids)
-
-    # 总积分历史曲线（B 倒推 + A 快照，实测优先）——供积分统计页折线图使用
-    try:
-        data["creditHistory"] = _build_credit_history(data)
-    except Exception as e:
-        logging.warning("[credits] 历史曲线构造失败: %s", e)
-        data["creditHistory"] = []
 
     # 口径兜底的产物必须自己校验一遍：反代层发的 Response 不像 FastAPI 路由那样
     # 有框架兜底，一旦这里抛异常就会变成非 JSON 响应，前端只会拿到一句
