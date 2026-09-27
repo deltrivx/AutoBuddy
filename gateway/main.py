@@ -45,7 +45,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.20"
+VERSION_DEFAULT = "0.9.21"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -2631,6 +2631,44 @@ _ACCESS_DEDUP_LOCK = threading.Lock()
 _ACCESS_DEDUP_LAST: Dict[str, str] = {}
 _ACCESS_DEDUP_COUNT: Dict[str, int] = {}
 
+# 被吞掉的重复次数不能只在「内容变化时」才汇报 —— 见 _flush_access_dedup 的说明。
+# 改成周期汇报：默认 60s 一次，可用环境变量调（测试时可设成几秒）。
+_ACCESS_DEDUP_FLUSH_SEC = float(os.getenv("ACCESS_DEDUP_FLUSH_SEC", "60") or 60)
+# 键的数量上限。access log 的内容种类理论上无界（URL 里带动态 id 时尤甚），
+# 不封顶就是一条缓慢的内存泄漏。
+_ACCESS_DEDUP_MAX_KEYS = 500
+_ACCESS_DEDUP_NEXT_FLUSH = 0.0
+
+
+def _flush_access_dedup(now: float = 0.0) -> None:
+    """汇报并清空各条内容累积的重复次数。
+
+    为什么必须周期汇报，而不是「内容变化时汇报」：
+
+    为了抗交错轮询（A、B 交替），去重是**按内容各自独立**记录的 ——
+    c3 累积的次数记在 c3 名下。等 d4 出现时去查的是 d4 的计数（= 0），
+    于是「上一条重复 N 次」这行**永远不会触发**（实测已确认）。
+
+    所以改为按时间周期把各条内容的待报次数统一打出来并清零。
+    这样既保留可观测性（不会被悄悄吞掉），又不破坏按内容去重的正确性。
+    """
+    global _ACCESS_DEDUP_NEXT_FLUSH
+    if not now:
+        now = time.time()
+    with _ACCESS_DEDUP_LOCK:
+        pending = [(k, c) for k, c in _ACCESS_DEDUP_COUNT.items() if c > 0]
+        for k in list(_ACCESS_DEDUP_COUNT.keys()):
+            _ACCESS_DEDUP_COUNT[k] = 0
+        # 容量封顶：超了就丢最早写入的键（dict 保持插入顺序）
+        over = len(_ACCESS_DEDUP_LAST) - _ACCESS_DEDUP_MAX_KEYS
+        if over > 0:
+            for k in list(_ACCESS_DEDUP_LAST.keys())[:over]:
+                _ACCESS_DEDUP_LAST.pop(k, None)
+                _ACCESS_DEDUP_COUNT.pop(k, None)
+        _ACCESS_DEDUP_NEXT_FLUSH = now + _ACCESS_DEDUP_FLUSH_SEC
+    for k, c in pending:
+        print(f"INFO:     (重复 {c} 次) {k}", flush=True)
+
 
 def _normalize_access_msg(msg: str) -> str:
     """规范化 access log：抹掉每次连接都不同的客户端端口号。
@@ -2656,17 +2694,15 @@ class _AccessDedupFilter(logging.Filter):
         except Exception:
             return True
         key = _normalize_access_msg(msg)
+        now = time.time()
+        if now >= _ACCESS_DEDUP_NEXT_FLUSH:
+            _flush_access_dedup(now)
         with _ACCESS_DEDUP_LOCK:
-            prev = _ACCESS_DEDUP_LAST.get(key)
-            if prev == key:
+            if _ACCESS_DEDUP_LAST.get(key) == key:
                 _ACCESS_DEDUP_COUNT[key] = _ACCESS_DEDUP_COUNT.get(key, 0) + 1
                 return False
-            # 内容变了：先交代上一条被吞了多少次，再放行本条
-            repeat = _ACCESS_DEDUP_COUNT.get(key, 0)
             _ACCESS_DEDUP_LAST[key] = key
-            _ACCESS_DEDUP_COUNT[key] = 0
-        if repeat > 0:
-            print(f"INFO:     (上一条重复 {repeat} 次) {key}", flush=True)
+            _ACCESS_DEDUP_COUNT.setdefault(key, 0)
         return True
 
 

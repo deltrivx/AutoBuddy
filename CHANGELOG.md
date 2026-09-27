@@ -31,6 +31,35 @@
 
 ---
 
+## [v0.9.21] - 2026-09-27
+
+<!-- summary: 修正 v0.9.20 去重的两个缺陷：重复次数被悄悄吞掉、字典无上限 -->
+
+### 修复
+
+- **修正 v0.9.20 引入的去重缺陷（部署后对照实测发现）**：
+
+  1. **重复次数被悄悄吞掉**：原先设计为「内容变化时汇报上一条被吞的次数」，
+     但为了抗交错轮询（A、B 交替），去重是**按内容各自独立**记录的 ——
+     c3 累积的计数记在 c3 名下，等 d4 出现时查的是 d4 的计数（= 0），
+     于是「(上一条重复 N 次)」这行**永远不会触发**。
+
+     实测确认：连发 5 次相同内容 → 0 行（去重生效 ✅），
+     但换成新内容时只出现新行，**没有交代被吞掉的次数**（❌ 观测断档）。
+
+     现改为**按时间周期汇报**：默认每 60s 将各条内容累积的待报次数
+     统一打出并清零（可用 `ACCESS_DEDUP_FLUSH_SEC` 调整）。
+     既保留可观测性，又不破坏按内容去重的正确性。
+
+  2. **去重字典无上限增长（内存泄漏）**：`_ACCESS_DEDUP_LAST` 每遇到一种
+     新内容就加一个键且从不清理。access log 的内容种类理论上无界
+     （URL 带动态 id 时尤甚），长时间运行即缓慢泄漏。
+
+     现加上限 `_ACCESS_DEDUP_MAX_KEYS = 500`，超出时淘汰最早写入的键。
+
+- 回归测试 `_test_log_dedup.py` 补两条校验：必须存在 `_flush_access_dedup`
+  （否则重复次数会被悄悄吞掉）、必须存在容量上限（否则内存泄漏）。
+
 ## [v0.9.20] - 2026-09-27
 
 <!-- summary: access log 通用相邻去重，相同日志只出现一条 -->
@@ -1965,7 +1994,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.20...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.21...HEAD
+[v0.9.21]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.20...v0.9.21
 [v0.9.20]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.19...v0.9.20
 [v0.9.19]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.18...v0.9.19
 [v0.9.18]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.17...v0.9.18

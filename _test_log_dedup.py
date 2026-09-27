@@ -64,6 +64,20 @@ def main() -> int:
             print(f"❌ {mod}: _normalize_access_msg 未抹掉客户端端口号")
             fail += 1
 
+        # 3.5) 必须有「周期汇报」机制。
+        #
+        # 这是实测踩出来的坑：为了抗交错轮询，去重按内容**各自独立**记录，
+        # 于是「内容变化时汇报上一条重复次数」永远不会触发 ——
+        # c3 累积的计数记在 c3 名下，等 d4 出现时查的是 d4（= 0）。
+        # 结果是重复次数被悄悄吞掉、观测断档。
+        if "_flush_access_dedup" not in src:
+            print(f"❌ {mod}: 缺少 _flush_access_dedup（重复次数会被悄悄吞掉）")
+            fail += 1
+        # 3.6) 必须有容量上限，否则 URL 带动态 id 时字典无界增长 = 内存泄漏
+        if "_ACCESS_DEDUP_MAX_KEYS" not in src:
+            print(f"❌ {mod}: 去重字典无容量上限（长时间运行会内存泄漏）")
+            fail += 1
+
         # 4) 依赖必须导入，否则运行时 NameError
         for need in ("import re", "import threading"):
             if not re.search(rf"^{need}$", src, re.M):
