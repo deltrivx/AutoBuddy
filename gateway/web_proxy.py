@@ -201,6 +201,40 @@ COLLAPSE_SCRIPT = r"""
      实测：1280px 下 display=flex（可见），390px 下 display=none（不可见）。
      这里无条件覆盖为 flex，使移动端与 PC 显示同步。 */
   [class*="min-[420px]:flex"] { display: flex !important; }
+
+  /* ---------------- 每日任务页「积分统计」：1:1 复刻官方积分统计页 ----------------
+     官方实测结构/取值（/credit-stats，1280px 视口）：
+       卡片  rounded-2xl(16px) + border 1px + bg-card/70 + overflow:hidden（flex-col）
+       网格  grid grid-cols-1 sm:grid-cols-4 + sm:py-5（20px 0）
+       单项  flex flex-col items-center justify-center px-4 py-5 sm:py-3 text-center
+             非首项 sm:border-l 分隔
+       标签  13px / font-weight 500 / leading-20px / muted-foreground
+       数值  mt-3(12px) 26px / 600 / leading-32px / tracking -0.025em / tabular-nums
+     -- 之前用的是自造的 flex-wrap + 18px 方块 + 各自着色，并非官方结构。 */
+  .wb-dl-credit-card {
+    display: flex; flex-direction: column; min-width: 0;
+    border: 1px solid var(--border, rgba(120,120,120,.25));
+    border-radius: 16px; overflow: hidden;
+    background: rgba(255,255,255,.7);
+  }
+  .wb-dl-credit-grid { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0; }
+  .wb-dl-credit-item {
+    display: flex; flex-direction: column; min-width: 0;
+    align-items: center; justify-content: center;
+    padding: 20px 16px; text-align: center;
+  }
+  .wb-dl-credit-k { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--muted-foreground, #64748b); }
+  .wb-dl-credit-v {
+    margin-top: 12px; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 26px; font-weight: 600; line-height: 32px; letter-spacing: -0.025em;
+    font-variant-numeric: tabular-nums; color: var(--foreground, #0f172a);
+  }
+  @media (min-width: 640px) {
+    .wb-dl-credit-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 20px 0; }
+    .wb-dl-credit-item { padding: 12px 16px; border-left: 1px solid rgba(120,120,120,.18); }
+    .wb-dl-credit-item:first-child { border-left: 0; }
+  }
   .wb-buddy-nobuddy { color: #94a3b8; }
   .wb-buddy-nobuddy svg { stroke-dasharray: 3 2.4; }
   /* 未旅行：实线（已领养，伙伴在家待命） */
@@ -4081,15 +4115,15 @@ COLLAPSE_SCRIPT = r"""
     //   外框：rounded-2xl + 1px 边框 + bg-card/70
     //   单项：flex-col + items-center + justify-center + px-4 py-5 + text-center
     //   数字：26px / font-weight 600 / 居中
-    var html = '<div style="display:flex;flex-wrap:wrap;width:100%;border:1px solid var(--border,rgba(120,120,120,.25));border-radius:16px;background:var(--card,rgba(255,255,255,.7));overflow:hidden">';
-    items.forEach(function(it, i) {
-      html += '<div style="flex:1 1 0;min-width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 16px;text-align:center' +
-        (i > 0 ? ';border-left:1px solid var(--border,rgba(120,120,120,.18))' : '') + '" title="' + it.tip + '">' +
-        '<div style="font-size:12.5px;color:var(--muted-foreground,#64748b);margin-bottom:6px">' + it.k + '</div>' +
-        '<div style="font-size:26px;font-weight:600;line-height:1.15;color:var(--foreground,#0f172a);font-variant-numeric:tabular-nums">' + it.v + '</div>' +
+    // 结构与官方积分统计页一致：卡片 → grid(4列) → 单项(居中) → 标签 + 数值
+    var html = '<div class="wb-dl-credit-card"><div class="wb-dl-credit-grid">';
+    items.forEach(function(it) {
+      html += '<div class="wb-dl-credit-item" title="' + it.tip + '">' +
+        '<div class="wb-dl-credit-k">' + it.k + '</div>' +
+        '<div class="wb-dl-credit-v">' + it.v + '</div>' +
         '</div>';
     });
-    html += '</div>';
+    html += '</div></div>';
     // 最近几天的明细，便于核对累计是怎么来的
     var days = (d.days || []).slice(0, 5);
     if (days.length) {
@@ -5882,13 +5916,80 @@ async def wb_daily_tasks(limit: int = 200, account: Optional[str] = None):
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
+def _merge_checkin_credits(payload: Any) -> Dict[str, Any]:
+    """把「签到积分」并入 /api/wb-daily/credit-summary 的结果。
+
+    背景（用户 2026-09-27 反馈「今日签到肯定有积分，但你都算成任务积分了」）：
+    聚合原本只从 wb_daily_tasks 的 detail 文本解析「+N积分」，
+    而 checkin 行的 detail 恒为「✅签到: 今天已签到，请明天再来」，
+    **不含任何数字**（实测 18 条全如此），所以签到奖励一直没被统计，
+    所有积分都被算进了「任务积分」。
+
+    签到奖励的真实来源是每个账号签到状态里的
+      raw.daily_credit   —— 每日签到奖励额
+      raw.checkin_dates  —— 历史签到日期列表
+    由此可同时补出「今日签到积分」与各历史日期的签到积分。
+    """
+    data = payload if isinstance(payload, dict) else {}
+    cached = _CHECKIN_STATUS_CACHE.get("payload")
+    accounts = (cached or {}).get("accounts") if isinstance(cached, dict) else None
+    if not accounts:
+        # 签到状态尚未缓存（首次访问），保持任务侧结果，等缓存预热后自动补全
+        return data
+
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    add_today = 0.0
+    checkin_by_day: Dict[str, float] = {}
+
+    for a in accounts or []:
+        raw = (a or {}).get("raw") or {}
+        try:
+            credit = float(raw.get("daily_credit") or 0)
+        except (TypeError, ValueError):
+            continue
+        if credit <= 0:
+            continue
+        for d in (raw.get("checkin_dates") or []):
+            key = str(d)
+            if key == today:
+                add_today += credit
+            checkin_by_day[key] = checkin_by_day.get(key, 0.0) + credit
+
+    # 合并到按天明细（原先 days 只有 task 侧数据）
+    days_map = {d.get("date"): dict(d) for d in (data.get("days") or []) if isinstance(d, dict)}
+    for key, val in checkin_by_day.items():
+        bucket = days_map.setdefault(key, {"date": key, "checkin": 0.0, "task": 0.0, "total": 0.0})
+        bucket["checkin"] = round(float(bucket.get("checkin") or 0) + val, 2)
+    days = []
+    for key in sorted(days_map, reverse=True):
+        b = days_map[key]
+        ci = round(float(b.get("checkin") or 0), 2)
+        tk = round(float(b.get("task") or 0), 2)
+        days.append({"date": key, "checkin": ci, "task": tk, "total": round(ci + tk, 2)})
+
+    data["todayCheckinCredits"] = round(float(data.get("todayCheckinCredits") or 0) + add_today, 2)
+    data["todayCredits"] = round(float(data.get("todayCredits") or 0) + add_today, 2)
+    data["totalCredits"] = round(
+        float(data.get("totalCredits") or 0) + sum(checkin_by_day.values()), 2)
+    data["days"] = days
+    return data
+
+
 @app.get("/api/wb-daily/credit-summary")
 async def wb_daily_credit_summary():
     """每日任务积分聚合：今日 / 签到 / 任务 / 累计（转发到 wb-daily 服务）。"""
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/credit-summary")
-        return Response(content=r.content, status_code=r.status_code,
-                        media_type="application/json")
+        try:
+            payload = json.loads(r.content or "{}")
+        except Exception:
+            payload = {}
+        try:
+            payload = _merge_checkin_credits(payload)
+        except Exception:
+            pass
+        return Response(content=json.dumps(payload, ensure_ascii=False),
+                        status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/task-summary")

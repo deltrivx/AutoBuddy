@@ -31,6 +31,40 @@
 
 ---
 
+## [v0.9.11] - 2026-09-27
+
+<!-- summary: 签到积分改从签到状态页取真实奖励、积分统计栏 1:1 复刻官方结构 -->
+
+### 修复
+
+- **签到积分终于统计正确（原全部被算成任务积分）**：积分聚合原先只从
+  `wb_daily_tasks` 的 `detail` 文本解析「+N积分」，而 checkin 行的 detail
+  恒为「✅签到: 今天已签到，请明天再来」——**实测 18 条全部不含任何数字**，
+  因此签到奖励从未被计入，所有积分都被归到了「任务积分」。
+
+  签到奖励的真实来源是每个账号签到状态里的：
+  - `raw.daily_credit` —— 每日签到奖励额
+  - `raw.checkin_dates` —— 历史签到日期列表
+
+  现在 `/api/wb-daily/credit-summary` 会读取已缓存的 `/api/checkin/status`
+  （60 秒 TTL，不额外打上游），把签到奖励并入：今日签到积分、总积分，
+  以及按天明细中的 checkin 列。
+  实测当前数据：7 个今日已签到账号 × 100 = **700** 分签到积分。
+
+- **每日任务页「积分统计」栏 1:1 复刻官方积分统计页结构**：上一版虽改用了官方的
+  字号（26px / 600），但布局仍是自造的 `flex-wrap` + 各自着色，与官方并不对齐。
+  现按官方 `/credit-stats` 的**真实 DOM 结构**重写：
+
+  | 层级 | 官方实测 |
+  | :--- | :--- |
+  | 卡片 | `rounded-2xl` + 1px 边框 + `bg-card/70` + `overflow:hidden`，`flex-col` |
+  | 网格 | `grid grid-cols-1 sm:grid-cols-4`，sm 以上 `py-5`（20px 0） |
+  | 单项 | `flex flex-col items-center justify-center px-4 py-3/5 text-center`，非首项左边框 |
+  | 标签 | 13px / 500 / `leading-20px` / `muted-foreground` |
+  | 数值 | `mt-3`(12px) / 26px / 600 / `leading-32px` / `tracking -0.025em` / `tabular-nums` |
+
+  同时不再给四项数值各自着色，与官方一致统一为前景色。
+
 ## [v0.9.10] - 2026-09-27
 
 <!-- summary: 积分统计栏对齐官方样式、浮窗数值着色、退出登录文字左对齐 -->
@@ -1621,7 +1655,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.10...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.11...HEAD
+[v0.9.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.10...v0.9.11
 [v0.9.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.9...v0.9.10
 [v0.9.9]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.8...v0.9.9
 [v0.9.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.7...v0.9.8
