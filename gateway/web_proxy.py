@@ -528,6 +528,10 @@ COLLAPSE_SCRIPT = r"""
       gap: 8px;
     }
     .wb-api-row > * { max-width: 100%; }
+    /* 窄屏竖屏：状态徽章允许换行、飞机图标保持不缩，避免被挤出可视区 */
+    .wb-api-badge { white-space: normal; }
+    .wb-buddy-badge, .wb-nobuddy-badge { flex-shrink: 0; }
+    .wb-buddy-badge svg { width: 12px; height: 12px; }
   }
   .wb-api-main { min-width: 0; flex: 1 1 auto; }
   .wb-api-label {
@@ -4116,7 +4120,11 @@ COLLAPSE_SCRIPT = r"""
             '<span class="wb-api-mono" title="' + esc(displayName) + '">' + esc(displayName) + '</span>' +
             (lastTime ? '<span class="wb-api-desc" style="font-size:11px;margin-left:8px">最近 ' + esc(lastTime) + '</span>' : '') +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">' +
+          /* 窄屏竖屏修复（用户 2026-09-27 反馈「移动端竖屏国内账号的旅行飞机图和签到图不显示」）
+             原样式 flex:0 0 auto + 不换行：竖屏宽度不足时，飞机图标与签到/凭据徽章被挤出可视区
+             （或被祖先 overflow 裁掉），看起来就是「图不见了」。
+             改为可收缩 + 允许换行 + 右对齐，保证窄屏下整组状态仍然可见。 */
+          '<div style="display:flex;align-items:center;gap:6px;flex:0 1 auto;flex-wrap:wrap;min-width:0;justify-content:flex-end">' +
             '<span class="wb-api-badge" style="color:' + checkinTone + ';background:transparent;border:1px solid ' + checkinTone + '33" title="' + esc(checkinTitle) + '">' + esc(checkinText) + '</span>' +
             '<span class="wb-api-badge" style="color:' + credTone + ';background:transparent;border:1px solid ' + credTone + '33">' + esc(credText) + '</span>' +
           '</div>' +

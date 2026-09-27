@@ -385,15 +385,56 @@ class DailyJob:
 
         account = (self._cur_account or {}).get("account") or "-"
 
-        # 结果判定：✅ / 成功 / +N积分 → success；已签到 / 已领过 → already；
-        # 失败 / 异常 / HTTP 4xx/5xx → failed；其余算 info（如抽样信息行）。
+        # 结果判定（用户 2026-09-27 反馈「除批量接受外完成度全是 0」）。
+        #
+        # 根因：原判定只认 "✅" / "成功" / "+ "（加号带空格）三个信号，
+        # 但上游脚本的真实成功文案几乎都不在里面：
+        #   📦盲盒: 暗影喵(SR)              ← 开出稀有猫，无关键词 → 误判 info
+        #   🎁领奖[first_buddy]: +300积分    ← 加号后无空格 → 误判 info
+        #   Buddy_App_QQ: buddyapp 五连 OK   ← OK 不在名单 → 误判 info
+        # 只有「📋批量接受 … → 成功 N」恰好含"成功"二字，所以唯独它有完成度。
+        #
+        # 修正策略：**先排除再肯定**。
+        # 1) 否定词优先 —— "能量不足"、"无次数"、"跳过"、"not completed" 等
+        #    即使含 "OK"/"+" 也不能算成功（如 "first_buddy task not completed yet (credit=+0)"）；
+        # 2) 再按顺序判 failed → already → success；
+        # 3) 成功信号改为**带具体形态**：稀有度 \(R|SR|SSR|UR\)、正的积分增量 \+[1-9]、OK/五连、抽取/获得。
         result = "info"
-        if any(k in text for k in ("失败", "异常", "错误", "超时")):
+
+        # --- 1) 否定信号：本行并没有真正做成 ---
+        NEGATIVE = (
+            "能量不足", "无次数", "无需抽", "跳过", "余额=0", "未到",
+            "✗", "×", "not_accepted", "not completed", "失败", "异常", "错误", "超时",
+            "timeout", "error", "无法登记", "仍无 Buddy",
+        )
+        has_negative = any(k in text for k in NEGATIVE)
+
+        # 注意：「无法登记」算失败（登记这一步确实没做成）；
+        # 而 "not completed yet" 只是**待完成**（如首只 Buddy 尚未满足条件），
+        # 语义上是 info，不能误算成失败把完成度抹黑。
+        if any(k in text for k in (
+            "失败", "异常", "错误", "超时", "✗", "error", "timeout", "无法登记",
+        )):
             result = "failed"
-        elif any(k in text for k in ("已签到", "已领过", "已领", "already")):
+        elif any(k in text for k in ("已签到", "已领过", "已领", "already", "请明天再来")):
             result = "already"
-        elif any(k in text for k in ("✅", "成功", "+ ")):
-            result = "success"
+        elif not has_negative:
+            # --- 2) 成功信号 ---
+            success = False
+            # 抽卡类：开出具体稀有度角色
+            if re.search(r"(喵|伙伴|卡)[（(](SSR|SR|UR|R)[）)]", text):
+                success = True
+            # 奖励类：正的积分/能量增量（\+0 不算，那是未完成的任务说明）
+            elif re.search(r"\+[1-9]\d*\s*(积分|能量|credits?|energy)", text, re.I):
+                success = True
+            # 明确文案
+            elif any(k in text for k in ("✅", "成功", "五连 OK", "OK", "获得", "抽中", "已到账", "领取成功")):
+                success = True
+            # 旅行类：已进入行程（有到达倒计时）
+            elif re.search(r"旅行中|约\s*\d+\s*分钟后到达|即将到达", text):
+                success = True
+            if success:
+                result = "success"
 
         streak = None
         m = re.search(r"连签(\d+)天", text)

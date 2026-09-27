@@ -19,6 +19,44 @@ from typing import Optional, Dict, Any, List
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 DB_PATH = DATA_DIR / "autobuddy.db"
 
+# 记录「上一次用环境变量引导时写下的密码」，用于判断环境变量是否真的被改过。
+# 有了它，环境变量就只在**初始建立**或**用户主动修改**时生效，
+# 不会再在每次启动时把用户于面板设置的密码冲掉（详见 init_db 里的说明）。
+BOOTSTRAP_KEY = "auth.bootstrap_password"
+
+
+def _init_read_bootstrap(cursor, key: str) -> str:
+    """在 init_db 自己的连接上读取引导标记。
+
+    刻意不去调用 get_config()：那个函数会**另开一条连接**，
+    而此时 init_db 正持有写连接（且尚未 commit），SQLite 会直接
+    抛 `database is locked`。读写都必须复用调用方传入的 cursor。
+    """
+    try:
+        cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        if not row:
+            return ""
+        val = row[0]
+        # set_config 存的是 JSON 字符串，这里尽量还原；失败就按原文处理
+        try:
+            return str(json.loads(val)).strip()
+        except Exception:
+            return str(val).strip()
+    except Exception:
+        return ""
+
+
+def _init_write_bootstrap(cursor, key: str, value: str, now: float) -> None:
+    """在 init_db 自己的连接上写入引导标记（理由同上，必须复用 cursor）。"""
+    cursor.execute(
+        "INSERT INTO system_config (key, value, category, description, updated_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        (key, json.dumps(value, ensure_ascii=False), "auth",
+         "认证引导用的初始密码（仅用于变更比对）", now)
+    )
+
 
 def get_db_connection() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,8 +187,17 @@ def init_db() -> None:
         user_row = cursor.fetchone()
         now = time.time()
 
+        # 环境变量覆盖**只允许发生一次**（记在 system_config 的 bootstrap 标记里）。
+        #
+        # 背景（用户 2026-09-27 反馈「取消环境变量后原用户名密码认证失败」）：
+        # 原逻辑只要检测到 AUTH_PASSWORD 就**每次启动无条件覆盖**密码。后果有两个：
+        #   1) 用户在面板改过的密码，容器一重启就被环境变量冲回去 —— 改了个寂寞；
+        #   2) 一旦用户把环境变量从模板里删掉，启动时 env_pwd 回落到默认 "password"，
+        #      而 users 表里存的早已是别的值，于是「正确的密码登不上」。
+        #
+        # 修正后的语义：**环境变量只在首次引导时用来建账号**，之后它就是普通的初始值，
+        # 与用户在面板设置的新密码完全等价 —— 谁最后改，谁生效，重启不再干预。
         if not user_row:
-            # 用户不存在则创建（无论是默认 admin 还是环境变量指定的新用户名）
             salt = secrets.token_hex(16)
             pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
             cursor.execute(
@@ -158,16 +205,23 @@ def init_db() -> None:
                 (env_user, pwd_hash, salt, "admin", now, now)
             )
             print(f"[Database] 已初始化认证账号：{env_user}")
+            _init_write_bootstrap(cursor, BOOTSTRAP_KEY, env_pwd, now)
         else:
-            # 若环境变量显式指定了密码，同步更新该账号密码
-            if os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS"):
-                salt = user_row["salt"] or secrets.token_hex(16)
-                pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
-                cursor.execute(
-                    "UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?",
-                    (pwd_hash, salt, now, user_row["id"])
-                )
-                print(f"[Database] 环境变量显式指定密码，已同步更新账号：{env_user}")
+            # 仅当「环境变量密码**确实变了**」才同步 —— 用户主动换了环境变量的场景仍要照顾；
+            # 内容没变就绝不动 DB，这样面板里改过的密码能稳稳留下来。
+            env_pass_set = bool(os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS")
+                                or os.getenv("AUTH_DEFAULT_PASS"))
+            if env_pass_set:
+                prev = _init_read_bootstrap(cursor, BOOTSTRAP_KEY)
+                if prev != env_pwd:
+                    salt = user_row["salt"] or secrets.token_hex(16)
+                    pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
+                    cursor.execute(
+                        "UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?",
+                        (pwd_hash, salt, now, user_row["id"])
+                    )
+                    _init_write_bootstrap(cursor, BOOTSTRAP_KEY, env_pwd, now)
+                    print(f"[Database] 检测到环境变量密码变更，已同步账号：{env_user}")
 
         conn.commit()
 
