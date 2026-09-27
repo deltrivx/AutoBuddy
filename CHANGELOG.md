@@ -31,6 +31,52 @@
 
 ---
 
+## [v0.9.19] - 2026-09-27
+
+<!-- summary: 词元统计页剩余 Token 字段改走运行时替换，彻底清零 -->
+
+### 修复
+
+- **词元统计页仍有 Token 字段未替换成「词元」**（用户 2026-09-27 反馈）。
+  实测页面上残留 6 处：
+
+  ```
+  输入 Token / 输出 Token
+  左轴：Token · 右轴：调用次数
+  近 30 天 合计 420M Token · 2,778 次调用
+  2026-08-29 使用 0 Token，0 次调用；…
+  最近一年按天显示 Token 活跃度。
+  ```
+
+  v0.9.17 只补了 5 个已知短语，这些没覆盖到 —— 其中部分是**动态拼串**
+  （如 `420M Token`、`0 Token，0 次调用`），根本无法预先枚举。
+
+### 为什么不走静态替换表
+
+`TEXT_REPLACEMENTS` 对 JS 资源做的是**等长字节替换**，而：
+
+```
+Token   ASCII  = 5 字节
+词元     UTF-8 = 6 字节   ← 恒差 +1 字节
+```
+
+**永远配不平**。v0.9.16 正是栽在这里 —— 少 1 字节导致
+`/assets/*.js` 返回 500、整站白屏。所以静态表根本不可行。
+
+### 方案：运行时替换
+
+新增 `wbCiyuanRename()`，在渲染后遍历 **TEXT_NODE** 做替换：
+
+- **不碰元素属性** —— `href="/api/token-stats"` 这类路由天然安全，
+  不存在「裸 Token 全局替换把接口打挂」的风险
+- **能覆盖动态串** —— 数字拼出来的文案也能改
+- **不会死循环** —— 替换后文本里已无 Token，下一轮无节点命中即终止；
+  若 React 重新渲染出含 Token 的文本会被再次替换（正是期望行为）
+
+同时给 `_test_text_replacements.py` 补了一条检查：禁止往静态表里塞
+「ASCII → 中文」的替换（即便硬凑空格配平，也会留下多余空白），
+这类需求一律改走运行时替换。
+
 ## [v0.9.18] - 2026-09-27
 
 <!-- summary: 每日任务页积分四项独立成框、最近记录独立、积分自动更新、清理多余显示 -->
@@ -1872,7 +1918,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.18...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.19...HEAD
+[v0.9.19]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.18...v0.9.19
 [v0.9.18]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.17...v0.9.18
 [v0.9.17]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.16...v0.9.17
 [v0.9.16]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.15...v0.9.16

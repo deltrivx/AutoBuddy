@@ -59,6 +59,28 @@ def main() -> int:
     print(f"✅ {len(pairs)} 条替换全部等长")
     for old, new in pairs:
         print(f"   {len(old.encode('utf-8')):>3}B  {old} -> {new}")
+
+    # 补充检查：ASCII -> 中文这类「天然不等长」的替换，
+    # 即便硬凑空格配平了长度，也会让文案里出现莫名其妙的多余空白
+    # （例如「输入词元 」尾巴上一个空格只为凑字节）。
+    # 这类场景应当改走**运行时替换**（wbCiyuanRename），而不是塞进静态表。
+    susp = []
+    for old, new in pairs:
+        if old == new:
+            continue
+        old_ascii = all(ord(c) < 128 for c in old)
+        new_has_cjk = any(ord(c) > 0x2E7F for c in new)
+        if old_ascii and new_has_cjk:
+            susp.append((old, new))
+    if susp:
+        print("❌ 以下替换用静态表把 ASCII 换成中文，需改走运行时替换：")
+        for old, new in susp:
+            print(f"   {old!r} -> {new!r}")
+            print("      ASCII->中文在 UTF-8 下字节数必然变化，静态等长表无法正确表达；")
+            print("      请用 wbCiyuanRename() 在渲染后替换 TEXT_NODE。")
+        return 1
+
+    print("✅ 无「ASCII -> 中文」的不当静态替换")
     return 0
 
 

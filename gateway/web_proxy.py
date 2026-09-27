@@ -4863,9 +4863,57 @@ COLLAPSE_SCRIPT = r"""
     });
   }
 
+  /* Token -> 词元：页面内**所有可见文案**的运行时替换。
+
+     为什么不能用 TEXT_REPLACEMENTS（静态表）：
+       Token 是 ASCII = 5 字节，词元 是 UTF-8 中文 = 6 字节，恒差 +1 字节。
+       而 TEXT_REPLACEMENTS 对 JS 资源做的是**等长**字节替换 ——
+       v0.9.16 正是栽在这里：少 1 字节 -> /assets/*.js 返回 500 -> 整站白屏。
+       所以静态表根本配不平；更何况像「420M Token」「0 Token，0 次调用」
+       这类**动态拼出来的串**根本无法预先枚举。
+
+     为什么运行时替换是安全的：
+       只改 **TEXT_NODE**，完全不碰元素属性 —— href="/api/token-stats"
+       这类路由与标识符天然不受影响。而「裸 Token 全局替换会打挂接口」
+       的风险，正是来自属性被改写，这里不存在这个问题。
+
+     为什么不会和 MutationObserver 打成死循环：
+       替换后文本里已经没有 "Token"，下一轮 run() 遍历时无节点命中、
+       不再写 DOM，循环自然终止。若 React 重新渲染出含 Token 的文本，
+       会被再次替换 —— 这正是期望行为（对抗 hydration 覆盖）。 */
+  function wbCiyuanRename() {
+    if (document.__wbCiyuanBusy) return;
+    document.__wbCiyuanBusy = true;
+    try {
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+      var targets = [];
+      var n;
+      while ((n = walker.nextNode())) {
+        var t = n.nodeValue || "";
+        if (t.indexOf("Token") === -1) continue;
+        var p = n.parentNode;
+        if (!p) continue;
+        // 代码块/样式里的 Token 是源码，不是给看的文案
+        var tag = p.nodeName;
+        if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT") continue;
+        targets.push(n);
+      }
+      for (var i = 0; i < targets.length; i++) {
+        var node = targets[i];
+        var next = (node.nodeValue || "").replace(/Token/g, "词元");
+        if (next !== node.nodeValue) node.nodeValue = next;
+      }
+    } catch (e) {
+      // 替换失败不该影响页面其它功能
+    } finally {
+      document.__wbCiyuanBusy = false;
+    }
+  }
+
   function run() {
     sanitizeSidebarBrand();
     renameNavLabels();
+    wbCiyuanRename();
     wbCheckAuth();
     initCollapse();
     sanitizeMacUI();
