@@ -223,7 +223,15 @@ COLLAPSE_SCRIPT = r"""
     align-items: center; justify-content: center;
     padding: 20px 16px; text-align: center;
   }
-  .wb-dl-credit-k { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--muted-foreground, #64748b); }
+  .wb-dl-credit-k {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    max-width: 100%; font-size: 13px; font-weight: 500; line-height: 20px;
+    color: var(--muted-foreground, #64748b); text-align: center;
+  }
+  .wb-dl-credit-icon {
+    width: 16px; height: 16px; flex: 0 0 auto;
+    color: var(--muted-foreground, #64748b); stroke: currentColor;
+  }
   .wb-dl-credit-v {
     margin-top: 12px; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -4289,10 +4297,21 @@ COLLAPSE_SCRIPT = r"""
     //   单项：flex-col + items-center + justify-center + px-4 py-5 + text-center
     //   数字：26px / font-weight 600 / 居中
     // 结构与官方积分统计页一致：卡片 → grid(4列) → 单项(居中) → 标签 + 数值
+    // 数据标题图标：官方积分统计页每项标签都是
+    // 「16px lucide 图标 + 8px gap + 13px/500 文字」，本页此前只有文字。
+    var CREDIT_ICONS = {
+      "今日积分": '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/>',
+      "签到积分": '<path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+      "任务积分": '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+      "总积分": '<path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/>'
+    };
     var html = '<div class="wb-dl-credit-card"><div class="wb-dl-credit-grid">';
     items.forEach(function(it) {
       html += '<div class="wb-dl-credit-item" title="' + it.tip + '">' +
-        '<div class="wb-dl-credit-k">' + it.k + '</div>' +
+        '<div class="wb-dl-credit-k">' +
+          (CREDIT_ICONS[it.k] ? '<svg class="wb-dl-credit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + CREDIT_ICONS[it.k] + '</svg>' : '') +
+          '<span>' + it.k + '</span>' +
+        '</div>' +
         '<div class="wb-dl-credit-v">' + it.v + '</div>' +
         '</div>';
     });
@@ -4764,19 +4783,42 @@ COLLAPSE_SCRIPT = r"""
      只按导航项的**完整文本**精确匹配后改名，不做全局字符串替换 ——
      「设置」这类短词在页面里出现太频繁，全局替换必然误伤。 */
   var WB_NAV_RENAMES = { "Token 统计": "词元统计", "Token统计": "词元统计", "设置": "系统设置" };
+  function wbApplyNavRename(a, txt, next) {
+    if (!next || txt === next) return false;
+    // 收拢态的气泡读的是 data 属性，必须同步改，否则提示仍是旧名
+    if (a.getAttribute("data-wb-label") === txt) a.setAttribute("data-wb-label", next);
+    return true;
+  }
+
   function renameNavLabels() {
     var aside = document.querySelector("aside");
     if (!aside) return;
-    var links = aside.querySelectorAll("nav a");
-    links.forEach(function(a) {
+    aside.querySelectorAll("nav a").forEach(function(a) {
+      // ⚠️ 关键：只替换**文本节点**，绝不写 a.textContent。
+      //
+      // 早期实现是 `var node = label || a; node.textContent = next;` ——
+      // 而 renameNavLabels() 在 run() 里排在 initCollapse() **之前**，
+      // 此刻官方导航项还没有 span.wb-nav-label（那是 initCollapse 才包上的），
+      // 于是 node 就是 <a> 本身，赋值 textContent 会把 <a> 的**所有子节点**
+      // 一起清掉 —— 包括 svg 图标。这正是「词元统计 / 系统设置图标丢失」的根因。
+      //
+      // 这里改成逐个文本节点改名，svg 等元素子节点原样保留。
+      Array.prototype.slice.call(a.childNodes).forEach(function(node) {
+        if (node.nodeType !== Node.TEXT_NODE) return;
+        var raw = node.textContent || "";
+        var txt = raw.trim();
+        if (!txt) return;
+        var next = WB_NAV_RENAMES[txt];
+        if (!wbApplyNavRename(a, txt, next)) return;
+        node.textContent = raw.replace(txt, next);
+      });
+      // 已被 initCollapse 包成 span 的情况（后续轮次 / MutationObserver 重跑）
       var label = a.querySelector("span.wb-nav-label");
-      var node = label || a;
-      var txt = (node.textContent || "").trim();
-      var next = WB_NAV_RENAMES[txt];
-      if (!next || txt === next) return;
-      node.textContent = next;
-      // 收拢态的气泡读的是 data 属性，必须同步改，否则提示仍是旧名
-      if (a.getAttribute("data-wb-label")) a.setAttribute("data-wb-label", next);
+      if (label) {
+        var lt = (label.textContent || "").trim();
+        var ln = WB_NAV_RENAMES[lt];
+        if (wbApplyNavRename(a, lt, ln)) label.textContent = ln;
+      }
     });
   }
 
@@ -4844,7 +4886,15 @@ COLLAPSE_SCRIPT = r"""
 TEXT_REPLACEMENTS = [
     ("按项目", "按账号"),
     ("消耗最高的会话", "消耗最高的调用"),
-    ("按本地聚合 Token 从高到低排列。", "按单次调用 Token 从高到低排列。"),
+    ("按本地聚合 Token 从高到低排列。", "按单次调用词元从高到低排列。"),
+    # Token -> 词元：用户 2026-09-27 要求所有页面 token 相关字段同步改为词元。
+    # 只列**完整短语**，不做裸 "Token" 全局替换 —— JS 里 /api/token-stats 这类
+    # 路由与标识符含 Token，全局替换会直接把接口打挂。
+    ("Token 与调用趋势", "词元与调用趋势"),
+    ("Token 活动", "词元活动"),
+    ("Token 统计", "词元统计"),
+    ("Token 用量", "词元用量"),
+    ("总 Token", "总词元"),
 ]
 
 # 已告警过的「未命中」串，避免每次请求都刷屏。

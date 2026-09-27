@@ -31,6 +31,40 @@
 
 ---
 
+## [v0.9.16] - 2026-09-27
+
+<!-- summary: 修复侧边栏图标丢失回归、积分统计项补标题图标、Token 字段改为词元 -->
+
+### 修复
+
+- **修复 v0.9.15 引入的图标丢失回归**：`renameNavLabels()` 在 `run()` 里排在
+  `initCollapse()` **之前**，此时官方导航项还没有 `span.wb-nav-label`
+  （那是 `initCollapse()` 才包上的），于是 `node = label || a` 取到 `<a>` 本身，
+  而 `a.textContent = next` 会清空 `<a>` 的**所有子节点** —— 包括 svg 图标。
+  这就是「词元统计 / 系统设置左侧图标丢失」的根因。
+
+  现改为**逐个文本节点**改名，svg 等元素子节点原样保留；已被包成 span 的情况
+  （后续轮次 / MutationObserver 重跑）也一并处理。
+
+### 优化
+
+- **每日任务页积分统计四项补上「标题图标」**：官方积分统计页每个数据项的标签是
+  **16px lucide 图标 + 8px gap + 13px/500 文字**（实测），本页此前只有文字。
+  现按官方结构补齐，四项分别为：
+
+  | 数据项 | 图标 |
+  | :--- | :--- |
+  | 今日积分 | sparkles（星芒） |
+  | 签到积分 | calendar-check（签到日历） |
+  | 任务积分 | list-checks（任务清单） |
+  | 总积分 | trending-up（趋势） |
+
+- **Token 相关字段改为「词元」**：页面内 `Token 与调用趋势` / `Token 活动` /
+  `Token 统计` / `Token 用量` / `总 Token` 等字段统一改为「词元」。
+
+  ⚠️ 只列**完整短语**做替换，**不做裸 "Token" 全局替换** ——
+  JS 里 `/api/token-stats` 这类路由与标识符含 Token，全局替换会直接把接口打挂。
+
 ## [v0.9.15] - 2026-09-27
 
 <!-- summary: 修复刷新后需先点设置、侧边栏标题统一、每日任务页区块结构对齐官方 -->
@@ -1774,7 +1808,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.15...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.16...HEAD
+[v0.9.16]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.15...v0.9.16
 [v0.9.15]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.14...v0.9.15
 [v0.9.14]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.13...v0.9.14
 [v0.9.13]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.12...v0.9.13
