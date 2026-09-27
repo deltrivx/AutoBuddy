@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+import re
 import threading
 import time
 from collections import Counter
@@ -44,7 +45,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.19"
+VERSION_DEFAULT = "0.9.20"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -2604,11 +2605,78 @@ class _AccessNoiseFilter(logging.Filter):
         return not any(p in msg for p in self.NOISY_PATHS)
 
 
+# ---------------------------------------------------------------------------
+# access log 相邻去重
+#
+# 背景（用户 2026-09-27）：「相同时间日志完全一模一样出现也没有意义的，
+# 出现一条即可」—— 即便是 API 调用日志。
+#
+# 实测（本次 2322 行日志）：归一化后只有 106 种不同内容，其中
+#   /api/switch/progress  1533 条
+#   /api/travel/status     119 条
+#   /api/wb-daily/credit-summary  88 条
+# uvicorn access log 占全部日志的 98%。
+#
+# 为什么不能只靠 NOISY_PATHS 黑名单：黑名单只能盖住**已知**接口，
+# 上述三个刷屏最凶的都不在旧名单里 —— 每新增一个轮询接口就要手工补一次，
+# 永远追不上。所以这里改成**通用相邻去重**：不管什么接口，
+# 只要与上一条内容相同就只累计、不输出；不同才输出，并补一行重复统计。
+#
+# 注意：access log 是**多路交错**的（A、B 两个接口交替轮询），
+# 单纯的「与上一条比较」会被交错打断而失效。所以按「规范化后的日志内容」
+# 各自独立记录上一条，互不干扰。规范化即去掉客户端端口号 ——
+# 同一接口每次连接的临时端口不同，不归一化就永远判不相等。
+# ---------------------------------------------------------------------------
+_ACCESS_DEDUP_LOCK = threading.Lock()
+_ACCESS_DEDUP_LAST: Dict[str, str] = {}
+_ACCESS_DEDUP_COUNT: Dict[str, int] = {}
+
+
+def _normalize_access_msg(msg: str) -> str:
+    """规范化 access log：抹掉每次连接都不同的客户端端口号。
+
+    `192.168.31.10:57564` -> `192.168.31.10`
+    不抹掉端口号的话，同一接口的两条日志永远不相等，去重完全失效。
+    """
+    return re.sub(r"(\d+\.\d+\.\d+\.\d+):\d+", r"\1", msg)
+
+
+class _AccessDedupFilter(logging.Filter):
+    """access log 通用相邻去重：完全相同的日志只出现一条。
+
+    与 NOISY_PATHS 黑名单互补而非互斥：
+      · 黑名单负责「已知且确定无信息量」的接口（连第一条都不打）
+      · 本过滤器负责**其余所有接口**的重复（保留第一条，后续只累计）
+    这样新增轮询接口无需改代码，自动生效。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        key = _normalize_access_msg(msg)
+        with _ACCESS_DEDUP_LOCK:
+            prev = _ACCESS_DEDUP_LAST.get(key)
+            if prev == key:
+                _ACCESS_DEDUP_COUNT[key] = _ACCESS_DEDUP_COUNT.get(key, 0) + 1
+                return False
+            # 内容变了：先交代上一条被吞了多少次，再放行本条
+            repeat = _ACCESS_DEDUP_COUNT.get(key, 0)
+            _ACCESS_DEDUP_LAST[key] = key
+            _ACCESS_DEDUP_COUNT[key] = 0
+        if repeat > 0:
+            print(f"INFO:     (上一条重复 {repeat} 次) {key}", flush=True)
+        return True
+
+
 def _install_access_filter() -> None:
-    """把噪声过滤器挂到 uvicorn.access 上（幂等）。"""
+    """把噪声过滤器与去重过滤器挂到 uvicorn.access 上（幂等）。"""
     lg = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _AccessNoiseFilter) for f in lg.filters):
         lg.addFilter(_AccessNoiseFilter())
+    if not any(isinstance(f, _AccessDedupFilter) for f in lg.filters):
+        lg.addFilter(_AccessDedupFilter())
 
 
 if __name__ == "__main__":

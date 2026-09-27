@@ -31,6 +31,53 @@
 
 ---
 
+## [v0.9.20] - 2026-09-27
+
+<!-- summary: access log 通用相邻去重，相同日志只出现一条 -->
+
+### 优化
+
+- **access log 通用相邻去重**（用户 2026-09-27 反馈「相同日志完全一模一样出现
+  也没有意义，出现一条即可，即便是调用 API 的日志」）。
+
+  实测（容器最近 2322 行日志）：
+
+  ```
+  总行数            2322
+  归一化后不同内容   106
+  uvicorn access log 占比  98%
+  /api/switch/progress     1533 条
+  /api/travel/status        119 条
+  /api/wb-daily/credit-summary  88 条
+  ```
+
+  原有 `_AccessNoiseFilter` 是**路径黑名单**，只能盖住已知接口 ——
+  上面刷屏最凶的三个**全都不在旧名单里**，每新增一个轮询接口就要手工补一次，
+  永远追不上。现新增 `_AccessDedupFilter` 做**通用相邻去重**兜底。
+
+  设计要点：
+
+  - **端口号归一化**：`192.168.31.10:57564` → `192.168.31.10`。
+    同一接口每次连接的临时端口不同，不归一化则两条日志永远判不相等，
+    去重完全失效 —— 这是最容易漏掉的一条。
+  - **按内容各自独立记录**：access log 是**多路交错**的（A、B 两个接口
+    交替轮询），单纯「与上一条比较」会被交错打断而失效。
+    故按规范化内容分别记录上一条，互不干扰。
+  - **重复时补交代**：内容变化时会先打一行 `(上一条重复 N 次)`，
+    不让观测断档。
+  - **只作用于成功响应**：4xx/5xx 保留线索（沿用既有黑名单的行为）。
+
+  黑名单与本过滤器**互补而非互斥**：黑名单负责已知且确定无信息量的接口
+  （连第一条都不打），去重负责其余所有接口（保留第一条，后续只累计）。
+  新增轮询接口无需改代码即自动生效。
+
+- 新增回归测试 `_test_log_dedup.py`：校验去重类存在、已挂载、端口归一化
+  到位、依赖已导入（否则运行时 `NameError`），并验证三个行为场景：
+  端口不同的相同请求只留一条、交错轮询各自去重、不同接口不被误杀。
+
+- 补齐 `gateway/web_proxy.py` 缺失的 `import re` 与 `import threading`
+  （去重实现依赖，此前未导入会导致 `NameError`）。
+
 ## [v0.9.19] - 2026-09-27
 
 <!-- summary: 词元统计页剩余 Token 字段改走运行时替换，彻底清零 -->
@@ -1918,7 +1965,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.19...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.20...HEAD
+[v0.9.20]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.19...v0.9.20
 [v0.9.19]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.18...v0.9.19
 [v0.9.18]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.17...v0.9.18
 [v0.9.17]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.16...v0.9.17

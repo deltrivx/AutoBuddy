@@ -2,6 +2,8 @@ import db
 import json
 import logging
 import os
+import re
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -6483,10 +6485,56 @@ class _AccessNoiseFilter(logging.Filter):
         return not any(p in msg for p in self.NOISY_PATHS)
 
 
+# ---------------------------------------------------------------------------
+# access log 相邻去重（与 gateway/main.py 中同名实现保持一致）
+#
+# 背景（用户 2026-09-27）：相同内容重复刷屏没有意义，出现一条即可 ——
+# 即便是 API 调用日志。实测 2322 行日志归一化后只有 106 种不同内容，
+# /api/switch/progress 一条就占 1533 次，access log 占全部日志的 98%。
+#
+# NOISY_PATHS 是黑名单，只能盖住**已知**接口（新增轮询就得手工补）；
+# 这里做**通用相邻去重**兜底：不管什么接口，与上一条完全相同就只累计。
+# access log 多路交错（A、B 交替轮询），所以按规范化内容各自独立记录。
+# 规范化 = 抹掉客户端端口号，否则同一接口两条日志永远判不相等。
+# ---------------------------------------------------------------------------
+_ACCESS_DEDUP_LOCK = threading.Lock()
+_ACCESS_DEDUP_LAST: Dict[str, str] = {}
+_ACCESS_DEDUP_COUNT: Dict[str, int] = {}
+
+
+def _normalize_access_msg(msg: str) -> str:
+    """规范化 access log：抹掉每次连接都不同的客户端端口号。"""
+    return re.sub(r"(\d+\.\d+\.\d+\.\d+):\d+", r"\1", msg)
+
+
+class _AccessDedupFilter(logging.Filter):
+    """access log 通用相邻去重：完全相同的日志只出现一条。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        key = _normalize_access_msg(msg)
+        with _ACCESS_DEDUP_LOCK:
+            prev = _ACCESS_DEDUP_LAST.get(key)
+            if prev == key:
+                _ACCESS_DEDUP_COUNT[key] = _ACCESS_DEDUP_COUNT.get(key, 0) + 1
+                return False
+            repeat = _ACCESS_DEDUP_COUNT.get(key, 0)
+            _ACCESS_DEDUP_LAST[key] = key
+            _ACCESS_DEDUP_COUNT[key] = 0
+        if repeat > 0:
+            print(f"INFO:     (上一条重复 {repeat} 次) {key}", flush=True)
+        return True
+
+
 def _install_access_filter() -> None:
     lg = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _AccessNoiseFilter) for f in lg.filters):
         lg.addFilter(_AccessNoiseFilter())
+    if not any(isinstance(f, _AccessDedupFilter) for f in lg.filters):
+        lg.addFilter(_AccessDedupFilter())
 
 
 if __name__ == "__main__":

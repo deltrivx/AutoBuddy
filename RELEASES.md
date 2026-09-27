@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.19](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.19)
+**当前稳定版：** [v0.9.20](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.20)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.20](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.20) | 2026-09-27 | access log 通用相邻去重，相同日志只出现一条 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.20.md) |
 | [v0.9.19](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.19) | 2026-09-27 | 词元统计页剩余 Token 字段改走运行时替换，彻底清零 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.19.md) |
 | [v0.9.18](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.18) | 2026-09-27 | 每日任务页积分四项独立成框、最近记录独立、积分自动更新、清理多余显示 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.18.md) |
 | [v0.9.17](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.17) | 2026-09-27 | 热修 v0.9.16 —— 等长替换违反导致 JS 资源 500、前端整站白屏 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.17.md) |
@@ -112,7 +113,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.19    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.20    # 锁定版本
 ```
 
 ## 部署产物
