@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.17](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.17)
+**当前稳定版：** [v0.9.18](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.18)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.18](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.18) | 2026-09-27 | 每日任务页积分四项独立成框、最近记录独立、积分自动更新、清理多余显示 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.18.md) |
 | [v0.9.17](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.17) | 2026-09-27 | 热修 v0.9.16 —— 等长替换违反导致 JS 资源 500、前端整站白屏 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.17.md) |
 | [v0.9.16](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.16) | 2026-09-27 | 修复侧边栏图标丢失回归、积分统计项补标题图标、Token 字段改为词元 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.16.md) |
 | [v0.9.15](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.15) | 2026-09-27 | 修复刷新后需先点设置、侧边栏标题统一、每日任务页区块结构对齐官方 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.15.md) |
@@ -110,7 +111,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.17    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.18    # 锁定版本
 ```
 
 ## 部署产物

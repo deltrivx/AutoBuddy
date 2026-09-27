@@ -4038,28 +4038,31 @@ COLLAPSE_SCRIPT = r"""
             '<h1 class="wb-daily-h1">每日任务</h1>' +
             '<p class="wb-daily-sub">WorkBuddy 成长中心自动化：积分与成长查询、成长任务、互动玩法、开学季活动与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
           '</div>' +
-          '<div id="wb-dl-state" class="wb-api-badge">加载中…</div>' +
         '</div>' +
 
-        '<!-- 积分统计：今日 / 签到 / 任务 / 累计（数据来自 wb_daily_tasks 的历史记录） -->' +
+        /* 积分统计：四项数据**单独成为二级框**，不再套外层卡片
+           （此前是「卡片里再套一个卡片」的框中框结构）。
+           同时取消二级标题「积分统计」与其下的说明文案、以及右侧「刷新」按钮
+           —— 刷新由定时拉取自动完成。 */
+        '<div id="wb-dl-credit-box" class="wb-dl-credit-card"></div>' +
+
+        /* 最近记录：独立成块（用户 2026-09-27 要求），与积分四项分开 */
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div class="wb-api-label">积分统计</div>' +
-              '<div class="wb-api-desc" id="wb-dl-credit-sum">按每日任务历史记录累加（签到积分 + 任务积分）</div>' +
+              '<div class="wb-api-label">最近记录</div>' +
+              '<div class="wb-api-desc">最近 5 天的积分明细，便于核对累计来源</div>' +
             '</div>' +
-            '<button id="wb-dl-credit-refresh" class="wb-api-btn">刷新</button>' +
           '</div>' +
-          '<div id="wb-dl-credit-box" class="wb-api-row wb-api-row-stack" style="flex-direction:column">' +
-            '<div class="wb-api-desc">正在加载积分统计…</div>' +
-          '</div>' +
+          '<div id="wb-dl-recent" class="wb-api-row wb-api-row-stack" style="flex-direction:column;display:none"></div>' +
         '</div>' +
 
-        '<!-- 执行中：进度条 + 阶段明细（无任务时整块隐藏） -->' +
+        /* 执行中：进度条 + 阶段明细。
+           取消原先固定的「正在执行」二级标题文案 —— 这块只在任务真跑起来时
+           由 wbRenderDailyProgress 显示，平时是个空壳，属于多余显示。 */
         '<div id="wb-dl-progress-card" class="wb-api-card" style="display:none">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div id="wb-dl-progress-label" class="wb-api-label">正在执行</div>' +
               '<div id="wb-dl-progress-step" class="wb-api-desc">准备中…</div>' +
             '</div>' +
             '<div id="wb-dl-progress-pct" class="wb-api-mono" style="font-size:18px;font-weight:600">0%</div>' +
@@ -4262,6 +4265,35 @@ COLLAPSE_SCRIPT = r"""
     wbLoadWbDailyTasks();
     wbLoadWbDailyJobs();
     wbLoadWbDailyCredits();
+    wbDailyStartCreditAutoRefresh();
+  }
+
+  /* 积分自动更新（用户 2026-09-27 要求）：取消手动「刷新」按钮后，
+     积分必须自己动，否则数据会一直停在进入页面那一刻。
+
+     做法：页面停留在本页且可见时，定期重拉 credit-summary 并重渲染。
+     三条约束：
+       · 只挂一次（__wbDailyCreditTimer 幂等），避免每次加载数据都叠一个定时器
+       · document.hidden 时不拉 —— 后台标签页不该白烧请求
+       · 离开本页（hash 变了）不拉 —— 用户已经不在这一页
+     另外切回页面（visibilitychange）时立刻补拉一次，不用等下一个周期。 */
+  var __wbDailyCreditTimer = null;
+  var WB_DAILY_CREDIT_REFRESH_MS = 20000;
+  function wbDailyStartCreditAutoRefresh() {
+    if (__wbDailyCreditTimer) return;
+    __wbDailyCreditTimer = setInterval(function() {
+      if (document.hidden) return;
+      if (window.location.hash !== "#/wb-daily") return;
+      wbLoadWbDailyCredits();
+    }, WB_DAILY_CREDIT_REFRESH_MS);
+    if (!window.__wbDailyVisBound) {
+      window.__wbDailyVisBound = true;
+      document.addEventListener("visibilitychange", function() {
+        if (document.hidden) return;
+        if (window.location.hash !== "#/wb-daily") return;
+        wbLoadWbDailyCredits();
+      });
+    }
   }
 
   /* 积分统计：今日 / 签到 / 任务 / 累计。
@@ -4316,30 +4348,39 @@ COLLAPSE_SCRIPT = r"""
         '</div>';
     });
     html += '</div></div>';
-    // 最近几天的明细，便于核对累计是怎么来的
-    var days = (d.days || []).slice(0, 5);
-    if (days.length) {
-      html += '<div style="width:100%;margin-top:10px">' +
-        '<div class="wb-api-desc" style="font-size:11.5px;margin-bottom:4px">最近 ' + days.length + ' 天明细</div>' +
-        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-        '<tr style="color:var(--muted-foreground,#64748b)">' +
-        '<th style="text-align:left;padding:6px 10px;font-weight:500">日期</th>' +
-        '<th style="text-align:right;padding:6px 10px;font-weight:500">签到</th>' +
-        '<th style="text-align:right;padding:6px 10px;font-weight:500">任务</th>' +
-        '<th style="text-align:right;padding:6px 10px;font-weight:500">合计</th></tr>';
-      days.forEach(function(x) {
-        html += '<tr>' +
-          '<td style="padding:6px 10px">' + x.date + '</td>' +
-          '<td style="padding:6px 10px;text-align:right">' + num(x.checkin) + '</td>' +
-          '<td style="padding:6px 10px;text-align:right">' + num(x.task) + '</td>' +
-          '<td style="padding:6px 10px;text-align:right;font-weight:600">' + num(x.total) + '</td>' +
-          '</tr>';
-      });
-      html += '</table></div>';
-    }
-    var sum = document.getElementById("wb-dl-credit-sum");
-    if (sum) sum.textContent = "按每日任务历史记录累加（签到积分 + 任务积分），今日：" + (d.today || "");
     box.innerHTML = html;
+    // 最近记录：单独渲染到它自己的容器，不混进积分四项框里
+    wbRenderDailyRecentDays(d.days || []);
+  }
+
+  /* 最近记录：单独成块渲染，不再塞进积分四项框里。
+     容器 #wb-dl-recent 在视图创建时已建好，这里只负责填内容。 */
+  function wbRenderDailyRecentDays(days) {
+    var host = document.getElementById("wb-dl-recent");
+    if (!host) return;
+    var list = (days || []).slice(0, 5);
+    if (!list.length) {
+      host.style.display = "none";
+      host.innerHTML = "";
+      return;
+    }
+    host.style.display = "";
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+      '<tr style="color:var(--muted-foreground,#64748b)">' +
+      '<th style="text-align:left;padding:6px 10px;font-weight:500">日期</th>' +
+      '<th style="text-align:right;padding:6px 10px;font-weight:500">签到</th>' +
+      '<th style="text-align:right;padding:6px 10px;font-weight:500">任务</th>' +
+      '<th style="text-align:right;padding:6px 10px;font-weight:500">合计</th></tr>';
+    list.forEach(function(x) {
+      html += '<tr>' +
+        '<td style="padding:6px 10px">' + (x.date || "") + '</td>' +
+        '<td style="padding:6px 10px;text-align:right">' + (Number(x.checkin) || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td>' +
+        '<td style="padding:6px 10px;text-align:right">' + (Number(x.task) || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td>' +
+        '<td style="padding:6px 10px;text-align:right;font-weight:600">' + (Number(x.total) || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td>' +
+        '</tr>';
+    });
+    html += '</table>';
+    host.innerHTML = html;
   }
 
   function wbLoadWbDailyCredits() {
