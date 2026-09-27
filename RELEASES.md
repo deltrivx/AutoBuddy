@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.6](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.6)
+**当前稳定版：** [v0.9.7](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.7)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.7](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.7) | 2026-09-27 | 修正认证凭据语义为「环境变量在场即覆盖、不在场则保留」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.7.md) |
 | [v0.9.6](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.6) | 2026-09-27 | 修正每日任务完成度统计、修复移动端竖屏状态图标、修正认证凭据被环境变量覆盖 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.6.md) |
 | [v0.9.5](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.5) | 2026-09-26 | 取消昵称统一显示名、头像预览独立放大、CHANGELOG 与 README 规范化 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.5.md) |
 | [v0.9.4](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.4) | 2026-09-26 | README 重写为可照做的文档，后台日志彻底降噪，头像上传钮排版修正 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.4.md) |
@@ -99,7 +100,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.6    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.7    # 锁定版本
 ```
 
 ## 部署产物
