@@ -225,7 +225,10 @@ COLLAPSE_SCRIPT = r"""
   .wb-pop-head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border, rgba(120,120,120,0.18)); }
   .wb-pop-head img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
   .wb-pop-menu { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
-  .wb-pop-item { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; color: inherit; cursor: pointer; }
+  /* 退出登录等菜单项：视觉样式保持不变，但文字左边缘必须与上方统计行的
+     标签左边缘对齐 —— 原来 padding 8px 10px 让文字比上面缩进 10px
+     （用户 2026-09-27 反馈「退出登录文字未和上方文字左边对齐」）。 */
+  .wb-pop-item { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 8px 0; border-radius: 8px; font-size: 12.5px; color: inherit; cursor: pointer; }
   .wb-pop-item:hover:not(:disabled) { background: var(--muted, rgba(120,120,120,0.12)); }
   .wb-pop-item:disabled { opacity: 0.5; cursor: not-allowed; }
   .wb-pop-item.danger { color: #ef4444; }
@@ -1648,6 +1651,22 @@ COLLAPSE_SCRIPT = r"""
       var todayRow = statRow("今日消耗", "…");
       var gainedRow = statRow("今日积分", "…");
       var acctRow = statRow("账号池", "…");
+
+      // 右侧数值按语义着色 —— 一眼分辨「攒了多少 / 用了多少 / 赚了多少 / 可用占比」
+      //   - 总积分：中性主色（看余额本身）
+      //   - 今日消耗：消耗为 0 用中性灰，>0 用橙（在花钱）
+      //   - 今日积分：赚了用绿，为 0 用中性灰
+      //   - 账号池：全部启用用绿，有未启用用橙（提示有账号闲置）
+      var C_NEUTRAL = "var(--muted-foreground,#64748b)";
+      var C_MAIN = "var(--foreground,#0f172a)";
+      var C_EARN = "#047857";
+      var C_SPEND = "#b45309";
+      function setVal(row, text, color) {
+        var el = row.querySelector(".wb-pop-stat-v");
+        if (!el) return;
+        el.textContent = text;
+        if (color) el.style.color = color;
+      }
       stats.appendChild(creditRow);
       stats.appendChild(todayRow);
       stats.appendChild(gainedRow);
@@ -1658,12 +1677,12 @@ COLLAPSE_SCRIPT = r"""
       fetch("/api/wb-daily/credit-summary", { cache: "no-store" })
         .then(function(r) { return r.ok ? r.json() : {}; })
         .then(function(d) {
-          gainedRow.querySelector(".wb-pop-stat-v").textContent =
-            (d && d.todayCredits != null)
-              ? (Math.round(d.todayCredits * 100) / 100 + "") : "—";
+          var g = (d && d.todayCredits != null) ? d.todayCredits : null;
+          setVal(gainedRow, g == null ? "—" : (Math.round(g * 100) / 100 + ""),
+            g == null ? C_NEUTRAL : (g > 0 ? C_EARN : C_NEUTRAL));
         })
         .catch(function() {
-          gainedRow.querySelector(".wb-pop-stat-v").textContent = "—";
+          setVal(gainedRow, "—", C_NEUTRAL);
         });
       pop.appendChild(stats);
 
@@ -1672,14 +1691,16 @@ COLLAPSE_SCRIPT = r"""
         .then(function(r) { return r.ok ? r.json() : {}; })
         .then(function(d) {
           var sum = (d && d.summary) || {};
-          creditRow.querySelector(".wb-pop-stat-v").textContent =
-            sum.currentRemaining != null ? (Math.round(sum.currentRemaining * 100) / 100 + "") : "—";
-          todayRow.querySelector(".wb-pop-stat-v").textContent =
-            sum.usageToday != null ? (Math.round(sum.usageToday * 100) / 100 + "") : "—";
+          var rem = sum.currentRemaining;
+          setVal(creditRow, rem != null ? (Math.round(rem * 100) / 100 + "") : "—",
+            rem == null ? C_NEUTRAL : C_MAIN);
+          var use = sum.usageToday;
+          setVal(todayRow, use != null ? (Math.round(use * 100) / 100 + "") : "—",
+            use == null ? C_NEUTRAL : (use > 0 ? C_SPEND : C_NEUTRAL));
         })
         .catch(function() {
-          creditRow.querySelector(".wb-pop-stat-v").textContent = "—";
-          todayRow.querySelector(".wb-pop-stat-v").textContent = "—";
+          setVal(creditRow, "—", C_NEUTRAL);
+          setVal(todayRow, "—", C_NEUTRAL);
         });
       // 账号池：网关信息里的账号统计
       fetch("/api/gateway-info", { cache: "no-store" })
@@ -1691,11 +1712,17 @@ COLLAPSE_SCRIPT = r"""
           // 看不出其中有 4 个并未启用（用户 2026-09-27 反馈）。
           // inPool 才是实际参与调度的账号数。
           var inPool = (acc.inPool != null ? acc.inPool : acc.usable);
-          acctRow.querySelector(".wb-pop-stat-v").textContent =
-            acc.total != null ? (inPool + "/" + acc.total + " 个") : "—";
+          if (acc.total != null) {
+            // 全部启用 = 绿；有未启用 = 橙（提示有账号闲置未参与调用）
+            var full = (inPool != null && Number(inPool) >= Number(acc.total));
+            setVal(acctRow, inPool + "/" + acc.total + " 个",
+              inPool == null ? C_NEUTRAL : (full ? C_EARN : C_SPEND));
+          } else {
+            setVal(acctRow, "—", C_NEUTRAL);
+          }
         })
         .catch(function() {
-          acctRow.querySelector(".wb-pop-stat-v").textContent = "—";
+          setVal(acctRow, "—", C_NEUTRAL);
         });
 
       // 资料与凭据的修改入口统一收在设置页「账号资料」，浮窗只留退出
@@ -4033,24 +4060,33 @@ COLLAPSE_SCRIPT = r"""
       return;
     }
     function num(v) {
-      return (v == null) ? "0" : (Math.round(v * 100) / 100 + "");
+      // 与官方积分统计页一致：千分位 + 两位小数
+      var n = (v == null) ? 0 : v;
+      return (Math.round(n * 100) / 100).toLocaleString("zh-CN", {
+        minimumFractionDigits: 2, maximumFractionDigits: 2
+      });
     }
     // 四个数据项：今日积分 / 签到积分 / 任务积分 / 总积分
     var items = [
-      { k: "今日积分", v: num(d.todayCredits), tone: "#047857",
+      { k: "今日积分", v: num(d.todayCredits),
         tip: "今日签到积分 + 今日任务积分" },
-      { k: "签到积分", v: num(d.todayCheckinCredits), tone: "#0f766e",
+      { k: "签到积分", v: num(d.todayCheckinCredits),
         tip: "今日签到类任务获得的积分" },
-      { k: "任务积分", v: num(d.todayTaskCredits), tone: "#1d4ed8",
+      { k: "任务积分", v: num(d.todayTaskCredits),
         tip: "今日除签到外其他任务获得的积分" },
-      { k: "总积分", v: num(d.totalCredits), tone: "#b45309",
+      { k: "总积分", v: num(d.totalCredits),
         tip: "按已有历史记录累加的总积分（往后继续累加）" }
     ];
-    var html = '<div style="display:flex;flex-wrap:wrap;gap:10px;width:100%">';
-    items.forEach(function(it) {
-      html += '<div style="flex:1 1 120px;min-width:110px;border:1px solid var(--border,rgba(120,120,120,.2));border-radius:10px;padding:10px 12px">' +
-        '<div class="wb-api-desc" style="font-size:11.5px;margin-bottom:4px" title="' + it.tip + '">' + it.k + '</div>' +
-        '<div style="font-size:18px;font-weight:600;color:' + it.tone + ';font-variant-numeric:tabular-nums">' + it.v + '</div>' +
+    // 样式完全对齐官方「积分统计」页（实测 computed style）：
+    //   外框：rounded-2xl + 1px 边框 + bg-card/70
+    //   单项：flex-col + items-center + justify-center + px-4 py-5 + text-center
+    //   数字：26px / font-weight 600 / 居中
+    var html = '<div style="display:flex;flex-wrap:wrap;width:100%;border:1px solid var(--border,rgba(120,120,120,.25));border-radius:16px;background:var(--card,rgba(255,255,255,.7));overflow:hidden">';
+    items.forEach(function(it, i) {
+      html += '<div style="flex:1 1 0;min-width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 16px;text-align:center' +
+        (i > 0 ? ';border-left:1px solid var(--border,rgba(120,120,120,.18))' : '') + '" title="' + it.tip + '">' +
+        '<div style="font-size:12.5px;color:var(--muted-foreground,#64748b);margin-bottom:6px">' + it.k + '</div>' +
+        '<div style="font-size:26px;font-weight:600;line-height:1.15;color:var(--foreground,#0f172a);font-variant-numeric:tabular-nums">' + it.v + '</div>' +
         '</div>';
     });
     html += '</div>';

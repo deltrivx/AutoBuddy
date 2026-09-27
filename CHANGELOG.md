@@ -31,6 +31,30 @@
 
 ---
 
+## [v0.9.10] - 2026-09-27
+
+<!-- summary: 积分统计栏对齐官方样式、浮窗数值着色、退出登录文字左对齐 -->
+
+### 修复
+
+- **每日任务页「积分统计」栏改为完全对齐官方积分统计页样式**：
+  上一版是自造的 18px 小方块 + 各自着色 + 左对齐，与官方页面并不一致。
+  现按官方 `/credit-stats` 页的实测 computed style 重做：
+  外框 `rounded-2xl` + 1px 边框 + `bg-card/70`；
+  单项 `flex-col` + 居中 + `px-4 py-5`；数字 **26px / 字重 600 / 居中**，
+  并采用千分位 + 两位小数（与官方一致）。
+  四项之间用分隔线，窄屏自动换行。
+
+- **浮窗右侧数值按语义着色**：一眼分辨攒了多少 / 花了多少 / 赚了多少 / 可用占比 ——
+  - 总积分：主色（余额本身，中性）
+  - 今日消耗：>0 用橙（在消耗），为 0 用中性灰
+  - 今日积分：>0 用绿（今天赚到了），为 0 用中性灰
+  - 账号池：全部启用用绿，存在未启用用橙（提示有账号闲置）
+
+- **浮窗「退出登录」文字左对齐**：菜单项原有 `padding: 8px 10px`，
+  导致文字比上方统计行的标签向右缩进 10px。现改为 `padding: 8px 0`，
+  视觉样式（颜色 / 圆角 / 悬浮反馈）保持不变，仅修正左边缘对齐。
+
 ## [v0.9.9] - 2026-09-27
 
 <!-- summary: 新增每日任务积分统计（今日/签到/任务/总积分）与浮窗今日积分 -->
@@ -1597,7 +1621,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.9...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.10...HEAD
+[v0.9.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.9...v0.9.10
 [v0.9.9]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.8...v0.9.9
 [v0.9.8]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.7...v0.9.8
 [v0.9.7]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.6...v0.9.7
