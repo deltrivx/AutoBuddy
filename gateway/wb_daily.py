@@ -734,6 +734,16 @@ async def tasks_api(limit: int = 200, account: str | None = None):
             "retain": db.WB_DAILY_RETAIN}
 
 
+@app.get("/api/wb-daily/credit-summary")
+async def credit_summary_api():
+    """每日任务积分聚合：今日 / 签到 / 任务 / 累计。
+
+    面板「每日任务」顶部的四个数字与浮窗的「今日积分」都用它。
+    数据在进程内现算（SQLite 本地读，无上游请求），成本极低。
+    """
+    return db.summarize_wb_daily_credits()
+
+
 @app.get("/api/wb-daily/task-summary")
 async def task_summary_api():
     """任务台账聚合：每个任务项最近一次结果 + 成功次数。"""

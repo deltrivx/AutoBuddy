@@ -1646,10 +1646,25 @@ COLLAPSE_SCRIPT = r"""
       }
       var creditRow = statRow("总积分", "…");
       var todayRow = statRow("今日消耗", "…");
+      var gainedRow = statRow("今日积分", "…");
       var acctRow = statRow("账号池", "…");
       stats.appendChild(creditRow);
       stats.appendChild(todayRow);
+      stats.appendChild(gainedRow);
       stats.appendChild(acctRow);
+
+      // 今日积分：每日任务（签到 + 任务）今天获得的积分，
+      // 与每日任务页「积分统计」的「今日积分」同源。
+      fetch("/api/wb-daily/credit-summary", { cache: "no-store" })
+        .then(function(r) { return r.ok ? r.json() : {}; })
+        .then(function(d) {
+          gainedRow.querySelector(".wb-pop-stat-v").textContent =
+            (d && d.todayCredits != null)
+              ? (Math.round(d.todayCredits * 100) / 100 + "") : "—";
+        })
+        .catch(function() {
+          gainedRow.querySelector(".wb-pop-stat-v").textContent = "—";
+        });
       pop.appendChild(stats);
 
       // 积分数据：官方 credits/stats（代理层已过滤僵尸账号并校准汇总）
@@ -3786,6 +3801,20 @@ COLLAPSE_SCRIPT = r"""
           '<div id="wb-dl-state" class="wb-api-badge">加载中…</div>' +
         '</div>' +
 
+        '<!-- 积分统计：今日 / 签到 / 任务 / 累计（数据来自 wb_daily_tasks 的历史记录） -->' +
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">积分统计</div>' +
+              '<div class="wb-api-desc" id="wb-dl-credit-sum">按每日任务历史记录累加（签到积分 + 任务积分）</div>' +
+            '</div>' +
+            '<button id="wb-dl-credit-refresh" class="wb-api-btn">刷新</button>' +
+          '</div>' +
+          '<div id="wb-dl-credit-box" class="wb-api-row wb-api-row-stack" style="flex-direction:column">' +
+            '<div class="wb-api-desc">正在加载积分统计…</div>' +
+          '</div>' +
+        '</div>' +
+
         '<!-- 执行中：进度条 + 阶段明细（无任务时整块隐藏） -->' +
         '<div id="wb-dl-progress-card" class="wb-api-card" style="display:none">' +
           '<div class="wb-api-row">' +
@@ -3917,6 +3946,13 @@ COLLAPSE_SCRIPT = r"""
         wbToast("任务记录已刷新", "ok");
       });
     }
+    var refreshCreditBtn = v.querySelector("#wb-dl-credit-refresh");
+    if (refreshCreditBtn) {
+      refreshCreditBtn.addEventListener("click", function() {
+        wbLoadWbDailyCredits();
+        wbToast("积分统计已刷新", "ok");
+      });
+    }
     var checkinAllBtn = v.querySelector("#wb-dl-checkin-all-btn");
     if (checkinAllBtn) {
       checkinAllBtn.addEventListener("click", function() {
@@ -3983,6 +4019,72 @@ COLLAPSE_SCRIPT = r"""
     wbLoadWbDailyCheckinLogs();
     wbLoadWbDailyTasks();
     wbLoadWbDailyJobs();
+    wbLoadWbDailyCredits();
+  }
+
+  /* 积分统计：今日 / 签到 / 任务 / 累计。
+     数据来自 /api/wb-daily/credit-summary —— 后端从 wb_daily_tasks 的历史
+     记录里解析「+N积分」并按天聚合，纯本地 SQLite 读，不走上游。 */
+  function wbRenderDailyCredits(d) {
+    var box = document.getElementById("wb-dl-credit-box");
+    if (!box) return;
+    if (!d || typeof d.totalCredits === "undefined") {
+      box.innerHTML = '<div class="wb-api-desc">暂无积分记录</div>';
+      return;
+    }
+    function num(v) {
+      return (v == null) ? "0" : (Math.round(v * 100) / 100 + "");
+    }
+    // 四个数据项：今日积分 / 签到积分 / 任务积分 / 总积分
+    var items = [
+      { k: "今日积分", v: num(d.todayCredits), tone: "#047857",
+        tip: "今日签到积分 + 今日任务积分" },
+      { k: "签到积分", v: num(d.todayCheckinCredits), tone: "#0f766e",
+        tip: "今日签到类任务获得的积分" },
+      { k: "任务积分", v: num(d.todayTaskCredits), tone: "#1d4ed8",
+        tip: "今日除签到外其他任务获得的积分" },
+      { k: "总积分", v: num(d.totalCredits), tone: "#b45309",
+        tip: "按已有历史记录累加的总积分（往后继续累加）" }
+    ];
+    var html = '<div style="display:flex;flex-wrap:wrap;gap:10px;width:100%">';
+    items.forEach(function(it) {
+      html += '<div style="flex:1 1 120px;min-width:110px;border:1px solid var(--border,rgba(120,120,120,.2));border-radius:10px;padding:10px 12px">' +
+        '<div class="wb-api-desc" style="font-size:11.5px;margin-bottom:4px" title="' + it.tip + '">' + it.k + '</div>' +
+        '<div style="font-size:18px;font-weight:600;color:' + it.tone + ';font-variant-numeric:tabular-nums">' + it.v + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    // 最近几天的明细，便于核对累计是怎么来的
+    var days = (d.days || []).slice(0, 5);
+    if (days.length) {
+      html += '<div style="width:100%;margin-top:10px">' +
+        '<div class="wb-api-desc" style="font-size:11.5px;margin-bottom:4px">最近 ' + days.length + ' 天明细</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<tr style="color:var(--muted-foreground,#64748b)">' +
+        '<th style="text-align:left;padding:3px 6px;font-weight:500">日期</th>' +
+        '<th style="text-align:right;padding:3px 6px;font-weight:500">签到</th>' +
+        '<th style="text-align:right;padding:3px 6px;font-weight:500">任务</th>' +
+        '<th style="text-align:right;padding:3px 6px;font-weight:500">合计</th></tr>';
+      days.forEach(function(x) {
+        html += '<tr>' +
+          '<td style="padding:3px 6px">' + x.date + '</td>' +
+          '<td style="padding:3px 6px;text-align:right">' + num(x.checkin) + '</td>' +
+          '<td style="padding:3px 6px;text-align:right">' + num(x.task) + '</td>' +
+          '<td style="padding:3px 6px;text-align:right;font-weight:600">' + num(x.total) + '</td>' +
+          '</tr>';
+      });
+      html += '</table></div>';
+    }
+    var sum = document.getElementById("wb-dl-credit-sum");
+    if (sum) sum.textContent = "按每日任务历史记录累加（签到积分 + 任务积分），今日：" + (d.today || "");
+    box.innerHTML = html;
+  }
+
+  function wbLoadWbDailyCredits() {
+    fetch("/api/wb-daily/credit-summary", { cache: "no-store" })
+      .then(function(r) { return r.ok ? r.json() : {}; })
+      .catch(function() { return {}; })
+      .then(function(d) { wbRenderDailyCredits(d); });
   }
 
   /* 任务记录：任务维度的台账。数据来自 SQLite（/api/wb-daily/task-summary），
@@ -5742,6 +5844,15 @@ async def wb_daily_tasks(limit: int = 200, account: Optional[str] = None):
             params["account"] = account
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/tasks", params=params)
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.get("/api/wb-daily/credit-summary")
+async def wb_daily_credit_summary():
+    """每日任务积分聚合：今日 / 签到 / 任务 / 累计（转发到 wb-daily 服务）。"""
+    async with _wb_daily_client() as client:
+        r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/credit-summary")
+        return Response(content=r.content, status_code=r.status_code,
+                        media_type="application/json")
 
 
 @app.get("/api/wb-daily/task-summary")

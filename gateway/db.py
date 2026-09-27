@@ -10,6 +10,7 @@
 import sqlite3
 import os
 import hashlib
+import re
 import secrets
 import json
 import time
@@ -698,3 +699,101 @@ def get_wb_daily_accounts(job_id: str) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"[wb-daily] 读账号明细出错: {e}")
         return []
+
+
+# ---------------------------------------------------------------------------
+# 每日任务：积分聚合（今日 / 签到 / 任务 / 累计）
+# ---------------------------------------------------------------------------
+
+# 上游日志里积分增量的写法形如「+300积分」「+ 300 积分」。
+_CREDIT_RE = re.compile(r"\+\s*(\d+(?:\.\d+)?)\s*积分")
+
+# 签到类任务：这些 task_key 计入「签到积分」，其余计入「任务积分」。
+_CHECKIN_TASK_KEYS = ("checkin",)
+
+
+def summarize_wb_daily_credits() -> Dict[str, Any]:
+    """按天聚合每日任务获得的积分。
+
+    数据来源是 wb_daily_tasks 的 detail 文本（上游日志行），
+    从中解析「+N积分」的增量。之所以不直接用 total_credits 字段：
+    该字段实测 250 条记录**全为 NULL**，上游并未写入。
+
+    口径：
+      - 签到积分：task_key 为 checkin 的记录
+      - 任务积分：其余任务（领奖 / 抽奖 / 盲盒 / Buddy / 旅行 / 批量接受）
+      - 今日积分：今天的（签到 + 任务）
+      - 累计积分：全部历史记录之和（按已有记录累加，往后继续累加）
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT task_key, detail, occurred_at FROM wb_daily_tasks"
+            )
+            rows = cursor.fetchall()
+    except Exception as e:
+        print(f"[wb-daily] 聚合积分出错: {e}")
+        return _empty_credit_summary()
+
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    per_day: Dict[str, Dict[str, float]] = {}
+    today_checkin = 0.0
+    today_task = 0.0
+    total = 0.0
+
+    for r in rows:
+        detail = r["detail"] or ""
+        amounts = [float(x) for x in _CREDIT_RE.findall(detail)]
+        if not amounts:
+            continue
+        gained = sum(amounts)
+        total += gained
+
+        ts = r["occurred_at"]
+        try:
+            day = time.strftime("%Y-%m-%d", time.localtime(float(ts)))
+        except (TypeError, ValueError):
+            continue
+
+        bucket = per_day.setdefault(
+            day, {"checkin": 0.0, "task": 0.0}
+        )
+        if (r["task_key"] or "") in _CHECKIN_TASK_KEYS:
+            bucket["checkin"] += gained
+            if day == today:
+                today_checkin += gained
+        else:
+            bucket["task"] += gained
+            if day == today:
+                today_task += gained
+
+    days = []
+    for day in sorted(per_day, reverse=True):
+        b = per_day[day]
+        days.append({
+            "date": day,
+            "checkin": round(b["checkin"], 2),
+            "task": round(b["task"], 2),
+            "total": round(b["checkin"] + b["task"], 2),
+        })
+
+    return {
+        "todayCredits": round(today_checkin + today_task, 2),
+        "todayCheckinCredits": round(today_checkin, 2),
+        "todayTaskCredits": round(today_task, 2),
+        "totalCredits": round(total, 2),
+        "days": days,
+        "today": today,
+    }
+
+
+def _empty_credit_summary() -> Dict[str, Any]:
+    return {
+        "todayCredits": 0.0,
+        "todayCheckinCredits": 0.0,
+        "todayTaskCredits": 0.0,
+        "totalCredits": 0.0,
+        "days": [],
+        "today": time.strftime("%Y-%m-%d", time.localtime()),
+    }
