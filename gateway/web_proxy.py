@@ -592,6 +592,29 @@ COLLAPSE_SCRIPT = r"""
     .wb-daily-h1 { font-size: 24px; line-height: 34px; }
   }
 
+  /* 区块结构对齐官方（用户 2026-09-27 反馈）。
+
+     官方积分统计页实测骨架：
+       SECTION
+         ├─ H2  二级标题（如「官方积分消耗」）= 13px / 500 / line-height 20px
+         └─ CARD（rounded-2xl，内部只放内容）
+
+     每日任务页原骨架（自造，与官方不一致）：
+       CARD
+         └─ 行：三级标题(.wb-api-label) + 副标题(.wb-api-desc) + 内容
+     即**标题被包进了框里**，且层级是三级标题。
+
+     这里把每个卡片的标题**外提**为卡片外的二级标题 H2，
+     使结构与官方一致：SECTION > [H2, CARD(内容)]。 */
+  .wb-daily-section { display: block; margin: 0; }
+  .wb-daily-h2 {
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 20px;
+    color: var(--foreground, #0f172a);
+    margin: 0 0 8px 0;
+  }
+
   /* 本页控件统一到官方规格。注意：.wb-api-btn 是跨页面共用的类
      （设置页/账号卡片等 36 处都在用），因此这里必须用 .wb-daily-wrap
      作用域限定，只改本页，避免波及其它页面。
@@ -3942,6 +3965,7 @@ COLLAPSE_SCRIPT = r"""
       if (!dailyView) {
         dailyView = wbCreateWbDailyView();
         main.appendChild(dailyView);
+        wbHoistDailyCardTitles(dailyView);
       }
       dailyView.style.display = "block";
       Array.prototype.slice.call(main.children).forEach(function(child) {
@@ -3959,6 +3983,38 @@ COLLAPSE_SCRIPT = r"""
   }
 
   window.addEventListener("hashchange", wbUpdateWbDailyView);
+
+  /* 把每日任务页每个卡片的标题「外提」为卡片外的二级标题，
+     结构从 CARD>三级标题+内容 改为 SECTION>[H2, CARD(内容)]，
+     与官方积分统计页一致。
+
+     改造在 DOM 层做（而非逐个重写 HTML 字符串），是因为本页卡片
+     由一长串 innerHTML 拼出，逐处手改易漏且难维护；这里统一处理，
+     新增卡片也会自动被纳入。 */
+  function wbHoistDailyCardTitles(view) {
+    if (!view || view.dataset.wbHoisted === "1") return;
+    view.dataset.wbHoisted = "1";
+    var cards = view.querySelectorAll(".wb-api-card");
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      if (card.dataset.wbHoistedCard === "1") continue;
+      var label = card.querySelector(".wb-api-label");
+      if (!label) continue;
+      card.dataset.wbHoistedCard = "1";
+
+      var section = document.createElement("section");
+      section.className = "wb-daily-section";
+      var h2 = document.createElement("h2");
+      h2.className = "wb-daily-h2";
+      h2.textContent = (label.textContent || "").trim();
+      section.appendChild(h2);
+      // 卡片整体移进 section，标题留在外面
+      card.parentNode.insertBefore(section, card);
+      section.appendChild(card);
+      // 移除卡片内原来的标题节点（副标题/描述保留在卡片内，与官方一致）
+      if (label.parentNode) label.parentNode.removeChild(label);
+    }
+  }
 
   function wbCreateWbDailyView() {
     var v = document.createElement("div");
@@ -4702,8 +4758,31 @@ COLLAPSE_SCRIPT = r"""
     });
   }
 
+  /* 侧边栏标题统一改名（用户 2026-09-27 要求）：
+       Token 统计 -> 词元统计
+       设置       -> 系统设置
+     只按导航项的**完整文本**精确匹配后改名，不做全局字符串替换 ——
+     「设置」这类短词在页面里出现太频繁，全局替换必然误伤。 */
+  var WB_NAV_RENAMES = { "Token 统计": "词元统计", "Token统计": "词元统计", "设置": "系统设置" };
+  function renameNavLabels() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var links = aside.querySelectorAll("nav a");
+    links.forEach(function(a) {
+      var label = a.querySelector("span.wb-nav-label");
+      var node = label || a;
+      var txt = (node.textContent || "").trim();
+      var next = WB_NAV_RENAMES[txt];
+      if (!next || txt === next) return;
+      node.textContent = next;
+      // 收拢态的气泡读的是 data 属性，必须同步改，否则提示仍是旧名
+      if (a.getAttribute("data-wb-label")) a.setAttribute("data-wb-label", next);
+    });
+  }
+
   function run() {
     sanitizeSidebarBrand();
+    renameNavLabels();
     wbCheckAuth();
     initCollapse();
     sanitizeMacUI();
@@ -4734,7 +4813,20 @@ COLLAPSE_SCRIPT = r"""
   window.addEventListener("DOMContentLoaded", function() {
     run();
     wbUpdateWbDailyView();
+    // 兜底重跑（用户 2026-09-27 反馈「刷新后必须点设置才能点每日任务」）：
+    // 刷新后 SPA 的 <nav> 往往还没挂载出来，此时 injectWbDaily() 找不到 nav
+    // 就直接 return 放弃了；要等用户点「设置」引起 DOM 变化、MutationObserver
+    // 再次触发 run() 才补上导航项 —— 表现就是「必须先点设置」。
+    // 这里在 DOM 就绪后再补几次，确保导航项与 hash 路由都到位。
+    [0, 300, 800, 1500].forEach(function(delay) {
+      setTimeout(function() {
+        renameNavLabels();
+        injectWbDaily();
+        wbUpdateWbDailyView();
+      }, delay);
+    });
   });
+  window.addEventListener("hashchange", function() { wbUpdateWbDailyView(); });
 })();
 </script>
 """

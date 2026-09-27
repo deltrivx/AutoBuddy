@@ -31,6 +31,48 @@
 
 ---
 
+## [v0.9.15] - 2026-09-27
+
+<!-- summary: 修复刷新后需先点设置、侧边栏标题统一、每日任务页区块结构对齐官方 -->
+
+### 修复
+
+- **刷新后必须点「设置」才能点「每日任务」**：`injectWbDaily()` 需要页面里已存在
+  `<nav>` 才会注入导航项；刷新后 SPA 常常还没挂载出 nav，此时它直接 return 放弃，
+  直到用户点「设置」引起 DOM 变化、`MutationObserver` 再次触发 `run()` 才补上。
+  表现为「必须先点设置，每日任务才可点」。现改为在 `DOMContentLoaded` 之后
+  补跑若干次（0/300/800/1500ms），确保导航项与 hash 路由在刷新后即到位。
+
+### 优化
+
+- **侧边栏标题统一**：`Token 统计` → **词元统计**，`设置` → **系统设置**。
+  按导航项**完整文本**精确匹配后改名，不做全局字符串替换 ——
+  「设置」这类短词在页面里出现频繁，全局替换必然误伤。
+  收拢态悬浮气泡读的是 `data-wb-label`，同步改名，避免提示仍是旧名。
+
+- **每日任务页区块结构对齐官方积分统计页**：
+
+  官方实测骨架是「标题在框**外**」：
+
+  ```
+  SECTION
+    ├─ H2  二级标题（如「官方积分消耗」）13px / 500 / line-height 20px
+    └─ CARD  圆角框，内部只放内容
+  ```
+
+  每日任务页原为「标题在框**内**」的自造结构：
+
+  ```
+  CARD
+    └─ 行：三级标题 + 副标题 + 内容
+  ```
+
+  现把每个卡片的标题外提为卡片外的二级标题 H2，结构统一为
+  `SECTION > [H2, CARD(内容)]`，与官方一致。
+
+  改造在 DOM 层统一处理（而非逐个重写 innerHTML 字符串），
+  本页新增卡片也会自动纳入；副标题/描述保留在卡片内，与官方一致。
+
 ## [v0.9.14] - 2026-09-27
 
 <!-- summary: 修正 v0.9.13 中被内联样式与选择器特异性抵消的三处对齐 -->
@@ -1732,7 +1774,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.14...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.15...HEAD
+[v0.9.15]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.14...v0.9.15
 [v0.9.14]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.13...v0.9.14
 [v0.9.13]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.12...v0.9.13
 [v0.9.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.11...v0.9.12
