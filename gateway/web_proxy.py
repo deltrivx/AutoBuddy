@@ -592,6 +592,68 @@ COLLAPSE_SCRIPT = r"""
     .wb-daily-h1 { font-size: 24px; line-height: 34px; }
   }
 
+  /* 本页控件统一到官方规格。注意：.wb-api-btn 是跨页面共用的类
+     （设置页/账号卡片等 36 处都在用），因此这里必须用 .wb-daily-wrap
+     作用域限定，只改本页，避免波及其它页面。
+
+     官方实测（积分统计 / Token 统计 / 账号管理）：
+       主按钮 14px / 500 / radius 10px / 高 32px / border 1px
+       次按钮 12px / 500 / radius 10px / 高 28px
+     本页原有：11px / 400 / radius 999px（胶囊）/ 高 25px —— 明显偏小。 */
+  .wb-daily-wrap .wb-api-btn {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.35;
+    padding: 0 10px;
+    min-height: 32px;
+    border-radius: 10px;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.3));
+    background: var(--card, #ffffff);
+    color: var(--foreground, #0f172a);
+  }
+  .wb-daily-wrap .wb-api-btn:hover { background: rgba(120, 120, 120, 0.1); }
+  /* 次要按钮（刷新等）沿用官方的 12px / 28px 一档 */
+  .wb-daily-wrap .wb-api-row .wb-api-btn {
+    font-size: 12px;
+    min-height: 28px;
+    padding: 0 10px;
+  }
+  .wb-daily-wrap .wb-api-btn-primary {
+    background: rgba(59, 130, 246, 0.14);
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #1d4ed8;
+    font-weight: 500;
+  }
+  .wb-daily-wrap .wb-api-btn-danger {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #dc2626;
+  }
+
+  /* 输入框 / 下拉：与官方一致 —— 12px、radius 10px、高 32px */
+  .wb-daily-wrap input[type="number"],
+  .wb-daily-wrap input[type="text"],
+  .wb-daily-wrap select {
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 6px 10px;
+    min-height: 32px;
+    border-radius: 10px;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.3));
+    background: var(--card, #ffffff);
+    color: var(--foreground, #0f172a);
+    box-sizing: border-box;
+  }
+  /* 表格：与官方一致 —— 12px、th 弱化、单元格 padding 统一 6px 10px */
+  .wb-daily-wrap table { font-size: 12px; width: 100%; border-collapse: collapse; }
+  .wb-daily-wrap th {
+    font-size: 12px; font-weight: 500;
+    color: var(--muted-foreground, #64748b);
+    text-align: left; padding: 6px 10px;
+    white-space: nowrap;
+  }
+  .wb-daily-wrap td { font-size: 12px; padding: 6px 10px; }
+
   .wb-api-card {
     display: flex;
     flex-direction: column;

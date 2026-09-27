@@ -31,6 +31,28 @@
 
 ---
 
+## [v0.9.13] - 2026-09-27
+
+<!-- summary: 每日任务页控件（按钮/输入框/下拉/表格）统一到官方规格 -->
+
+### 优化
+
+v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件**，
+与官方页面（账号管理 / 积分统计 / Token 统计）实测值逐项对齐：
+
+| 控件 | 官方实测 | 每日任务页（改前） | 改后 |
+| :--- | :--- | :--- | :--- |
+| 主按钮 | 14px / 500 / `radius:10px` / 高 32px / 边框 1px | **11px / 400 / `radius:999px`(胶囊) / 高 25px** | 14px / 500 / 10px / 32px |
+| 次按钮（刷新等） | 12px / 500 / 高 28px | 同上（未分档） | 12px / 500 / 28px |
+| 输入框 / 下拉 | 12px / `radius:10px` | 12px / **`radius:6px`** / 高 30px | 12px / 10px / 32px |
+| 表格 | 12px，`th` 弱化色、`padding:6px 10px` | 12px，`padding:3px 6px`（偏密） | 12px / `6px 10px` |
+
+### 实现说明
+
+`.wb-api-btn` 是**跨页面共用**的类（设置页、账号卡片等 36 处都在使用），
+因此本次改动全部用 `.wb-daily-wrap` 作用域限定，
+**只影响每日任务页**，不会波及其它页面的既有样式。
+
 ## [v0.9.12] - 2026-09-27
 
 <!-- summary: 每日任务页整体对齐官方页面布局与样式、侧边栏收纳提示、浮窗四色区分 -->
@@ -1685,7 +1707,8 @@
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.12...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.13...HEAD
+[v0.9.13]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.12...v0.9.13
 [v0.9.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.11...v0.9.12
 [v0.9.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.10...v0.9.11
 [v0.9.10]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.9...v0.9.10
