@@ -31,6 +31,37 @@
 
 ---
 
+## [v0.9.17] - 2026-09-27
+
+<!-- summary: 热修 v0.9.16 —— 等长替换违反导致 JS 资源 500、前端整站白屏 -->
+
+### 修复（P0 热修）
+
+- **修复 v0.9.16 导致的前端整站白屏**：`TEXT_REPLACEMENTS` 对 **JS 资源**
+  的改写有**等长**约束（替换前后字节数必须一致）。v0.9.16 新增的
+  Token → 词元 替换中：
+
+  ```
+  按本地聚合 Token 从高到低排列。  43 字节
+  按单次调用词元从高到低排列。      42 字节   ← 少 1 字节
+  ```
+
+  `Token`(5 字节) 换成 `词元`(6 字节) 时未补填充字符，触发：
+
+  ```
+  ValueError: 等长替换被破坏: ... (43) != ... (42)
+  ```
+
+  后果是 `/assets/index-*.js` 直接返回 **HTTP 500** → React 未挂载 →
+  `#root` 为空、**页面全白**，任何前端功能都不可用。
+
+  现已改为等长写法（43 == 43）。
+
+- **新增回归测试 `_test_text_replacements.py`**：逐条校验替换表的字节等长。
+  本次事故中 AST / `node --check` / 原有 13 项单测**全部通过**，
+  只有真打开页面才暴露 —— 故必须有专门用例卡死这条约束。
+  测试直接解析源码而非 `import web_proxy`，避免因 fastapi 未安装而误判。
+
 ## [v0.9.16] - 2026-09-27
 
 <!-- summary: 修复侧边栏图标丢失回归、积分统计项补标题图标、Token 字段改为词元 -->
@@ -1808,7 +1839,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.16...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.17...HEAD
+[v0.9.17]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.16...v0.9.17
 [v0.9.16]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.15...v0.9.16
 [v0.9.15]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.14...v0.9.15
 [v0.9.14]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.13...v0.9.14
