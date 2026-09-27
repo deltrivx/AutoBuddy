@@ -546,6 +546,52 @@ COLLAPSE_SCRIPT = r"""
   }
   .wb-am-restore:disabled { opacity: .6; cursor: default; }
   /* ---------------- 设置页：API 接入面板 ---------------- */
+  /* ---------------- 每日任务页：容器 / 标题对齐官方页面 ----------------
+     实测官方（账号管理 / 积分统计 / Token 统计）统一使用：
+       mx-auto w-full max-w-[1180px] px-4 py-6，≥640px 时 sm:px-8 sm:py-9
+       H1 28px / 600 / line-height 42px
+     本页原先是自造的 max-width 960px + 24px 20px + 20px/700 的标题。 */
+  .wb-daily-wrap {
+    margin: 0 auto;
+    width: 100%;
+    max-width: 1180px;
+    min-width: 0;
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    box-sizing: border-box;
+  }
+  .wb-daily-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 14px;
+  }
+  .wb-daily-h1 {
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 42px;
+    margin: 0;
+    color: var(--foreground, #0f172a);
+  }
+  .wb-daily-sub {
+    font-size: 13px;
+    margin: 4px 0 0 0;
+    color: var(--muted-foreground, #64748b);
+    max-width: 720px;
+    line-height: 20px;
+  }
+  @media (min-width: 640px) {
+    .wb-daily-wrap { padding: 36px 32px; }
+  }
+  @media (max-width: 560px) {
+    /* 窄屏：标题不该再和右侧状态徽章抢同一行 */
+    .wb-daily-head { flex-direction: column; align-items: stretch; }
+    .wb-daily-h1 { font-size: 24px; line-height: 34px; }
+  }
+
   .wb-api-card {
     display: flex;
     flex-direction: column;
@@ -553,7 +599,7 @@ COLLAPSE_SCRIPT = r"""
     background: var(--card, #ffffff);
     color: var(--card-foreground, #0f172a);
     border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
-    border-radius: 12px;
+    border-radius: 16px;
     overflow: hidden;
   }
   .wb-api-row {
@@ -1691,10 +1737,14 @@ COLLAPSE_SCRIPT = r"""
       //   - 今日消耗：消耗为 0 用中性灰，>0 用橙（在花钱）
       //   - 今日积分：赚了用绿，为 0 用中性灰
       //   - 账号池：全部启用用绿，有未启用用橙（提示有账号闲置）
+      // 四行各用一种亮色，彼此可区分（要求「四个颜色各不相同，尽量亮一点」）。
+      // 此前今日消耗与账号池同为橙色，无法分辨。
+      //   总积分 蓝   今日消耗 橙   今日积分 绿   账号池 紫
       var C_NEUTRAL = "var(--muted-foreground,#64748b)";
-      var C_MAIN = "var(--foreground,#0f172a)";
-      var C_EARN = "#047857";
-      var C_SPEND = "#b45309";
+      var C_MAIN = "#2563eb";
+      var C_SPEND = "#ea580c";
+      var C_EARN = "#16a34a";
+      var C_POOL = "#9333ea";
       function setVal(row, text, color) {
         var el = row.querySelector(".wb-pop-stat-v");
         if (!el) return;
@@ -1747,10 +1797,10 @@ COLLAPSE_SCRIPT = r"""
           // inPool 才是实际参与调度的账号数。
           var inPool = (acc.inPool != null ? acc.inPool : acc.usable);
           if (acc.total != null) {
-            // 全部启用 = 绿；有未启用 = 橙（提示有账号闲置未参与调用）
-            var full = (inPool != null && Number(inPool) >= Number(acc.total));
+            // 账号池统一用紫色：与总积分(蓝)/今日消耗(橙)/今日积分(绿)区分开。
+            // 原先按「是否全部启用」在绿/橙之间切换，会与另两行撞色。
             setVal(acctRow, inPool + "/" + acc.total + " 个",
-              inPool == null ? C_NEUTRAL : (full ? C_EARN : C_SPEND));
+              inPool == null ? C_NEUTRAL : C_POOL);
           } else {
             setVal(acctRow, "—", C_NEUTRAL);
           }
@@ -3778,6 +3828,11 @@ COLLAPSE_SCRIPT = r"""
       navLink.href = "#/wb-daily";
       navLink.className = "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground cursor-pointer";
       navLink.innerHTML = '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M9 16l2 2 4-4"></path></svg><span class="wb-nav-label">每日任务</span>';
+      // 侧边栏收纳后只剩图标，必须补 data-wb-label ——
+      // 收拢态的悬浮气泡靠 CSS 的 content: attr(data-wb-label) 取值；
+      // 官方导航项由 wrapNavLabels 统一设置，而每日任务是后来注入的，
+      // 没设这个属性就会导致收纳后悬停不出现任何提示。
+      navLink.setAttribute("data-wb-label", "每日任务");
 
       var settingsA = nav.querySelector('a[href="/settings"]') || nav.lastElementChild;
       if (settingsA) {
@@ -3853,11 +3908,14 @@ COLLAPSE_SCRIPT = r"""
     v.id = "wb-daily-view";
     v.style.display = "none";
     v.innerHTML =
-      '<div style="max-width:960px;margin:0 auto;padding:24px 20px;display:flex;flex-direction:column;gap:20px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border,rgba(120,120,120,.2));padding-bottom:14px">' +
+      // 容器与标题对齐官方页面（实测 credit-stats / 账号管理的 computed style）：
+      //   max-width 1180px + px-4 py-6（≥640px 时 sm:px-8 sm:py-9，即 32px/36px）
+      //   H1 = 28px / 600 / line-height 42px（原为自造的 20px / 700 / 30px）
+      '<div class="wb-daily-wrap">' +
+        '<div class="wb-daily-head">' +
           '<div>' +
-            '<h1 style="font-size:20px;font-weight:700;margin:0;color:var(--foreground,#0f172a)">每日任务</h1>' +
-            '<p style="font-size:13px;margin:4px 0 0 0;color:var(--muted-foreground,#64748b)">WorkBuddy 成长中心自动化：积分与成长查询、成长任务、互动玩法、开学季活动与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
+            '<h1 class="wb-daily-h1">每日任务</h1>' +
+            '<p class="wb-daily-sub">WorkBuddy 成长中心自动化：积分与成长查询、成长任务、互动玩法、开学季活动与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
           '</div>' +
           '<div id="wb-dl-state" class="wb-api-badge">加载中…</div>' +
         '</div>' +
