@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.13](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.13)
+**当前稳定版：** [v0.9.14](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.14)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.14](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.14) | 2026-09-27 | 修正 v0.9.13 中被内联样式与选择器特异性抵消的三处对齐 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.14.md) |
 | [v0.9.13](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.13) | 2026-09-27 | 每日任务页控件（按钮/输入框/下拉/表格）统一到官方规格 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.13.md) |
 | [v0.9.12](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.12) | 2026-09-27 | 每日任务页整体对齐官方页面布局与样式、侧边栏收纳提示、浮窗四色区分 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.12.md) |
 | [v0.9.11](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.11) | 2026-09-27 | 签到积分改从签到状态页取真实奖励、积分统计栏 1:1 复刻官方结构 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.11.md) |
@@ -106,7 +107,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.13    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.14    # 锁定版本
 ```
 
 ## 部署产物

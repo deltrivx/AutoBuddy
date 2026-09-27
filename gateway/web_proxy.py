@@ -613,11 +613,6 @@ COLLAPSE_SCRIPT = r"""
   }
   .wb-daily-wrap .wb-api-btn:hover { background: rgba(120, 120, 120, 0.1); }
   /* 次要按钮（刷新等）沿用官方的 12px / 28px 一档 */
-  .wb-daily-wrap .wb-api-row .wb-api-btn {
-    font-size: 12px;
-    min-height: 28px;
-    padding: 0 10px;
-  }
   .wb-daily-wrap .wb-api-btn-primary {
     background: rgba(59, 130, 246, 0.14);
     border-color: rgba(59, 130, 246, 0.35);
@@ -4063,7 +4058,9 @@ COLLAPSE_SCRIPT = r"""
           '<div class="wb-api-row wb-api-row-stack" style="border-bottom:0;padding-top:14px">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:6px">' +
               '<span class="wb-api-label">账号签到与凭据（最近 30 天）</span>' +
-              '<button id="wb-dl-checkin-all-btn" class="wb-api-btn" style="font-size:11px">全部立即签到</button>' +
+              // 去掉内联 font-size：它会压过 .wb-daily-wrap .wb-api-btn，
+              // 导致这个按钮比同页其它按钮小一档（11px vs 14px）。
+              '<button id="wb-dl-checkin-all-btn" class="wb-api-btn">全部立即签到</button>' +
             '</div>' +
             '<div class="wb-api-desc" style="margin-bottom:6px">自动关联账号池里的国内版（cn）账号，新增账号无需在此登记；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。</div>' +
             '<div id="wb-dl-checkin-logs-box" style="width:100%;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
@@ -4251,16 +4248,16 @@ COLLAPSE_SCRIPT = r"""
         '<div class="wb-api-desc" style="font-size:11.5px;margin-bottom:4px">最近 ' + days.length + ' 天明细</div>' +
         '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
         '<tr style="color:var(--muted-foreground,#64748b)">' +
-        '<th style="text-align:left;padding:3px 6px;font-weight:500">日期</th>' +
-        '<th style="text-align:right;padding:3px 6px;font-weight:500">签到</th>' +
-        '<th style="text-align:right;padding:3px 6px;font-weight:500">任务</th>' +
-        '<th style="text-align:right;padding:3px 6px;font-weight:500">合计</th></tr>';
+        '<th style="text-align:left;padding:6px 10px;font-weight:500">日期</th>' +
+        '<th style="text-align:right;padding:6px 10px;font-weight:500">签到</th>' +
+        '<th style="text-align:right;padding:6px 10px;font-weight:500">任务</th>' +
+        '<th style="text-align:right;padding:6px 10px;font-weight:500">合计</th></tr>';
       days.forEach(function(x) {
         html += '<tr>' +
-          '<td style="padding:3px 6px">' + x.date + '</td>' +
-          '<td style="padding:3px 6px;text-align:right">' + num(x.checkin) + '</td>' +
-          '<td style="padding:3px 6px;text-align:right">' + num(x.task) + '</td>' +
-          '<td style="padding:3px 6px;text-align:right;font-weight:600">' + num(x.total) + '</td>' +
+          '<td style="padding:6px 10px">' + x.date + '</td>' +
+          '<td style="padding:6px 10px;text-align:right">' + num(x.checkin) + '</td>' +
+          '<td style="padding:6px 10px;text-align:right">' + num(x.task) + '</td>' +
+          '<td style="padding:6px 10px;text-align:right;font-weight:600">' + num(x.total) + '</td>' +
           '</tr>';
       });
       html += '</table></div>';

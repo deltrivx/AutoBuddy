@@ -31,6 +31,31 @@
 
 ---
 
+## [v0.9.14] - 2026-09-27
+
+<!-- summary: 修正 v0.9.13 中被内联样式与选择器特异性抵消的三处对齐 -->
+
+### 修复
+
+v0.9.13 部署后实测发现三处改动**未真正生效**，本版逐一修正：
+
+1. **表格 `padding` 未生效**：积分统计明细表的 `th/td` 用的是**内联样式**
+   `padding:3px 6px`，优先级高于 CSS 类选择器，所以只改 CSS 无效。
+   现将内联值直接改为 `6px 10px`，与官方一致。
+
+2. **主按钮被误降级**：`.wb-daily-wrap .wb-api-row .wb-api-btn`
+   特异性（0,3,0）高于 `.wb-daily-wrap .wb-api-btn`（0,2,0），
+   导致行内所有按钮都被压到 12px / 28px。官方「刷新统计」这类主按钮
+   是 14px / 32px，不应降级。现已移除该条行内降级规则。
+
+3. **「全部立即签到」按钮偏小**：该按钮带内联 `style="font-size:11px"`，
+   会压过 CSS 规则，比同页其它按钮小一档。已移除内联字号。
+
+### 说明
+
+这三处的共同点是**内联样式 / 选择器特异性**抵消了 CSS 改动 ——
+也是 v0.9.13「改了但实测没变」的原因。本版部署后已实测确认生效。
+
 ## [v0.9.13] - 2026-09-27
 
 <!-- summary: 每日任务页控件（按钮/输入框/下拉/表格）统一到官方规格 -->
@@ -1707,7 +1732,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.13...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.14...HEAD
+[v0.9.14]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.13...v0.9.14
 [v0.9.13]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.12...v0.9.13
 [v0.9.12]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.11...v0.9.12
 [v0.9.11]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.10...v0.9.11
