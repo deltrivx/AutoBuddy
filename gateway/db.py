@@ -145,7 +145,12 @@ def init_db() -> None:
         env_user = (os.getenv("AUTH_USERNAME") or os.getenv("AUTH_USER") or os.getenv("AUTH_DEFAULT_USER") or "admin").strip()
         env_pwd = (os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS") or os.getenv("AUTH_DEFAULT_PASS") or "password").strip()
 
-        cursor.execute("SELECT id, username, salt FROM users WHERE username = ?", (env_user,))
+        # 一并取出 password_hash：用于判断「环境变量是否与库内一致」
+        # —— 一致时跳过写入，避免每次启动都无谓地重写这一行（见下方 F 条）。
+        cursor.execute(
+            "SELECT id, username, salt, password_hash FROM users WHERE username = ?",
+            (env_user,)
+        )
         user_row = cursor.fetchone()
         now = time.time()
 
@@ -156,9 +161,10 @@ def init_db() -> None:
         #   D. 用户自行修改 → 写入数据库
         #   E. 后续再设环境变量 → 继续覆盖写入（环境变量始终是权威源）
         #
-        # 由此得到的实现规则只有两条：
-        #   1) 环境变量**在场** → 无条件覆盖（A / E）；
-        #   2) 环境变量**不在场** → 一行都不动（B / D 的成果得以保留）。
+        # 由此得到的实现规则只有两条（外加一条幂等）：
+        #   1) 环境变量**在场** → 它是权威源，覆盖写入（A / E）；
+        #   2) 环境变量**不在场** → 一行都不动（B / D 的成果得以保留）；
+        #   3) 环境变量与数据库**已经一致** → 不写库（幂等，避免每次启动无谓重写）。
         if not user_row:
             # 账号还不存在：按环境变量（或默认 admin/password）建立（A / C）
             salt = secrets.token_hex(16)
@@ -172,14 +178,21 @@ def init_db() -> None:
             env_pass_set = bool(os.getenv("AUTH_PASSWORD") or os.getenv("AUTH_PASS")
                                 or os.getenv("AUTH_DEFAULT_PASS"))
             if env_pass_set:
-                # 环境变量在场 → 无条件覆盖，确保它始终是权威源（A / E）
+                # 环境变量在场 → 权威源（A / E），但**值相同就不写**（幂等）。
+                # 算法：用库内既有的 salt 算出「若按环境变量设置会得到什么哈希」，
+                # 与当前 password_hash 比对 —— 相同说明环境变量与数据库已一致，
+                # 没必要再 UPDATE 一次（避免每次启动都无谓重写、updated_at 空转）。
                 salt = user_row["salt"] or secrets.token_hex(16)
                 pwd_hash = hashlib.sha256((env_pwd + salt).encode("utf-8")).hexdigest()
-                cursor.execute(
-                    "UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?",
-                    (pwd_hash, salt, now, user_row["id"])
-                )
-                print(f"[Database] 环境变量已同步到账号：{env_user}")
+                if (user_row["password_hash"] or "") == pwd_hash:
+                    # 环境变量与数据库一致 —— 保持不变，不写库
+                    pass
+                else:
+                    cursor.execute(
+                        "UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?",
+                        (pwd_hash, salt, now, user_row["id"])
+                    )
+                    print(f"[Database] 环境变量已同步到账号：{env_user}")
             # 环境变量不在场 → 不做任何写入，数据库保留最新值（B / D）
 
         conn.commit()

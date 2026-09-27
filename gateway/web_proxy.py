@@ -171,9 +171,12 @@ COLLAPSE_SCRIPT = r"""
   .wb-pop-stats { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
   /* 密码掩码：等宽字体保证 * 等宽，视觉上能反映真实位数 */
   .wb-pwd-mask { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; letter-spacing: 2px; color: var(--muted-foreground, #64748b); }
-  .wb-pop-stat { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
-  .wb-pop-stat-k { color: var(--muted-foreground, #64748b); }
-  .wb-pop-stat-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* 统计行：左侧标签严格左对齐、右侧数值严格右对齐，
+     并用 baseline 让文字基线在同一条线上（此前 align-items:center 在
+     标签/数值字号不同时会视觉错位 —— 用户 2026-09-27 反馈「左侧内容未对齐」）。 */
+  .wb-pop-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; padding: 0; }
+  .wb-pop-stat-k { color: var(--muted-foreground, #64748b); flex: 0 0 auto; text-align: left; }
+  .wb-pop-stat-v { font-weight: 600; font-variant-numeric: tabular-nums; flex: 0 0 auto; text-align: right; margin-left: auto; }
   /* Buddy 旅行三态徽章：同一枚官方飛機图标，仅以「线型 + 颜色」区分状态。
      无 Buddy = 虚线灰 / 未旅行 = 实线中性 / 旅行中 = 实线主题色 */
   .wb-nobuddy-badge {
@@ -188,6 +191,16 @@ COLLAPSE_SCRIPT = r"""
   /* 无 Buddy：虚线描边（未领养，无伙伴）——灰调 */
   .wb-buddy-badge { display: inline-flex !important; align-items: center; gap: 4px; vertical-align: middle; }
   .wb-buddy-badge svg { flex-shrink: 0; }
+
+  /* 账号卡片右上角的两个状态图标（旅行 / 签到）—— 移动端强制与 PC 一致。
+     根因（用户 2026-09-27 反馈「PC 正常、移动端都不显示」）：
+     官方前端给这两个容器加了 `hidden ... min-[420px]:flex`，
+     即默认 display:none、只有视口 ≥420px 才 flex。
+     而手机竖屏宽度普遍是 390 / 375 / 360，全都低于 420，
+     于是官方自己的响应式规则把它们藏了 —— 并非我们注入的代码有问题。
+     实测：1280px 下 display=flex（可见），390px 下 display=none（不可见）。
+     这里无条件覆盖为 flex，使移动端与 PC 显示同步。 */
+  [class*="min-[420px]:flex"] { display: flex !important; }
   .wb-buddy-nobuddy { color: #94a3b8; }
   .wb-buddy-nobuddy svg { stroke-dasharray: 3 2.4; }
   /* 未旅行：实线（已领养，伙伴在家待命） */
@@ -1569,7 +1582,9 @@ COLLAPSE_SCRIPT = r"""
     }
     orb = document.createElement("div");
     orb.id = "wb-user-orb";
-    orb.title = "账号：" + (data.username || "") + "（点击查看）";
+    // 悬浮不再弹原生文字提示：点击展开浮窗已经能看到全部信息，
+    // 重复的文字气泡是噪声（用户 2026-09-27 反馈）。
+    orb.removeAttribute("title");
     var img = document.createElement("img");
     img.src = wbAvatarSrc(data.avatar, data.avatar === "custom");
     img.alt = "用户头像";
@@ -1629,7 +1644,7 @@ COLLAPSE_SCRIPT = r"""
         row.appendChild(vv);
         return row;
       }
-      var creditRow = statRow("剩余积分", "…");
+      var creditRow = statRow("总积分", "…");
       var todayRow = statRow("今日消耗", "…");
       var acctRow = statRow("账号池", "…");
       stats.appendChild(creditRow);
@@ -1656,8 +1671,13 @@ COLLAPSE_SCRIPT = r"""
         .then(function(r) { return r.ok ? r.json() : {}; })
         .then(function(d) {
           var acc = (d && d.accounts) || {};
+          // 账号池 = 启用（真正参与调用）/ 总数。
+          // 此前用的是 usable（凭据可用数）：当所有账号凭据都正常时显示成 11/11，
+          // 看不出其中有 4 个并未启用（用户 2026-09-27 反馈）。
+          // inPool 才是实际参与调度的账号数。
+          var inPool = (acc.inPool != null ? acc.inPool : acc.usable);
           acctRow.querySelector(".wb-pop-stat-v").textContent =
-            acc.total != null ? ((acc.usable != null ? acc.usable + "/" : "") + acc.total + " 个") : "—";
+            acc.total != null ? (inPool + "/" + acc.total + " 个") : "—";
         })
         .catch(function() {
           acctRow.querySelector(".wb-pop-stat-v").textContent = "—";
@@ -4359,9 +4379,18 @@ COLLAPSE_SCRIPT = r"""
   var WB_PLANE_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="22" x2="22" y2="22"></line><path d="M6.36 17.4 4 17l-2-4 1.1-.55a2 2 0 0 1 1.8 0l.17.1a2 2 0 0 0 1.8 0L8 12 5 6l.9-.45a2 2 0 0 1 2.09.2l4.02 3a2 2 0 0 0 2.1.2l4.19-2.06a2.41 2.41 0 0 1 1.73-.17L21 7a1.4 1.4 0 0 1 .87 1.99l-.38.76c-.23.46-.6.84-1.07 1.08L7.58 17.2a2 2 0 0 1-1.22.18Z"></path></svg>';
   function wbBuddyBadgeKind(text) {
     var t = (text || "").trim();
+    if (!t) return null;
+    // 先把「积分」类文案挡掉：它绝不是旅行状态。
+    // 此前「剩余」前缀规则过于宽泛，把「剩余积分」也判成了 traveling，
+    // 于是积分统计页的积分数据与浮窗第一行被替换成飞机图标
+    // （用户 2026-09-27 反馈）。
+    if (t.indexOf("积分") >= 0) return null;
     if (t === "无 Buddy") return "nobuddy";
     if (t === "未旅行") return "idle";
-    if (t.indexOf("旅行中") === 0 || t.indexOf("剩余") === 0 || t.indexOf("即将到达") === 0) return "traveling";
+    if (t.indexOf("旅行中") === 0 || t.indexOf("即将到达") === 0) return "traveling";
+    // 「剩余 37 分钟到达」才是旅行倒计时 —— 必须「剩余 + 数字 + 时间单位」，
+    // 不再用裸的「剩余」前缀。
+    if (/^剩余\s*\d+\s*(分钟|分|小时|时|秒)/.test(t)) return "traveling";
     return null;
   }
   function wbTransformNoBuddyBadges() {
