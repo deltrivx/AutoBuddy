@@ -217,7 +217,21 @@ COLLAPSE_SCRIPT = r"""
     display: flex; flex-direction: column; min-width: 0;
     border: 1px solid var(--border, rgba(120,120,120,.25));
     border-radius: 16px; overflow: hidden;
-    background: rgba(255,255,255,.7);
+    /* 背景必须跟随主题变量，不能写死白色。
+
+       此前这里是 background: rgba(255,255,255,.7) —— 硬编码白色，
+       于是深色主题下页面整体变暗、文字与边框都跟着变了，
+       唯独这个四项数据框仍是一块刺眼的白底（用户 2026-09-28 反馈）。
+
+       实测（1280px，深色主题）：
+         --card      = oklch(27.9% .041 260.031)   ← 主题变量本身是正常的
+         body 背景    = oklch(0.208 0.042 265.755)
+         本框背景    = rgba(255,255,255,0.7)        ← 没跟上，就是它
+
+       注意 --card 是 **oklch** 而非 hex，所以兜底值不能用
+       color-mix(srgb ...) 配 hex 的老写法，直接用 color-mix 取 70% 即可；
+       变量缺失时退回半透明中性灰，避免又变回固定白。 */
+    background: color-mix(in oklab, var(--card, #ffffff) 70%, transparent);
   }
   .wb-dl-credit-grid { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0; }
   .wb-dl-credit-item {

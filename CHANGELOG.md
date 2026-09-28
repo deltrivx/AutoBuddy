@@ -31,6 +31,44 @@
 
 ---
 
+## [v0.9.22] - 2026-09-28
+
+<!-- summary: 修复每日任务页四项数据框在深色主题下不变色 -->
+
+### 修复
+
+- **每日任务页顶部四项数据框在深色主题下不变色**（用户 2026-09-28 反馈）。
+
+  根因：`.wb-dl-credit-card` 的背景被**硬编码为白色**：
+
+  ```css
+  background: rgba(255,255,255,.7);   /* 写死，不跟随主题 */
+  ```
+
+  而同一处代码的注释里明明记录着官方规格是 `bg-card/70`（跟随主题变量），
+  实现与注释自相矛盾。
+
+  实测（1280px，深色主题）：
+
+  ```
+  --card          = oklch(27.9% .041 260.031)   ← 主题变量正常
+  body 背景        = oklch(0.208 0.042 265.755)
+  本框背景         = rgba(255,255,255,0.7)       ← 没跟上，就是它
+  ```
+
+  文字色（`--foreground`）与边框（`--border`）都正常跟随了主题，
+  只有背景这一处没跟 —— 表现为深色页面里嵌着一块刺眼的白底卡片。
+
+  现改为：`color-mix(in oklab, var(--card) 70%, transparent)`，
+  与官方积分统计页的 `bg-card/70` 规格一致。
+
+  ⚠️ 注意：`--card` 是 **oklch** 格式而非 hex，因此不能用
+  `color-mix(in srgb, ...)` 配 hex 兜底的老写法；变量缺失时
+  退回中性半透明色，避免又变回固定白。
+
+- 顺带全量复查了页面内其它硬编码浅色：`.wb-modal-btn` 的蓝色按钮主色
+  与 toast 上的白字属于**前景/按钮色**，非背景问题，保持原样。
+
 ## [v0.9.21] - 2026-09-27
 
 <!-- summary: 修正 v0.9.20 去重的两个缺陷：重复次数被悄悄吞掉、字典无上限 -->
@@ -1994,7 +2032,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.21...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.22...HEAD
+[v0.9.22]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.21...v0.9.22
 [v0.9.21]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.20...v0.9.21
 [v0.9.20]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.19...v0.9.20
 [v0.9.19]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.18...v0.9.19
