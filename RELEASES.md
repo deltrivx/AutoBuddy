@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.22](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.22)
+**当前稳定版：** [v0.9.23](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.23)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.23](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.23) | 2026-09-30 | 修复新加账号永远不被调用、以及巡检探测账号池外账号 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.23.md) |
 | [v0.9.22](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.22) | 2026-09-28 | 修复每日任务页四项数据框在深色主题下不变色 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.22.md) |
 | [v0.9.21](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.21) | 2026-09-27 | 修正 v0.9.20 去重的两个缺陷：重复次数被悄悄吞掉、字典无上限 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.21.md) |
 | [v0.9.20](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.20) | 2026-09-27 | access log 通用相邻去重，相同日志只出现一条 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.20.md) |
@@ -115,7 +116,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.22    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.23    # 锁定版本
 ```
 
 ## 部署产物

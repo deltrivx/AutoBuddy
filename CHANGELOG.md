@@ -31,6 +31,71 @@
 
 ---
 
+## [v0.9.23] - 2026-09-30
+
+<!-- summary: 修复新加账号永远不被调用、以及巡检探测账号池外账号 -->
+
+### 修复
+
+- **新加的账号一次都没被调用**（用户 2026-09-29 反馈）。
+
+  选号时的「正向能力矩阵」收窄把**从未探测过**的账号一并排除了：
+
+  ```python
+  known_yes = [a for a in candidates
+               if capability_state(_account_id(a), model) == "yes"]
+  if known_yes:
+      candidates = known_yes      # ← 未知（state=None）也被排除
+  ```
+
+  与巡检的冷启动缺口配合，形成死循环：
+
+  ```
+  新账号 0 调用
+     → used_models 为空 → 只探 BASE_MODELS 基模型清单
+     → 清单里没有自动发现的新模型（如 hy4-preview-f）
+     → 能力矩阵永远缺这个键 → state 永远是 None
+     → 收窄时被排除 → 又是 0 调用
+  ```
+
+  实测（`selection_logs.json`，09-29 23:43 ~ 09-30 00:36 共 200 条）：
+
+  ```
+  老账号    被选中 24~28 次     ← 能力矩阵有 hy4-preview-f=yes
+  4 个新账号 被选中  0 次       ← 键不存在，token 有效且在池内
+  ```
+
+  现改为**只排除明确不支持**（`state != "no"`），未知账号保留参与。
+  真不支持时会被 `_learn_model_unavailable` 即时学习成 `no`，
+  下一轮自然出局，不会牺牲原有的选号质量。
+
+  两处收窄点（主选号 `_pick_account`、换号重试 `_retry_candidates`）均已修正。
+
+- **巡检探测账号池外的账号**，导致账号已移出池子却仍在报错。
+
+  巡检传 `_load_accounts()`（两份账号文件的**全量合并**），
+  而日常调用走 `_enabled_accounts()`（白名单 + 账号级停用策略）。
+  两套账号集合不一致。
+
+  实测：一轮巡检探了 **15 个账号**，远多于池内数量；
+  `model_health_last.json` 里出现了已被移出池的账号。
+
+  现改为传 `_enabled_accounts(_load_accounts(), _load_pool_config())`，
+  与日常调用同源。这与项目既有设计原则一致 —— `build_account_store()` 的注释：
+  「账号来源与账号池其它功能保持同一个出处」。
+
+  `overrides` 显式指定账号时（界面「只探这几个账号」），
+  仍由 `model_health.select_targets` 按该清单收窄，不受影响。
+
+### 测试
+
+- 新增 `_test_pool_selection.py`（11 项）：锁定「不得排除未知账号」契约，
+  防止日后又改回 `state == "yes"`；同时校验巡检的池过滤。
+- 修正 `_test_model_health.py`：该测试把 `run_model_health_check` 切片到
+  隔离命名空间执行，巡检新增的两个依赖需补桩
+  （`_load_pool_config` / `_enabled_accounts`）。**生产代码没有问题**，
+  是测试桩缺失。
+
 ## [v0.9.22] - 2026-09-28
 
 <!-- summary: 修复每日任务页四项数据框在深色主题下不变色 -->
@@ -2032,7 +2097,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.22...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.23...HEAD
+[v0.9.23]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.22...v0.9.23
 [v0.9.22]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.21...v0.9.22
 [v0.9.21]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.20...v0.9.21
 [v0.9.20]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.19...v0.9.20

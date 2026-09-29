@@ -864,6 +864,11 @@ ns = {
     "_HEALTH_RUNTIME": {"running": False, "lastRunAt": None, "lastResult": None, "lastError": None},
     "_HEALTH_RUN_LOCK": __import__("threading").Lock(),
     "_load_accounts": lambda: [],
+    # 巡检只探账号池内账号后，run_model_health_check 多了这两个依赖
+    # （2026-09-30）。切片执行必须补桩，否则 NameError。
+    # 桩语义与生产一致：空白名单 = 全部启用，故原样透传。
+    "_load_pool_config": lambda: {"enabledAccountIds": []},
+    "_enabled_accounts": lambda accounts, config, include_disabled=False: list(accounts),
     "_health_base_url": lambda variant: "https://example.test",
     "_used_models_by_account": lambda: {},
     "_base_model_ids": lambda: [],

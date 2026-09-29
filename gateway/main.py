@@ -45,7 +45,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.22"
+VERSION_DEFAULT = "0.9.23"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -591,11 +591,27 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
             candidates = allowed
         # 正向白名单（P1 能力矩阵）：探过「明确支持」的账号优先参与，
         # 但只有在**确实存在**支持者时才收窄，避免矩阵过旧导致全池被排除。
+        #
+        # ⚠️ 关键修正（用户 2026-09-29 反馈「新加的账号一次都没被调用」）：
+        # 只排除**明确不支持**（state == "no"）的账号，
+        # **未知**（state is None）必须保留 —— 否则新账号永远进不了候选。
+        #
+        # 原写法 `state == "yes"` 会把「从未探测过」的新账号一并排除，
+        # 配合巡检的冷启动缺口（新账号无调用记录 → 只探基模型清单 →
+        # 清单里没有自动发现的新模型如 hy4-preview-f → 永远探不到），
+        # 形成死循环：
+        #   没调用 → 不被探测 → 矩阵缺键 → 不被选中 → 没调用
+        #
+        # 实测（09-29）：4 个新 cn 账号 token 有效、确实在池内，
+        # 但 selection_logs 里 0 次选中，而老账号 24~28 次。
+        #
+        # 改成排除 no 之后，未知账号保留参与；真不支持时会被
+        # _learn_model_unavailable 即时学习成 no，下一轮自然出局。
         try:
-            known_yes = [a for a in candidates
-                         if capability_state(_account_id(a), model) == "yes"]
-            if known_yes:
-                candidates = known_yes
+            not_no = [a for a in candidates
+                      if capability_state(_account_id(a), model) != "no"]
+            if not_no:
+                candidates = not_no
         except Exception:
             pass
 
@@ -821,9 +837,11 @@ def _retry_candidates(model: Optional[str], exclude: set) -> List[Dict[str, Any]
         if filtered:
             pool = filtered
         try:
-            known_yes = [a for a in pool if capability_state(_account_id(a), model) == "yes"]
-            if known_yes:
-                pool = known_yes
+            # 同上：只排除「明确不支持」，保留未知账号（新账号冷启动）。
+            not_no = [a for a in pool
+                      if capability_state(_account_id(a), model) != "no"]
+            if not_no:
+                pool = not_no
         except Exception:
             pass
     return [a for a in pool if str(_account_id(a)) not in exclude]
@@ -2481,8 +2499,21 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
 
         _HEALTH_RUNTIME["running"] = True
         try:
+            # 巡检只探**账号池内**的账号，与日常调用同源。
+            #
+            # 此前这里传 _load_accounts()（两份账号文件的全量合并），
+            # 而日常调用走的是 _enabled_accounts()（白名单 + 停用策略过滤）。
+            # 两套账号集合不一致，表现为「账号已移出池子，巡检还在探它、还在报错」
+            # （用户 2026-09-29 反馈）。
+            #
+            # 这与项目既有的设计原则一致 —— build_account_store() 的注释：
+            # 「账号来源与账号池其它功能保持同一个出处，
+            #   避免『账号页看得到、每日任务里没有』」。
+            #
+            # 注意：overrides 里显式指定了 accountIds 时（界面手动「只探这几个账号」），
+            # model_health.select_targets 会按该清单再收窄，这里无需额外处理。
             raw = model_health.run_round(
-                accounts=_load_accounts(),
+                accounts=_enabled_accounts(_load_accounts(), _load_pool_config()),
                 config=cfg,
                 client_factory=lambda: httpx.Client(timeout=30.0),
                 base_url_for=_health_base_url,
