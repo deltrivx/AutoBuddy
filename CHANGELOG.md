@@ -31,6 +31,90 @@
 
 ---
 
+## [v0.9.24] - 2026-09-30
+
+<!-- summary: 额度耗尽的账号由巡检自动停用，不再只提醒用户手动删除 -->
+
+### 修复
+
+- **额度耗尽的账号不再被自动停用，只能反复提醒用户手动删除**
+  （用户 2026-09-30 反馈）。
+
+  根因：账号级自动禁用的触发条件只认两类：
+
+  ```python
+  if verdict not in ("auth_failed", "restricted"):
+      continue
+  ```
+
+  而额度耗尽的上游响应：
+
+  ```
+  HTTP 402  {"code":..., "msg":"Insufficient Balance"}   code=ACCOUNT_QUOTA
+  HTTP 429  {"data":{"code":14018,"msg":"Credits exhausted..."}}
+  ```
+
+  **两条都掉进 `transient`** —— 402 不在 `UNAVAILABLE_STATUS`
+  `{400,401,403,404,422,500,502,503,504}`，也不在 `TRANSIENT_STATUS`
+  `{408,425,429}`，走兜底 `return "transient"`；429 明确属于
+  `TRANSIENT_STATUS`。而 `transient` 的语义就是「临时状态，
+  **不参与自动禁用**」。
+
+  于是没钱的账号**一直留在轮询里持续失败**，系统本该自己停掉它，
+  却只能反复提醒用户去手动删除。
+
+  额度耗尽是**持续**状态（不充值 / 不重置不会自己好），
+  不属于「一次性的网络抖动」，因此必须停。
+
+  现新增 `quota_exhausted` 这一 verdict，并纳入自动禁用：
+
+  ```python
+  if verdict not in ("auth_failed", "restricted", "quota_exhausted"):
+      continue
+  ```
+
+  判定覆盖三条路，任一命中即可：
+
+  1. **语义表**：`14018 → quota_exhausted`（实测 `Credits exhausted`，HTTP 429）
+  2. **HTTP 402**：按状态码判定（402 Payment Required 语义唯一）
+  3. **文字兜底**：`QUOTA_EXHAUSTED_HINTS`（响应体含
+     `insufficient balance` / `credits exhausted` / `额度不足` 等，
+     用于取不到错误码的情形）
+
+### ⚠️ 一处刻意的取舍
+
+**没有**把 `10001` 写进语义表。同一个码在签到接口上是「今天已签到」
+（`workbuddy2api-panel` 的 `alreadyCheckinMarkers` 实测），
+含义冲突。402 的额度耗尽因此改由**状态码**判定，判据更可靠、不会误伤。
+
+### 界面文案
+
+额度耗尽与「账号被拦截」区分开 —— 后者只能等，前者可以充值：
+
+- label：`额度已用尽`
+- action：`充值或等待额度重置`
+- userMessage：`额度已用尽，已自动停用`
+
+### 自愈
+
+无需额外改动：自动启用只放开 `verdict == "available"` 的账号，
+额度耗尽不等于 available，因此不会被误放回；
+充值 / 重置后探测恢复正常，巡检会自己把它放回来。
+
+### 测试
+
+`_test_model_health.py` 新增 7 项，锁定三条判定路径与端到端停用：
+
+```
+14018（Credits exhausted）归类为额度用尽
+HTTP 402 归类为额度用尽（不依赖错误码，避免 10001 语义冲突）
+无错误码但文案命中，同样归类为额度用尽
+额度用尽**不是** transient（transient 不参与自动禁用）
+额度用尽的账号被自动停用
+额度用尽写入账号策略且来源为 auto
+同轮正常账号不被误停
+```
+
 ## [v0.9.23] - 2026-09-30
 
 <!-- summary: 修复新加账号永远不被调用、以及巡检探测账号池外账号 -->
@@ -2097,7 +2181,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.23...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.24...HEAD
+[v0.9.24]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.23...v0.9.24
 [v0.9.23]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.22...v0.9.23
 [v0.9.22]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.21...v0.9.22
 [v0.9.21]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.20...v0.9.21

@@ -86,7 +86,19 @@ _CODE_SEMANTICS: Dict[int, str] = {
     11140: "restricted",      # request illegal / 内容安全审查未通过
     # —— 模型维度 ——
     11133: "probe_defect",    # 请求参数被模型提供方拒绝
-    11200: "quota",           # 无该模型权限 / 额度不足
+    11200: "quota",           # 无该模型权限 / 额度不足（只影响这个模型）
+    # —— 账号维度额度耗尽 ——
+    # 与 11200 的区别：11200 是「这个模型用不了」，14018 是「账号没钱了，
+    # 名下所有模型都调不动」。后者必须走账号级停用，否则会一直在轮询里失败。
+    #
+    # 14018 有直接实测证据（2026-09-28 Mac dsh 会话日志）：
+    #   429 {"data":{"code":14018,"msg":"Credits exhausted. ..."}}
+    #
+    # ⚠️ 刻意**不**把 10001 写进来：同一个码在签到接口上是「今天已签到」
+    # （workbuddy2api-panel 的 alreadyCheckinMarkers 实测），含义冲突。
+    # HTTP 402 的额度耗尽改由 classify_account_probe 按状态码判定，
+    # 判据更可靠（402 = Payment Required，语义唯一）。
+    14018: "quota_exhausted",  # Credits exhausted（HTTP 429）
     # —— 请求形态 ——
     11101: "probe_defect",    # Non-stream chat request is currently not supported
     11103: "invalid_model_name",  # 模型名格式不合法
@@ -110,6 +122,9 @@ SEMANTIC_LABELS: Dict[str, str] = {
     "model_missing": "账号正常",
     "probe_defect": "这次探测没被上游接受，没能得出结论",
     "invalid_model_name": "探测用了不合法的模型名，未能得出结论",
+    # 额度耗尽是**账号级**结论：与 restricted 一样要停用整个账号，
+    # 但要给出不同的建议 —— 风控只能等，额度可以充值。
+    "quota_exhausted": "额度已用尽",
     "ok": "调用链路正常",
     "transient": "网络或上游临时异常，没能得出结论",
 }
@@ -140,6 +155,23 @@ RESTRICTED_HINTS = (
     "risk control",
     "risk_control",
     "violat",
+)
+# 「额度耗尽」的文字特征。与 ``quota``（某模型无权限/额度不足）是两回事：
+# 这里是**账号整体没钱**，名下所有模型都调不动，留在轮询里只会持续失败。
+# 实测（2026-09-28~29）：
+#   HTTP 402  {"code":10001?} msg="Insufficient Balance"  code=ACCOUNT_QUOTA
+#   HTTP 429  {"data":{"code":14018,"msg":"Credits exhausted..."}}
+QUOTA_EXHAUSTED_HINTS = (
+    "insufficient balance",
+    "credits exhausted",
+    "credit exhausted",
+    "quota exceeded",
+    "out of credit",
+    "no available credit",
+    "余额不足",
+    "额度不足",
+    "额度已用尽",
+    "积分不足",
 )
 # 「模型不存在」的文字特征。对凭据探测而言这是**好消息**（鉴权已过）。
 MODEL_MISSING_HINTS = (
@@ -410,6 +442,8 @@ def classify_semantic(code: Optional[int], snippet: Optional[str] = None) -> Opt
         return None
     if any(h in text for h in RESTRICTED_HINTS):
         return "restricted"
+    if any(h in text for h in QUOTA_EXHAUSTED_HINTS):
+        return "quota_exhausted"
     if any(h in text for h in MODEL_MISSING_HINTS):
         return "model_missing"
     if any(h in text for h in PROBE_DEFECT_HINTS):
@@ -581,7 +615,13 @@ def probe_account(client: Any, base_url: str, token: str,
 def classify_account_probe(status_code: Optional[int], error: Optional[str],
                            snippet: str = "",
                            code: Optional[int] = None) -> str:
-    """把账号探测的响应归为 available / auth_failed / restricted / transient / probe_defect。
+    """把账号探测的响应归为 available / auth_failed / restricted /
+    quota_exhausted / transient / probe_defect。
+
+    ``quota_exhausted``（额度用尽）是 2026-09-30 新增的一类：
+    此前它掉进 ``transient``，而 transient 明确「不参与自动禁用」，
+    于是额度耗尽的账号**一直留在轮询里持续失败** —— 用户只能被反复
+    提醒「删除账号」，而系统本该自己把它停掉（用户 2026-09-30 反馈）。
 
     注意与模型探测的**语义差别**：这里 400/404 是好消息 ——
     上游能说出「这个模型不存在」，说明它已经认下了这个 token。
@@ -605,6 +645,12 @@ def classify_account_probe(status_code: Optional[int], error: Optional[str],
         return "auth_failed"
     if semantic == "restricted":
         return "restricted"
+    # 额度用尽：账号整体没钱，名下所有模型都调不动。
+    # 判据两条，任一命中即可：
+    #   1) 语义表命中 14018（实测 "Credits exhausted"，HTTP 429）；
+    #   2) 文字特征命中（402 的 "Insufficient Balance" 常不带可用错误码）。
+    if semantic == "quota_exhausted":
+        return "quota_exhausted"
     if semantic in ("probe_defect", "invalid_model_name"):
         return "probe_defect"
     if semantic == "model_missing":
@@ -613,6 +659,11 @@ def classify_account_probe(status_code: Optional[int], error: Optional[str],
     if status_code == 401:
         # 401 只有一个含义：没有有效的凭据。
         return "auth_failed"
+    if status_code == 402:
+        # 402 Payment Required：账号额度已用尽（实测 msg=Insufficient Balance）。
+        # 不写进 _CODE_SEMANTICS 是因为 10001 在签到接口上是「今天已签到」，
+        # 同一个码含义冲突；按状态码判 402 语义唯一、不会误伤。
+        return "quota_exhausted"
     if status_code in TRANSIENT_STATUS:
         return "transient"
     if 200 <= status_code < 300:
@@ -736,6 +787,7 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "available": "valid",
         "auth_failed": "invalid",
         "restricted": "restricted",
+        "quota_exhausted": "quota_exhausted",
         "probe_defect": "unknown",
         "transient": "unknown",
     }.get(verdict, "unknown")
@@ -743,6 +795,7 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "valid": "账号正常",
         "invalid": "登录已过期",
         "restricted": "账号被上游拦截",
+        "quota_exhausted": "额度已用尽",
         "unknown": "没测出结果",
     }[state]
     # 说明文案优先用语义表里的解释（它带上了判定依据），
@@ -751,6 +804,7 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "available": SEMANTIC_LABELS["model_missing"],
         "auth_failed": SEMANTIC_LABELS["auth"],
         "restricted": SEMANTIC_LABELS["restricted"],
+        "quota_exhausted": SEMANTIC_LABELS["quota_exhausted"],
         "probe_defect": SEMANTIC_LABELS["probe_defect"],
         "transient": SEMANTIC_LABELS["transient"],
     }.get(verdict, "未得出结论")
@@ -762,6 +816,9 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         # userMessage 已经说了「请重新登录」，这里不再重复一遍。
         "invalid": None,
         "restricted": None,
+        # 与 restricted 的区别：风控只能等，额度可以充值/等待重置。
+        # 给一句可执行的建议，别让人对着「用不了」干瞪眼。
+        "quota_exhausted": "充值或等待额度重置",
         "unknown": "稍后重试",
     }.get(state)
     # 面向用户的整句提示。给界面直接显示用，**不暴露任何探测细节**。
@@ -777,6 +834,9 @@ def credential_state(acc_probe: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         # 实测证明两者都不是；也不在这里讲「重新扫码没用」，那是设置页
         # 该说清的事，提示条只负责让人知道这个账号现在不能用。
         "restricted": "账号被上游拦截，暂时用不了",
+        # 明确说「额度用尽」而不是笼统的「用不了」：后者会让人去查凭据或网络，
+        # 方向全错。已自动停用，充值/重置后巡检会自己放回来。
+        "quota_exhausted": "额度已用尽，已自动停用",
         "unknown": "这次没测出结果，请稍后重试",
     }.get(state, "未得出结论")
     return {
@@ -1072,13 +1132,21 @@ def run_round(accounts: List[Dict[str, Any]],
 
         # 账号级停用走**独立的文件与独立的开关**。
         #
-        # 两类账号要被自动停掉：
+        # 三类账号要被自动停掉：
         #   - ``auth_failed``：凭据确实失效。确定、可复现，重新登录才会好。
         #   - ``restricted``：账号被上游风控 / 内容安全拦下。凭据虽然有效，
         #     但它发出的请求一律被拦 —— 留在轮询里只会持续失败，
         #     还会把该账号名下的模型探测结果污染成一片失败。
         #     过去只停 auth_failed，风控账号照常参与轮询，这正是
         #     「巡检都测出风控了，却还在用」的来源。
+        #   - ``quota_exhausted``：额度用尽（2026-09-30 新增）。
+        #     实测上游返回：HTTP 402 Insufficient Balance、
+        #     HTTP 429 code=14018 Credits exhausted。
+        #     此前这两者都掉进 ``transient``，而 transient 明确「不参与自动禁用」，
+        #     于是没钱的账号**一直留在轮询里持续失败** —— 系统本该自己停掉它，
+        #     却只能反复提醒用户去手动删除（用户 2026-09-30 反馈）。
+        #     额度耗尽是**持续**状态（不充值/不重置就不会好），
+        #     不属于「一次性的网络抖动」，因此必须停。
         #
         # 而 ``transient``（网络抖动、上游 5xx）不下手：那是一次性的，
         # 停掉一个账号等于停掉它名下全部模型，误停的代价太大。
@@ -1086,7 +1154,7 @@ def run_round(accounts: List[Dict[str, Any]],
             acc_policy = account_policy.load_policy()
             changed = False
             for acc_id, verdict in account_probes.items():
-                if verdict not in ("auth_failed", "restricted"):
+                if verdict not in ("auth_failed", "restricted", "quota_exhausted"):
                     continue
                 if account_policy.set_disabled(acc_policy, acc_id, True,
                                                account_policy.SOURCE_AUTO):

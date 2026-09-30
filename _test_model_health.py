@@ -1018,6 +1018,53 @@ check("探测未得结论时不自动停用账号",
 check("探测未得结论时不写账号策略",
       account_policy.load_policy() == {}, str(account_policy.load_policy()))
 
+# 场景二·补：额度用尽必须被自动停用（2026-09-30）。
+#
+# 真实故障：上游返回 HTTP 402 Insufficient Balance / HTTP 429 code=14018
+# Credits exhausted，落到 classify_account_probe 后此前被判成 transient，
+# 而 transient 明确「不参与自动禁用」—— 于是没钱的账号一直留在轮询里
+# 持续失败，系统只能反复提醒用户手动删除（用户 2026-09-30 反馈）。
+# 额度耗尽是**持续**状态（不充值/不重置不会自己好），不属于网络抖动。
+#
+# 判据覆盖两条路，都必须命中：
+#   1) 语义表：code=14018
+#   2) HTTP 402：按状态码（10001 在签到接口上是「今天已签到」，不进语义表）
+#   3) 文字兜底：响应体里出现 Insufficient Balance 但取不到错误码
+account_policy.save_policy({})
+check("14018（Credits exhausted）归类为额度用尽",
+      model_health.classify_account_probe(
+          429, None, '{"data":{"code":14018,"msg":"Credits exhausted."}}', 14018)
+      == "quota_exhausted")
+check("HTTP 402 归类为额度用尽（不依赖错误码，避免 10001 语义冲突）",
+      model_health.classify_account_probe(402, None) == "quota_exhausted")
+check("无错误码但文案命中，同样归类为额度用尽",
+      model_health.classify_account_probe(
+          402, None, '{"msg":"Insufficient Balance"}') == "quota_exhausted")
+check("额度用尽**不是** transient（transient 不参与自动禁用）",
+      model_health.classify_account_probe(402, None) != "transient")
+
+# 端到端：额度耗尽的账号必须被自动停用
+account_policy.save_policy({})
+client_q = AccountAwareClient({("t1", "hy3"): 200, ("t2", "hy3"): 200},
+                              account_status={"t1": 400, "t2": 402})
+res_q = model_health.run_round(
+    accounts=accounts2,
+    config={**model_health.default_config(), "checkAccounts": True,
+            "autoDisableAccounts": True},
+    client_factory=lambda: client_q,
+    base_url_for=lambda v: "https://example.invalid",
+    used_models={},
+    base_models=["hy3"],
+)
+check("额度用尽的账号被自动停用",
+      "a2" in res_q["accountsDisabled"], str(res_q["accountsDisabled"]))
+check("额度用尽写入账号策略且来源为 auto",
+      account_policy.load_policy().get("a2") == "auto",
+      str(account_policy.load_policy()))
+# 正常账号不受牵连
+check("同轮正常账号不被误停",
+      "a1" not in res_q["accountsDisabled"], str(res_q["accountsDisabled"]))
+
 # 场景三：checkAccounts 关掉后不再发账号探测请求（给用户一个省流量的开关）。
 account_policy.save_policy({})
 client4 = AccountAwareClient({("t1", "hy3"): 200, ("t2", "hy3"): 200})
