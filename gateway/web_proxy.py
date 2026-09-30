@@ -2129,8 +2129,13 @@ COLLAPSE_SCRIPT = r"""
       // 状态着色：失效=红、受限=琥珀、正常=默认。
       var st = (r.credential || {}).state;
       var cls = "wb-audit-state";
+      // 额度用尽与「账号受限」同为琥珀：两者都不是凭据坏了，
+      // 用红色会让人跑去重新登录 —— 而重登对这两种情况毫无帮助。
+      // 但它是独立一档，必须显式列出，否则会掉进「默认无着色」，
+      // 与「未检测」看起来一样（用户 2026-09-30 反馈「显示没检测出结果」）。
       if (st === "invalid") cls += " wb-audit-bad";
       else if (st === "restricted") cls += " wb-audit-warn";
+      else if (st === "quota_exhausted") cls += " wb-audit-warn";
       else if (st === "valid") cls += " wb-audit-ok";
       line.appendChild(wbEl("span", cls, (r.credential || {}).label || "未检测"));
       line.appendChild(wbEl("span", "wb-audit-name", r.name || r.id));

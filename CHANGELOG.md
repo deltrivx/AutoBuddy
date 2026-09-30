@@ -31,6 +31,44 @@
 
 ---
 
+## [v0.9.25] - 2026-09-30
+
+<!-- summary: 一致性自检页补上「额度用尽」的显示档位，不再与「未检测」混淆 -->
+
+### 修复
+
+- **一致性自检页（audit）里，额度用尽的账号显示为「未检测」**
+  （用户 2026-09-30 反馈「检测显示没有检测出结果」）。
+
+  v0.9.24 已把额度耗尽正确判为 `quota_exhausted`（实测 `code=14018`
+  Credits exhausted），检测接口返回的文案也已正确：
+
+  ```json
+  {"state": "quota_exhausted",
+   "userMessage": "额度已用尽，已自动停用",
+   "action": "充值或等待额度重置"}
+  ```
+
+  但 audit 页的状态着色只认三档：
+
+  ```js
+  if (st === "invalid") cls += " wb-audit-bad";
+  else if (st === "restricted") cls += " wb-audit-warn";
+  else if (st === "valid") cls += " wb-audit-ok";
+  ```
+
+  `quota_exhausted` 一档不落，掉进「默认无着色」—— 与「未检测」
+  在视觉上无法区分，于是看起来就是「没检测出结果」。
+
+  现补上该档位，配色与 `restricted` 同为琥珀：两者都不是凭据坏了，
+  用红色会让人跑去重新登录，而重登对这两种情况毫无帮助。
+
+### 说明
+
+「检测账号」按钮那条路径（`/api/account-health/probe` → 2654 行）
+本来就是 `valid → 绿 / invalid → 红 / 其余 → 琥珀` 的三分支，
+`quota_exhausted` 落在琥珀档，**无需改动**。本次只补 audit 页。
+
 ## [v0.9.24] - 2026-09-30
 
 <!-- summary: 额度耗尽的账号由巡检自动停用，不再只提醒用户手动删除 -->
@@ -2181,7 +2219,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.24...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.25...HEAD
+[v0.9.25]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.24...v0.9.25
 [v0.9.24]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.23...v0.9.24
 [v0.9.23]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.22...v0.9.23
 [v0.9.22]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.21...v0.9.22
