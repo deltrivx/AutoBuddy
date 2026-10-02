@@ -140,6 +140,35 @@ def main() -> int:
         [True, True],
     )
 
+    # ---------------------------------------------------------------
+    # 6) 重复计数的写法必须是「行尾 ×N」，不能另起一行
+    #
+    # 用户 2026-10-02 反馈：日志里出现「(重复 4 次)」这种**独立一行**，
+    # 等于又多打了一条几乎重复的记录，与「防刷屏」的初衷相悖。
+    # 改成把次数挂在本行末尾（×N），行数才真的被压下去。
+    # ---------------------------------------------------------------
+    print("\n[6] 重复计数写法：行尾 ×N，不另起一行")
+    for mod in MODULES:
+        src = read(mod)
+        # 旧的独立一行写法必须彻底消失（注释里提到不算，只看 f-string）
+        bad = [ln for ln in src.splitlines()
+               if ("（上一条重复 " in ln or "(重复 " in ln)
+               and "print(" in ln and not ln.strip().startswith("#")]
+        if bad:
+            print(f"❌ {mod}: 仍存在独立成行的重复计数 -> {bad}")
+            fail += 1
+        else:
+            print(f"✅ {mod}: 无独立成行的重复计数")
+
+        # 必须有行尾 ×N 写法
+        if "×{repeat}" in src or "×{c}" in src:
+            print(f"✅ {mod}: 使用行尾 ×N 写法")
+        elif "_flush_access_dedup" in src or "def lprint" in src:
+            # 该模块有去重逻辑却没改成 ×N —— 只对含去重实现的文件强校验
+            if "_flush_access_dedup" in src or "def lprint" in src:
+                print(f"❌ {mod}: 有去重逻辑但未改用行尾 ×N")
+                fail += 1
+
     if fail:
         print(f"\n❌ 失败 {fail} 项")
         return 1

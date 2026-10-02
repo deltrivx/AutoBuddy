@@ -31,6 +31,113 @@
 
 ---
 
+## [v0.9.26] - 2026-10-02
+
+<!-- summary: 修复工具调用透传丢失 tool_calls、日志重复计数改为行尾 ×N、词元统计只剩两天 -->
+
+### 修复
+
+- **工具调用透传损坏：所有模型返回 `finish_reason=tool_calls` 却不携带 `tool_calls` 数组**
+  （用户 2026-10-02 反馈）。
+
+  实测确认：
+
+  ```
+  finish_reason : tool_calls
+  message       : {"role": "assistant", "content": ""}
+  tool_calls    : null          ← 没有
+  ```
+
+  模型「说要调工具」，调用内容一个字都没传下去 —— Agent 侧的 function calling
+  链路整条断掉，且**不报错**（空 content 看着像正常回复），极易误判成
+  「模型不支持工具」。
+
+  根因在非流式路径：网关把上游流式帧重组成 assistant message 时**只挑了
+  `delta` 里的 `content`**，其余字段被静默丢弃：
+
+  ```python
+  if "content" in delta and delta["content"]:
+      collected_content += delta["content"]
+  ```
+
+  而 tool calling 恰恰**不走 content**，它走 `delta["tool_calls"]`。
+
+  现新增 `accumulate_delta()`，把整块 delta 增量合并进 assistant 消息：
+
+  - `content` / `reasoning_content` 按字符串累加；
+  - `tool_calls` 按 `index` 定位同一条调用再**拼接** `arguments` ——
+    上游是把 JSON 参数**逐片**下发的（`{"tz"` → `:"Asia/` → `Shanghai"}`），
+    每片都 append 一条新 tool_call 会变成一串残缺调用；
+  - `role` 只在首帧携带，取到就写、取不到不动。
+
+  组装时不再只塞 `content`，而是把累积结果整体放进 `message`（真·透传）。
+
+- **日志去重的重复计数仍旧刷屏**（用户 2026-10-02 反馈）。
+
+  原先数数是**另起一行**（`[channel] (上一条重复 N 次)`），
+  等于又多打了一条几乎重复的记录，与「防刷屏」初衷相悖。
+
+  现改为挂在本行末尾（`×N`），行数才真的被压下去。三处一并改：
+
+  | 位置 | 改前 | 改后 |
+  | :--- | :--- | :--- |
+  | `lprint` 通用日志 | `[ch] (上一条重复 4 次)` | `[ch] msg ×4` |
+  | access log 周期汇报 | `INFO: (重复 4 次) msg` | `INFO: msg ×4` |
+  | `web_proxy` 同上 | `INFO: (重复 4 次) msg` | `INFO: msg ×4` |
+
+- **词元统计页只有最近两天记录**（用户 2026-10-02 反馈）。
+
+  根因：明细日志是**滑动窗口**，上限 3000 条，而实测网关每天产生约
+  2000 条调用（最密时段 00 时 418 条）：
+
+  ```
+  按天分布: 10-01: 2025 条, 10-02: 975 条   ← 不到两天写满
+  ```
+
+  窗口写满后最老记录被**直接丢掉**，页面永远只剩一两天。
+
+  明细不能简单放大：它每请求都要整文件读+写一次，
+  3000 条已是 1.28MB 一轮 I/O，放大到几万条会把网关拖垮。
+
+  改为**明细保近期、历史转聚合**：滑出窗口的记录按
+  「天 x 模型 x 账号 x variant」折算成极小一行存 `token_stats_rollup.json`，
+  趋势图与汇总把明细与 rollup 一起算，请求明细仍只列真实调用记录。
+  每请求的成本从此与「累积了多久」无关。
+
+  伴随修正的四处计数缺陷（均由新测试暴露）：
+
+  - 各维度桶的 `records` 一律 `+1`，会把历史压缩后的真实调用量算少
+    → 改为按 `_rec_count()` 累加（聚合行代表 N 次）；
+  - `requests` / `sessions` 列表误把 rollup 聚合行混进去，变成一堆
+    没有 id 的 `req-0` 假记录 → 改为只遍历真实明细；
+  - 分流子集（国内/国际版）有同样的问题，一并修。
+
+### 说明
+
+积分统计页的「最近更新」停在 9 月 24 日，是**官方闭源底层**
+（`autobuddy-engine`）的采集产物 `official_usage_cache.json` 未再刷新所致
+（`collectedAt` 停在 9-23 04:44，`rangeEnd` 停在 2026-09-24），
+直连 `:57890` 也不触发重写 —— 该环节在闭源二进制内，网关侧无法修复。
+Web 代理层已做的日程校正（`_reconcile_official_usage`）不受影响，
+顶层 `daily` 仍是新鲜的（最新 2026-10-02）。
+
+### 测试
+
+新增 2 个测试文件，共锁定 37 项：
+
+```
+_test_tool_call_passthrough.py   16 项   工具调用逐片拼接与真透传
+_test_token_stats_history.py     21 项   历史折算、records 计数、容错
+```
+
+`_test_log_dedup.py` 增补第 6 组断言，强制「行尾 ×N」写法、
+禁止再出现独立成行的重复计数。
+
+```
+全量 17 个测试文件               ✅ 全绿
+五模块 AST                       ✅ 通过
+```
+
 ## [v0.9.25] - 2026-09-30
 
 <!-- summary: 一致性自检页补上「额度用尽」的显示档位，不再与「未检测」混淆 -->
@@ -2219,7 +2326,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.25...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.26...HEAD
+[v0.9.26]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.25...v0.9.26
 [v0.9.25]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.24...v0.9.25
 [v0.9.24]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.23...v0.9.24
 [v0.9.23]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.22...v0.9.23

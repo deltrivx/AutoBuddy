@@ -6554,7 +6554,8 @@ def _flush_access_dedup(now: float = 0.0) -> None:
                 _ACCESS_DEDUP_COUNT.pop(k, None)
         _ACCESS_DEDUP_NEXT_FLUSH = now + _ACCESS_DEDUP_FLUSH_SEC
     for k, c in pending:
-        print(f"INFO:     (重复 {c} 次) {k}", flush=True)
+        # 同一行末尾追加 ×N（与 gateway/main.py 的实现保持一致）。
+        print(f"INFO:     {k} ×{c}", flush=True)
 
 
 def _normalize_access_msg(msg: str) -> str:

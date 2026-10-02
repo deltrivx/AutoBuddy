@@ -17,6 +17,7 @@
 """
 
 import json
+import os
 import time
 import urllib.request
 from datetime import datetime
@@ -24,6 +25,120 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 TRACKER_FILE = Path("/data/.autobuddy/token_stats_logs.json")
+
+# 明细窗口上限。它同时决定「请求明细」页能回溯多久，
+# 以及每次调用要重写多大的文件 —— 放大它等于放大每请求的 I/O。
+MAX_DETAIL = int(os.getenv("AB_TOKEN_DETAIL_MAX", "3000") or 3000)
+
+
+def _rollup_path() -> Path:
+    """历史聚合文件路径。
+
+    跟随 TRACKER_FILE 所在目录（测试会把 TRACKER_FILE 指到临时目录），
+    避免测试期间误写生产数据。
+    """
+    return TRACKER_FILE.parent / "token_stats_rollup.json"
+
+
+def _load_rollup() -> List[Dict[str, Any]]:
+    """读历史聚合行。文件缺失/损坏一律当成空，不让统计页挂掉。"""
+    try:
+        with open(_rollup_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def fold_into_rollup(evicted: List[Dict[str, Any]]) -> None:
+    """把滑出明细窗口的记录，折算成「按天 x 模型 x 账号」的聚合行保存。
+
+    为什么必须有这一步（用户 2026-10-02 反馈「词元统计只有最近两天」）：
+    明细窗口只有 MAX_DETAIL 条，而实测网关每天产生约 2000 条调用 ——
+    窗口不到两天就写满，最老的记录被直接丢掉，于是页面永远只剩两天。
+
+    明细又不能无限涨：它每请求都要整文件读+写一次，
+    3000 条已是 1.28MB 一轮 I/O，放大到几万条会把网关拖垮。
+
+    所以做法是**明细保近期、历史转聚合**：滑出窗口的记录按维度
+    加总成极小的一行（一天 x 模型 x 账号），既不丢历史，
+    又让每请求的成本与「累积了多久」彻底无关。
+    """
+    if not evicted:
+        return
+    path = _rollup_path()
+    try:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if not isinstance(rows, list):
+                rows = []
+        except Exception:
+            rows = []
+
+        index = {}
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            index[(r.get("date"), r.get("model"),
+                   r.get("accountId"), r.get("variant"))] = r
+
+        for rec in evicted:
+            if not isinstance(rec, dict):
+                continue
+            key = (rec.get("date"), rec.get("model"),
+                   rec.get("accountId") or "", rec.get("variant") or "")
+            row = index.get(key)
+            if row is None:
+                row = {"date": key[0], "model": key[1],
+                       "accountId": key[2], "variant": key[3],
+                       "accountName": rec.get("accountName") or "",
+                       "input": 0, "output": 0, "total": 0,
+                       "cacheRead": 0, "cacheWrite": 0,
+                       "uncachedInput": 0, "records": 0, "duration": 0.0}
+                rows.append(row)
+                index[key] = row
+            inp = int(rec.get("input") or 0)
+            out = int(rec.get("output") or 0)
+            row["input"] += inp
+            row["output"] += out
+            row["total"] += inp + out
+            row["cacheRead"] += int(rec.get("cacheRead") or 0)
+            row["cacheWrite"] += int(rec.get("cacheWrite") or 0)
+            row["uncachedInput"] += int(rec.get("uncachedInput") or 0)
+            row["records"] += 1
+            row["duration"] += float(rec.get("duration") or 0.0)
+            if not row.get("accountName") and rec.get("accountName"):
+                row["accountName"] = rec["accountName"]
+
+        # 同 key 覆盖写回前先清掉旧的同 key 行，避免 append 造成重复行累积
+        seen = set()
+        deduped = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            k = (r.get("date"), r.get("model"), r.get("accountId"), r.get("variant"))
+            if k in seen:
+                continue
+            seen.add(k)
+            deduped.append(r)
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(deduped, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"Error folding token history: {e}")
+
+
+def _rec_count(rec: Dict[str, Any]) -> int:
+    """一条参与聚合的记录代表多少次真实调用。
+
+    明细记录代表 1 次；历史聚合行代表当时被折算掉的 N 次。
+    不区分这点的计数会把历史压缩后的真实调用量算少。
+    """
+    try:
+        return max(1, int(rec.get("records") or 1))
+    except Exception:
+        return 1
 
 
 def extract_usage(obj: Any) -> Optional[Dict[str, int]]:
@@ -194,8 +309,11 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
         }
         
         logs.append(entry)
-        if len(logs) > 3000:
-            logs = logs[-3000:]
+        if len(logs) > MAX_DETAIL:
+            # 滑出窗口的记录不能直接丢 —— 先折算进历史聚合再截断。
+            # 直接丢正是「词元统计只剩最近两天」的根因（用户 2026-10-02 反馈）。
+            fold_into_rollup(logs[:-MAX_DETAIL])
+            logs = logs[-MAX_DETAIL:]
             
         with open(TRACKER_FILE, "w", encoding="utf-8") as f:
             json.dump(logs, f, ensure_ascii=False)
@@ -263,6 +381,11 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             })
             existing_ids.add(req_id)
 
+    # 明细只留近期，更早的调用已折算成聚合行存在 rollup 里。
+    # 趋势图与汇总必须把历史一起算进去，否则页面永远只剩窗口内那一两天；
+    # 请求明细仍只列真实调用记录（聚合行没有 id/时间，列出来是假的）。
+    agg_logs = list(logs) + _load_rollup()
+
     daily_map = {}
     model_map = {}
     project_map = {}
@@ -311,7 +434,7 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             store[key] = entry
         return entry
 
-    for l in logs:
+    for l in agg_logs:
         d = l.get("date", "")
         m = l.get("model", "unknown")
         inp = l.get("input", 0)
@@ -330,13 +453,17 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
 
         def _acc(store):
             entry = store
+            # 按「真实调用次数」累计，而不是按行数：
+            # rollup 里的一行代表当时被折算掉的 N 次调用，
+            # 一律 +1 会把历史压缩后的调用量算少。
+            n = _rec_count(l)
             entry["total"] += tot
             entry["input"] += inp
             entry["output"] += out
             entry["cacheRead"] += cr
             entry["cacheWrite"] += cw
             entry["uncachedInput"] += unc
-            entry["records"] += 1
+            entry["records"] += n
 
         _bucket(daily_map, d)
         _acc(daily_map[d])
@@ -373,6 +500,9 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
 
     # 按照前端 fve 与 uve 组件的严苛结构填充每个请求项
     # 显式按时间倒序（最新在前），避免上游 / 云端流水拼接顺序影响展示方向
+    #
+    # 只遍历**真实明细** logs，不含 rollup 聚合行：
+    # 聚合行没有 id/时间戳，列进「请求明细」会变成一堆 req-0 的假记录。
     logs_sorted = sorted(
         logs,
         key=lambda l: l.get("timestamp") or l.get("ts") or 0,
@@ -412,6 +542,7 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
     requests_list = requests_list[:200]
 
     # 消耗最高的调用：单次 API 调用按 Token 从高到低，标题用模型名、副标题用账号 + 请求号
+    # 同样只列真实明细（rollup 聚合行没有 id，列出来是假的）
     sessions_list = []
     for l in sorted(logs, key=lambda x: (x.get("total") or 0), reverse=True)[:50]:
         req_id = str(l.get("id", "req-0"))
@@ -432,7 +563,7 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         })
 
     total_tokens = total_input + total_output
-    records_count = len(logs)
+    records_count = sum(_rec_count(l) for l in agg_logs)
     
     summary = {
         "cacheHitRate": _hit_rate(total_cache_read, total_input),
@@ -475,13 +606,14 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             sub_cw += cw
 
             def _sub_acc(store):
+                n = _rec_count(l)
                 store["total"] += tot
                 store["input"] += inp
                 store["output"] += out
                 store["cacheRead"] += cr
                 store["cacheWrite"] += cw
                 store["uncachedInput"] += unc
-                store["records"] += 1
+                store["records"] += n
 
             _bucket(sub_daily, d)
             _sub_acc(sub_daily[d])
@@ -507,7 +639,12 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         p_list = sorted(list(sub_project.values()), key=lambda x: x["total"], reverse=True)
         dbm_list = {k: sorted(list(v.values()), key=lambda x: x["key"]) for k, v in sub_daily_by_model.items()}
 
-        sub_sorted = sorted(subset_logs, key=lambda x: x.get("timestamp") or x.get("ts") or 0, reverse=True)
+        # 请求明细/消耗排行只列**真实调用记录**，排除 rollup 聚合行
+        # （聚合行没有 id/时间戳，混进来会变成一堆 req-0 的假记录）
+        subset_detail = [l for l in subset_logs if l.get("id")]
+        if not subset_detail:
+            subset_detail = []
+        sub_sorted = sorted(subset_detail, key=lambda x: x.get("timestamp") or x.get("ts") or 0, reverse=True)
         req_list = []
         for l in sub_sorted[:200]:
             req_id = str(l.get("id", "req-0"))
@@ -537,7 +674,7 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             })
 
         sess_list = []
-        for l in sorted(subset_logs, key=lambda x: (x.get("total") or 0), reverse=True)[:50]:
+        for l in sorted(subset_detail, key=lambda x: (x.get("total") or 0), reverse=True)[:50]:
             req_id = str(l.get("id", "req-0"))
             acc_name = l.get("accountName") or l.get("accountId") or "未归因"
             cr, cw, unc = _cache_of(l)
@@ -561,7 +698,7 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
             "cacheWrite": sub_cw,
             "input": sub_inp,
             "output": sub_out,
-            "records": len(subset_logs),
+            "records": sum(_rec_count(l) for l in subset_logs),
             "total": sub_inp + sub_out,
             "uncachedInput": max(0, sub_inp - sub_cr)
         }
@@ -583,8 +720,8 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         }
 
     # 拆分国内版(cn)与国际版(ai)
-    cn_logs = [l for l in logs if l.get("variant") == "cn"]
-    ai_logs = [l for l in logs if l.get("variant") == "ai"]
+    cn_logs = [l for l in agg_logs if l.get("variant") == "cn"]
+    ai_logs = [l for l in agg_logs if l.get("variant") == "ai"]
     # 若某一边为空则兜底包含全部
     src_cn = aggregate_for_subset(cn_logs if cn_logs else logs, "workbuddy")
     src_ai = aggregate_for_subset(ai_logs if ai_logs else logs, "workbuddy-ai")

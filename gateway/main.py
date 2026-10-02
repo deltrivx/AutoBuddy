@@ -45,7 +45,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.25"
+VERSION_DEFAULT = "0.9.26"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -416,7 +416,11 @@ def lprint(channel: str, msg: str) -> None:
         _LOG_DEDUP_LAST[channel] = line
         _LOG_DEDUP_COUNT[channel] = 0
     if repeat > 0:
-        print(f"[{channel}] (上一条重复 {repeat} 次)", flush=True)
+        # 重复次数跟在**本行末尾**（×N），而不是另起一行 ——
+        # 另起一行会让日志里凭空多出一条与上一条几乎重复的记录，
+        # 反而又变成刷屏（用户 2026-10-02 要求：改成行尾 ×N 提示）。
+        print(f"{line} ×{repeat}", flush=True)
+        return
     print(line, flush=True)
 
 
@@ -1860,6 +1864,61 @@ def estimate_tokens_from_chars(char_count: int) -> int:
 def estimate_tokens(text: str) -> int:
     return estimate_tokens_from_chars(len(text or ""))
 
+
+def accumulate_delta(msg: Dict[str, Any], delta: Dict[str, Any]) -> None:
+    """把一个流式 delta 增量合并进 assistant 消息。
+
+    非流式路径要把上游的流式帧重组成一条完整 assistant message，
+    这里负责把 delta 里的各类字段累加起来。
+
+    为什么需要单独一个函数（而不是只挑 content）：
+    上游 tool-calling 是把工具调用**切片**下发的 —— 
+    ``tool_calls[0].function.arguments`` 每次只来几个字符，要拼起来才是完整 JSON。
+    所以必须按 index 定位同一个 tool_call，再把 arguments 追加到它名下，
+    而不是每次都 append 一条新的 tool_call（那样会变成一串残缺调用）。
+
+    ``role`` 只在第一帧出现，之后各帧都没有，直接覆盖即可。
+    """
+    if not isinstance(delta, dict):
+        return
+    # role 只在首帧携带，后续帧没有该键，取到就写、取不到不动
+    if delta.get("role"):
+        msg["role"] = delta["role"]
+    if delta.get("content") is not None:
+        msg["content"] = (msg.get("content") or "") + (delta["content"] or "")
+    for noise in ("reasoning_content", "reasoning"):
+        if delta.get(noise) is not None:
+            msg[noise] = (msg.get(noise) or "") + (delta[noise] or "")
+
+    new_calls = delta.get("tool_calls")
+    if not isinstance(new_calls, list) or not new_calls:
+        return
+
+    calls = msg.setdefault("tool_calls", [])
+    for piece in new_calls:
+        if not isinstance(piece, dict):
+            continue
+        # 没给 index 的按 0 处理（兼容不规范的 upstream）
+        idx = piece.get("index")
+        if not isinstance(idx, int):
+            idx = 0
+        while len(calls) <= idx:
+            calls.append({"id": "", "type": "function",
+                          "function": {"name": "", "arguments": ""}})
+        slot = calls[idx]
+        if piece.get("id"):
+            slot["id"] = piece["id"]
+        if piece.get("type"):
+            slot["type"] = piece["type"]
+        fn_delta = piece.get("function")
+        if isinstance(fn_delta, dict):
+            fn = slot.setdefault("function", {"name": "", "arguments": ""})
+            if fn_delta.get("name"):
+                fn["name"] = fn_delta["name"]
+            if fn_delta.get("arguments") is not None:
+                # 这里是**拼接**而非覆盖：arguments 是逐片来的 JSON 片段
+                fn["arguments"] = (fn.get("arguments") or "") + (fn_delta["arguments"] or "")
+
 @app.post("/v1/chat/completions")
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
@@ -2057,6 +2116,7 @@ async def chat_completions(request: Request):
         response_id = "chatcmpl-wb"
         finish_reason = "stop"
         usage = None
+        assistant_msg = {}
 
         try:
             async for line in res.aiter_lines():
@@ -2076,6 +2136,12 @@ async def chat_completions(request: Request):
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
+                        # 整块 delta 都累加进 assistant_msg —— 不挑字段。
+                        # 以前这里只挑 content，于是 tool_calls / reasoning_content
+                        # 被静默丢掉，客户端拿到 finish_reason=tool_calls 却没有
+                        # tool_calls 数组（用户 2026-10-02 反馈）。工具调用链路
+                        # 一旦坏掉，Agent 侧表现为「模型说要调工具、却没有任何调用」。
+                        accumulate_delta(assistant_msg, delta)
                         if "content" in delta and delta["content"]:
                             collected_content += delta["content"]
                         if choices[0].get("finish_reason"):
@@ -2103,6 +2169,16 @@ async def chat_completions(request: Request):
         input_tokens = usage["prompt"] if usage else input_tokens
         output_tokens = usage["completion"] if usage else estimate_tokens(collected_content)
 
+        # 先把 voucher 的 assistant 消息补齐：
+        # role 必须有；content 优先用累加出来的整段（等价且更全）；
+        # tool_calls / reasoning_content 等其余字段，上游给了就原样带上 ——
+        # 这才是「透传」。以前只塞 content，等于把工具调用那半截消息扔了。
+        final_msg = dict(assistant_msg) if isinstance(assistant_msg, dict) else {}
+        final_msg["role"] = final_msg.get("role") or "assistant"
+        if final_msg.get("content") is None:
+            final_msg["content"] = collected_content
+        final_msg.pop("index", None)
+
         result_payload = {
             "id": response_id,
             "object": "chat.completion",
@@ -2111,10 +2187,7 @@ async def chat_completions(request: Request):
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": collected_content
-                    },
+                    "message": final_msg,
                     "finish_reason": finish_reason
                 }
             ],
@@ -2698,7 +2771,10 @@ def _flush_access_dedup(now: float = 0.0) -> None:
                 _ACCESS_DEDUP_COUNT.pop(k, None)
         _ACCESS_DEDUP_NEXT_FLUSH = now + _ACCESS_DEDUP_FLUSH_SEC
     for k, c in pending:
-        print(f"INFO:     (重复 {c} 次) {k}", flush=True)
+        # 同一行末尾追加 ×N：period 汇报是补打被打断的那条，
+        # 行首留 UVICORN 风格的 INFO 前缀，重复次数放行尾，
+        # 不额外制造一条重复记录（用户 2026-10-02 要求）。
+        print(f"INFO:     {k} ×{c}", flush=True)
 
 
 def _normalize_access_msg(msg: str) -> str:
