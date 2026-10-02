@@ -178,6 +178,65 @@ else:
 check("credits/stats 会下发 officialUsageFreshness",
       'data["officialUsageFreshness"]' in SRC)
 
+print("\n[5] 明细按时间保留，而不是按条数（sub2api：别用滑动窗口）")
+
+# 主维度必须是时间：行数上限会让「能回溯多久」随调用量浮动，
+# 忙的时候只能看两天，闲的时候能看一个月 —— 跨度不确定。
+token_tracker.DETAIL_MAX_DAYS = 7
+today = datetime.now().strftime("%Y-%m-%d")
+old = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+recent = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+
+logs = [
+    {"id": "old-1", "date": old, "input": 1, "output": 1},
+    {"id": "recent-1", "date": recent, "input": 2, "output": 2},
+    {"id": "today-1", "date": today, "input": 3, "output": 3},
+    {"id": "nodate", "input": 4, "output": 4},  # 无日期
+]
+keep, expired = token_tracker._split_expired(logs)
+keep_ids = sorted(x["id"] for x in keep)
+expired_ids = sorted(x["id"] for x in expired)
+
+check("超期明细被划为待折算", expired_ids == ["old-1"], f"got {expired_ids}")
+check("近期与今天的明细保留",
+      keep_ids == ["nodate", "recent-1", "today-1"], f"got {keep_ids}")
+check("无日期字段的记录一律保留（不误判成过期删掉）",
+      "nodate" in keep_ids, f"got {keep_ids}")
+
+# 关键：一批只有 3 条，远不到行数上限，仍然要按时间裁剪 ——
+# 说明裁剪依据是时间而不是条数
+token_tracker.MAX_DETAIL = 10000
+keep2, expired2 = token_tracker._split_expired(logs)
+check("条数远未达上限时，仍按时间裁剪（证明主维度是时间）",
+      sorted(x["id"] for x in expired2) == ["old-1"],
+      f"got {[x['id'] for x in expired2]}")
+
+print("\n[6] 队列撑不住时不得静默丢弃（sub2api：永不静默丢弃）")
+
+SRC_T = (ROOT / "gateway" / "token_tracker.py").read_text(encoding="utf-8")
+check("不再出现静默丢弃的 dropping 分支",
+      "dropping" not in SRC_T, "源码里仍有 dropping 字样")
+check("撑不住时降级为折算进聚合（保住汇总数字）",
+      "folded" in SRC_T and "fold_into_rollup(batch)" in SRC_T,
+      "找不到 fold 兜底")
+check("说明里点明 totals preserved（明细可丢、总数不能少）",
+      "totals preserved" in SRC_T)
+
+# 行为验证：真的会被折算进 rollup，而不是消失
+token_tracker.ROLLUP_MAX_DAYS = 30
+token_tracker._rollup_path().write_text("[]", encoding="utf-8")
+token_tracker.fold_into_rollup([
+    {"id": "x1", "date": today, "model": "m1", "accountId": "a1",
+     "variant": "cn", "accountName": "acct", "input": 10, "output": 5,
+     "cacheRead": 0, "cacheWrite": 0, "uncachedInput": 10,
+     "duration": 1.0},
+])
+rows = token_tracker._load_rollup()
+saved = [r for r in rows if r.get("date") == today]
+check("折算后 token 总数被保住",
+      bool(saved) and saved[0]["input"] == 10 and saved[0]["output"] == 5,
+      f"got {saved}")
+
 shutil.rmtree(tmp, ignore_errors=True)
 
 print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))

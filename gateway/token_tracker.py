@@ -29,8 +29,18 @@ from typing import Dict, Any, List, Optional
 
 TRACKER_FILE = Path("/data/.autobuddy/token_stats_logs.json")
 
-# 明细窗口上限。它同时决定「请求明细」页能回溯多久，
-# 以及每次调用要重写多大的文件 —— 放大它等于放大每请求的 I/O。
+# 明细保留策略。
+#
+# sub2api 的关键提醒：**别用滑动窗口**。
+# 「保留最近 N 条」本质是行数上限 —— 请求一密，历史跨度就被数据量绑架
+# （本网关实测每天约 2000 条调用，3000 条的上限不到两天就写满），
+# 这正是「词元统计只剩两天」的根因。
+#
+# 所以主维度改成**时间**：默认保留 7 天，历史跨度与调用量彻底解耦。
+# 行数上限降级为文件体积的兜底护栏，只在时间维度失效时才起作用。
+DETAIL_MAX_DAYS = int(os.getenv("AB_TOKEN_DETAIL_DAYS", "7") or 7)
+# 护栏：单个明细文件的体积上限（条数）。防的是某天调用量异常暴涨
+# 把文件撑到不可控 —— 正常情况由上面的时间维度先兜住。
 MAX_DETAIL = int(os.getenv("AB_TOKEN_DETAIL_MAX", "3000") or 3000)
 
 # ---------------------------------------------------------------------------
@@ -94,6 +104,29 @@ def _prune_rollup(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [r for r in rows if str(r.get("date") or "") >= cutoff]
 
 
+def _split_expired(logs: List[Dict[str, Any]]) -> tuple:
+    """按时间维度把明细拆成 (保留, 超期) 两组。
+
+    为什么主维度必须是时间而不是条数：
+    「保留最近 N 条」会让历史跨度随调用量浮动 —— 忙的时候只能看两天，
+    闲的时候能看一个月。改成按天保留后，**能回溯多久是确定的**。
+
+    没有日期字段的记录一律保留：宁可多留，也不能把数据误判成过期删掉。
+    """
+    if DETAIL_MAX_DAYS <= 0:
+        return logs, []
+    cutoff = (datetime.now() - timedelta(days=DETAIL_MAX_DAYS)).strftime("%Y-%m-%d")
+    keep: List[Dict[str, Any]] = []
+    expired: List[Dict[str, Any]] = []
+    for rec in logs:
+        d = str(rec.get("date") or "")
+        if d and d < cutoff:
+            expired.append(rec)
+        else:
+            keep.append(rec)
+    return keep, expired
+
+
 def flush_pending(force: bool = False) -> int:
     """把内存里攒的用量记录写入明细文件，返回本次落盘条数。
 
@@ -127,18 +160,36 @@ def flush_pending(force: bool = False) -> int:
                 # 文件损坏（上次写一半被杀）宁可丢明细，也不能让统计页挂掉
                 logs = []
         logs.extend(batch)
+        # 先按**时间**裁剪：超期的明细折算进聚合，绝不直接丢。
+        logs, expired = _split_expired(logs)
+        if expired:
+            fold_into_rollup(expired)
+        # 再按行数护栏兜底（只在时间维度不够用时才会触发）
         if len(logs) > MAX_DETAIL:
-            # 滑出窗口的记录不能直接丢 —— 先折算进历史聚合再截断
             fold_into_rollup(logs[:-MAX_DETAIL])
             logs = logs[-MAX_DETAIL:]
         _atomic_write_json(TRACKER_FILE, logs)
     except Exception as e:
         print(f"Error flushing token usage: {e}")
+        # 落盘失败时优先回灌队列；队列真的撑不住了，也不能**静默丢弃** ——
+        # sub2api 的原则是「永不静默丢弃」（队列满时提交方内联执行，
+        # 关停窗口的丢弃也会降级同步，保证计费不丢）。
+        #
+        # 这里退而求其次：把这一批折算进聚合再丢弃明细。
+        # 明细没了，但 token 总数、调用次数、按天/按模型/按账号的分布
+        # 全部保住 —— 统计页的数字仍然正确，只是查不到单次调用的详情。
+        # 「悄悄少数据」和「降级保汇总」是两回事，后者才是可接受的兜底。
         with _PENDING_LOCK:
             if len(_PENDING) < _PENDING_MAX_BACKLOG:
                 _PENDING[:0] = batch
-            else:
-                print(f"token usage backlog too large, dropping {len(batch)}")
+                return 0
+        try:
+            fold_into_rollup(batch)
+            print(f"token usage backlog full: folded {len(batch)} "
+                  f"records into rollup (detail lost, totals preserved)")
+        except Exception as fold_err:
+            print(f"token usage fold failed: {fold_err}; "
+                  f"{len(batch)} records dropped")
         return 0
 
     _LAST_FLUSH = time.time()
