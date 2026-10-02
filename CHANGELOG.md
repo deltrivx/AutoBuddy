@@ -31,6 +31,103 @@
 
 ---
 
+## [v0.9.27] - 2026-10-02
+
+<!-- summary: 参照 sub2api/CLIProxyAPI 重构统计存储（攒批+原子写+分级保留）并让官方数据陈旧可见 -->
+
+### 变更
+
+用两个同类中转项目的成熟做法（sub2api 43k★、CLIProxyAPI 53.7k★）
+对照重构了用量统计的存储与更新链路。动机来自 v0.9.26 暴露的问题：
+统计只能看两天，而每请求都在重写 1.28MB 的明细文件。
+
+**1. 写入改为攒批，不再每请求重写整个文件**
+
+参照 sub2api `usage_log_repo_insert.go`：
+
+```go
+usageLogCreateBatchMaxSize  = 64
+usageLogCreateBatchWindow   = 3 * time.Millisecond
+usageLogBestEffortBatchMaxSize  = 256
+usageLogBestEffortBatchWindow   = 20 * time.Millisecond
+```
+
+原先 `record_token_usage()` 每次调用都要「读整个 JSON → append → 写整个
+JSON」，窗口写满时是 1.28MB 一轮 I/O，请求一密就把磁盘打满。
+
+现在只入内存队列，满 32 条或 1 秒才真正落盘一次
+（`AB_TOKEN_PENDING_MAX` / `AB_TOKEN_PENDING_SEC` 可调）。
+
+两个细节必须配套，否则攒批会引入新问题：
+
+- **读侧强制 flush**：`get_aggregated_token_stats()` 读取前先把队列落盘。
+  攒批是为了省写入，但「刚发生的调用在统计页看不到」不能接受。
+- **后台线程驱动时间窗口**：sub2api 的窗口是后台 goroutine 的 ticker，
+  不依赖新请求到来。这里同样必须有后台线程 —— 否则最后一批不足 32 条
+  的记录会一直留在内存，进程被 SIGKILL（容器重建很常见，atexit 不执行）
+  就彻底丢了。已补 daemon 线程按窗口周期落盘，并保留 atexit 兜底。
+
+**2. 原子写，不再产生半截 JSON**
+
+原先 `open(w)` 直接写，写到一半进程被杀会留下半截文件，
+下次读取整个统计页就炸。改成写临时文件 + `os.replace()`（同分区内原子）。
+明细与 rollup 两处都改。
+
+**3. 聚合行分级保留，不再无限膨胀**
+
+参照 sub2api 的分档保留（1m 明细 3 天、1d 汇总 90 天等），
+越粗的档保留越久 ——— 既能回溯长期趋势，又不会让文件无限增长。
+
+新增 `_prune_rollup()`，默认保留 90 天（`AB_TOKEN_ROLLUP_DAYS` 可调），
+在每次折算时顺带裁剪。
+
+### 修复
+
+- **官方用量数据过期却毫无提示**（沿用 v0.9.26 调查结论）。
+
+  参照 CLIProxyAPI 的做法：它对所有缓存显式设 TTL（如
+  `AntigravityReasoningReplayCacheTTL = 1h`），3h ticker 自动刷新、
+  30s 最小间隔防抖 —— **陈旧是可知的，不是默认透明的**。
+
+  本项目的 `officialUsage` 由官方闭源引擎 `autobuddy-engine` 采集，
+  实测直连 `:57890` 调 `credits/stats` 也不触发重写（POST 返回 405、
+  文件 mtime 不变），该环节在闭源二进制内，网关侧**无法修复**。
+
+  既然修不了上游，就必须把陈旧如实暴露 —— 过去页面显示
+  「最近更新 9-24」却不说原因，用户只能以为是网关坏了。
+
+  新增 `_official_usage_freshness()`，并在 `/api/credits/stats` 下发
+  `officialUsageFreshness`：
+
+  ```json
+  {"collectedAt": 1790179275670, "rangeEnd": "2026-09-24",
+   "ageDays": 8.6, "stale": true,
+   "reason": "官方用量数据由闭源底层引擎采集，当前未再刷新：..."}
+  ```
+
+  默认超过 2 天标为陈旧（`AB_OFFICIAL_USAGE_STALE_DAYS` 可调）。
+  今日消耗已由 `_reconcile_official_usage` 用实时数据校准，不受影响。
+
+### 测试
+
+新增 `_test_token_storage.py` 16 项，锁定四条契约：
+
+```
+攒批：不足一批也会在时间窗口内自动落盘（后台线程驱动）
+原子写：不留 .tmp 临时文件、始终是完整 JSON
+分级保留：超期聚合行被裁剪，近期保留且能继续累加
+陈旧可见：过期给 stale/reason，缺失/无时间戳也各有说明，不静默
+```
+
+已有两个测试按攒批后的真实读取路径补了 `flush_pending(force=True)`
+（原先它们直接读文件，攒批后读不到 —— 这正是「读侧必须 flush」的由来）。
+
+```
+全量 18 个测试文件               ✅ 全绿
+五模块 AST                       ✅ 通过
+注入 JS node --check             ✅ 通过
+```
+
 ## [v0.9.26] - 2026-10-02
 
 <!-- summary: 修复工具调用透传丢失 tool_calls、日志重复计数改为行尾 ×N、词元统计只剩两天 -->
@@ -2326,7 +2423,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.26...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.27...HEAD
+[v0.9.27]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.26...v0.9.27
 [v0.9.26]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.25...v0.9.26
 [v0.9.25]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.24...v0.9.25
 [v0.9.24]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.23...v0.9.24

@@ -114,6 +114,11 @@ token_tracker.record_token_usage(model="hy3", input_tokens=1000, output_tokens=5
                                  request_id="r-hit", cache_read=800, cache_write=0)
 token_tracker.record_token_usage(model="hy3", input_tokens=1000, output_tokens=50,
                                  request_id="r-plain")
+# 落盘是攒批的（参考 sub2api 的批量写入），读文件前必须先 flush，
+# 否则读到的还是上一批 —— 与生产环境读取路径（get_aggregated_token_stats
+# 内部会先 flush）保持一致。
+token_tracker.flush_pending(force=True)
+
 # 升级前的老记录：连 cacheRead 字段都没有
 logs = json.loads(token_tracker.TRACKER_FILE.read_text(encoding="utf-8"))
 logs.append({"id": "r-legacy", "time": "2026-01-01 00:00:00", "ts": 1,
@@ -170,6 +175,7 @@ check("没有记录时输入为 0", empty["input"] == 0 and empty["cacheRead"] =
 bad = token_tracker.get_aggregated_token_stats  # noqa: F841
 token_tracker.record_token_usage(model="hy3", input_tokens=100, output_tokens=1,
                                  request_id="r-bad", cache_read=9999)
+token_tracker.flush_pending(force=True)
 fresh = json.loads(token_tracker.TRACKER_FILE.read_text(encoding="utf-8"))
 check("命中数被夹到不超过输入", fresh[0]["cacheRead"] == 100, f"got {fresh[0]}")
 check("未命中数不为负", fresh[0]["uncachedInput"] == 0, f"got {fresh[0]}")

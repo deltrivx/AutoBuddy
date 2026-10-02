@@ -93,6 +93,8 @@ for i, (model, inp, out) in enumerate([("m1", 400, 40), ("m2", 500, 50), ("m1", 
 
 print("[1] 滑出窗口的记录必须折算进历史聚合，而不是被丢掉")
 
+# 写入是攒批的，读文件前先 flush（与生产的读取路径一致）
+token_tracker.flush_pending(force=True)
 detail = json.loads(token_tracker.TRACKER_FILE.read_text(encoding="utf-8"))
 check("明细窗口被限在上限内", len(detail) == 3, f"got {len(detail)}")
 check("明细保留的是最新 N 条",

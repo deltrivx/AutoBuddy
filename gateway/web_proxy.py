@@ -5395,6 +5395,65 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 官方用量数据的「陈旧度」标记
+#
+# 参考 CLIProxyAPI（53.7k stars）：它对所有缓存都显式设 TTL
+# （如 AntigravityReasoningReplayCacheTTL = 1h），并用 3h ticker 自动刷新、
+# 30s 最小间隔防抖。**陈旧是可知的，不是默认透明的。**
+#
+# 这里的情况更棘手：officialUsage 的采集产物 official_usage_cache.json
+# 由官方闭源引擎 autobuddy-engine 写入，实测直连 :57890 调 credits/stats
+# 也不触发重写（POST 返回 405、文件 mtime 纹丝不动）—— 那一段在闭源二进制
+# 里，网关侧无法修复。
+#
+# 既然修不了上游，**就必须把陈旧如实暴露出来**：
+# 过去页面显示「最近更新 9-24」却不说为什么，用户只能以为是网关坏了。
+# 现在把采集时间、数据截止日、陈旧天数与原因一起下发，
+# 让「数据没刷新」成为可见状态，而不是静默的假象。
+# ---------------------------------------------------------------------------
+
+# 超过这个天数就标记为陈旧（对齐 CLIProxyAPI 的「3 小时就该刷新」的严格度，
+# 但这是每日级用量数据，按天衡量更合理）
+OFFICIAL_USAGE_STALE_DAYS = int(os.getenv("AB_OFFICIAL_USAGE_STALE_DAYS", "2") or 2)
+
+
+def _official_usage_freshness(data: dict) -> Dict[str, Any]:
+    """从 officialUsage 里算出采集时间与陈旧程度。
+
+    只读取、不修改业务数据 —— 它给的是「这份数据有多老」的元信息，
+    与 usageToday 这类口径校正是两回事，不能互相污染。
+    """
+    ou = data.get("officialUsage") if isinstance(data.get("officialUsage"), dict) else {}
+    out: Dict[str, Any] = {
+        "collectedAt": ou.get("collectedAt"),
+        "rangeEnd": ou.get("rangeEnd"),
+        "ageDays": None,
+        "stale": False,
+        "reason": None,
+    }
+    ca = ou.get("collectedAt")
+    if isinstance(ca, (int, float)) and ca > 0:
+        # 上游给的是毫秒时间戳
+        collected = ca / 1000.0 if ca > 1e11 else float(ca)
+        age = max(0.0, (time.time() - collected) / 86400.0)
+        out["ageDays"] = round(age, 2)
+        out["stale"] = age >= OFFICIAL_USAGE_STALE_DAYS
+        if out["stale"]:
+            out["reason"] = (
+                "官方用量数据由闭源底层引擎采集，当前未再刷新："
+                "最近一次采集距今约 %.1f 天，数据截止 %s。"
+                "该采集环节在官方二进制内部，网关侧无法触发重写；"
+                "本页的今日消耗已改用实时数据校准，不受此影响。"
+                % (age, ou.get("rangeEnd") or "未知")
+            )
+    elif not ou:
+        out["reason"] = "官方用量数据缺失（闭源底层未返回 officialUsage）。"
+    else:
+        out["reason"] = "官方用量数据未携带采集时间，无法判断新鲜度。"
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 签到状态结果缓存（积分统计页/每日任务页共用的「今日签到」徽章）
 #
 # 需求来源（用户 2026-09-26）：刷新页面后账号的飞机旅行图标很快显示，
@@ -5474,6 +5533,16 @@ async def credits_stats_proxy(request: Request):
             data["summary"]["usageToday"] = round(usage_today, 4)
 
     _reconcile_official_usage(data, valid_account_ids)
+
+    # 把「这份官方数据有多老」一并下发。
+    # 采集环节在闭源引擎内、网关修不了，那就别让它静默过期 ——
+    # 页面拿到 stale/reason 就能如实告诉用户，而不是显示一个
+    # 谁也解释不了的「最近更新 9-24」。
+    try:
+        data["officialUsageFreshness"] = _official_usage_freshness(data)
+    except Exception:
+        # 元信息算不出来也不能连累主数据
+        pass
 
     # 口径兜底的产物必须自己校验一遍：反代层发的 Response 不像 FastAPI 路由那样
     # 有框架兜底，一旦这里抛异常就会变成非 JSON 响应，前端只会拿到一句

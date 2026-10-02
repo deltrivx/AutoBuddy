@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.26](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.26)
+**当前稳定版：** [v0.9.27](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.27)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.27](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.27) | 2026-10-02 | 参照 sub2api/CLIProxyAPI 重构统计存储（攒批+原子写+分级保留）并让官方数据陈旧可见 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.27.md) |
 | [v0.9.26](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.26) | 2026-10-02 | 修复工具调用透传丢失 tool_calls、日志重复计数改为行尾 ×N、词元统计只剩两天 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.26.md) |
 | [v0.9.25](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.25) | 2026-09-30 | 一致性自检页补上「额度用尽」的显示档位，不再与「未检测」混淆 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.25.md) |
 | [v0.9.24](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.24) | 2026-09-30 | 额度耗尽的账号由巡检自动停用，不再只提醒用户手动删除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.24.md) |
@@ -119,7 +120,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.26    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.27    # 锁定版本
 ```
 
 ## 部署产物

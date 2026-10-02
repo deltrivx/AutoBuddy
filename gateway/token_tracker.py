@@ -16,11 +16,14 @@
 ``extract_usage()``。
 """
 
+import atexit
 import json
 import os
+import tempfile
+import threading
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -29,6 +32,153 @@ TRACKER_FILE = Path("/data/.autobuddy/token_stats_logs.json")
 # 明细窗口上限。它同时决定「请求明细」页能回溯多久，
 # 以及每次调用要重写多大的文件 —— 放大它等于放大每请求的 I/O。
 MAX_DETAIL = int(os.getenv("AB_TOKEN_DETAIL_MAX", "3000") or 3000)
+
+# ---------------------------------------------------------------------------
+# 批量落盘
+#
+# 参考 sub2api（43k stars）的做法：它的用量写入不是逐条同步落库，而是
+# 攒批 —— 满 64 条或 3ms 窗口到了才真正写一次（best-effort 通道是
+# 256 条 / 20ms）。
+#
+# 这里同理：每次请求都重写整个明细文件，等于每请求一次 1.28MB 的
+# 读+写（实测窗口写满时 3000 条 ≈ 1.28MB），请求一密就把 I/O 打满。
+# 改成内存攒批 + 到量/到点才落盘，每请求的摊还成本就降下来了。
+# ---------------------------------------------------------------------------
+PENDING_FLUSH_MAX = int(os.getenv("AB_TOKEN_PENDING_MAX", "32") or 32)
+PENDING_FLUSH_SEC = float(os.getenv("AB_TOKEN_PENDING_SEC", "1.0") or 1.0)
+# 落盘失败时回灌队列的上限，避免磁盘满时内存无界增长
+_PENDING_MAX_BACKLOG = PENDING_FLUSH_MAX * 8
+
+# 聚合行保留天数（分级保留，对齐 sub2api 的分档思路，只是档位少一些）
+ROLLUP_MAX_DAYS = int(os.getenv("AB_TOKEN_ROLLUP_DAYS", "90") or 90)
+
+_PENDING_LOCK = threading.Lock()
+_PENDING: List[Dict[str, Any]] = []
+_LAST_FLUSH = 0.0
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """原子写 JSON：先写临时文件再 os.replace。
+
+    直接 open(w) 写到一半进程被杀（容器重建/重启很常见），会留下半截
+    JSON —— 下次读取整个统计页就炸了。replace 在同一文件系统内是原子操作，
+    要么看到旧文件、要么看到新文件，不会看到写了一半的。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent),
+                               prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def _prune_rollup(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按天裁剪聚合行，只保留 ROLLUP_MAX_DAYS 天内的数据。
+
+    sub2api 的做法是分级保留（1m 明细 3 天、5m/1h/12h/1d 汇总 7/30/45/90 天）。
+    这里档位少一些，但原则一致：**越粗的档保留越久**，
+    这样既能回溯长期趋势，又不会让聚合文件无限膨胀。
+    """
+    if ROLLUP_MAX_DAYS <= 0:
+        return rows
+    cutoff = (datetime.now() - timedelta(days=ROLLUP_MAX_DAYS)).strftime("%Y-%m-%d")
+    return [r for r in rows if str(r.get("date") or "") >= cutoff]
+
+
+def flush_pending(force: bool = False) -> int:
+    """把内存里攒的用量记录写入明细文件，返回本次落盘条数。
+
+    平时由 record_token_usage 在「攒够一批或到点」时自动调用；
+    进程退出前由 atexit 强制兜底一次，避免最后一批丢掉。
+
+    落盘失败时把这一批**放回队列**（而不是静默丢弃）——
+    统计宁可晚一点，也不能悄悄少数据。但队列有上限，
+    磁盘真满了也不可能无限回灌。
+    """
+    global _LAST_FLUSH
+    with _PENDING_LOCK:
+        if not _PENDING:
+            return 0
+        if (not force
+                and len(_PENDING) < PENDING_FLUSH_MAX
+                and (time.time() - _LAST_FLUSH) < PENDING_FLUSH_SEC):
+            return 0
+        batch = list(_PENDING)
+        _PENDING.clear()
+
+    try:
+        logs: List[Dict[str, Any]] = []
+        if TRACKER_FILE.exists():
+            try:
+                with open(TRACKER_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, list):
+                    logs = loaded
+            except Exception:
+                # 文件损坏（上次写一半被杀）宁可丢明细，也不能让统计页挂掉
+                logs = []
+        logs.extend(batch)
+        if len(logs) > MAX_DETAIL:
+            # 滑出窗口的记录不能直接丢 —— 先折算进历史聚合再截断
+            fold_into_rollup(logs[:-MAX_DETAIL])
+            logs = logs[-MAX_DETAIL:]
+        _atomic_write_json(TRACKER_FILE, logs)
+    except Exception as e:
+        print(f"Error flushing token usage: {e}")
+        with _PENDING_LOCK:
+            if len(_PENDING) < _PENDING_MAX_BACKLOG:
+                _PENDING[:0] = batch
+            else:
+                print(f"token usage backlog too large, dropping {len(batch)}")
+        return 0
+
+    _LAST_FLUSH = time.time()
+    return len(batch)
+
+
+# 进程退出（容器 stop / 重建）前把最后一批落盘，别让末尾几秒的数据凭空消失
+atexit.register(lambda: flush_pending(force=True))
+
+
+_flush_thread_started = False
+_flush_thread_lock = threading.Lock()
+
+
+def _ensure_flush_thread() -> None:
+    """启动后台落盘线程（进程内只起一次）。
+
+    sub2api 的批量写入由「条数或时间窗口」两者先到触发，而**时间窗口是后台
+    goroutine 自己的 ticker** —— 不依赖新请求到来。
+
+    这里同样必须有后台线程：否则最后一批不足 PENDING_FLUSH_MAX 的记录会一直
+    留在内存里，要等到下次统计页读取才落盘；万一进程被强杀（容器 SIGKILL
+    很常见，atexit 根本不会执行），这批数据就彻底丢了。
+    """
+    global _flush_thread_started
+    with _flush_thread_lock:
+        if _flush_thread_started:
+            return
+        _flush_thread_started = True
+
+    def _loop() -> None:
+        while True:
+            time.sleep(max(0.5, PENDING_FLUSH_SEC))
+            try:
+                flush_pending(force=True)
+            except Exception:
+                pass
+
+    threading.Thread(target=_loop, name="token-usage-flusher",
+                     daemon=True).start()
 
 
 def _rollup_path() -> Path:
@@ -123,8 +273,8 @@ def fold_into_rollup(evicted: List[Dict[str, Any]]) -> None:
             seen.add(k)
             deduped.append(r)
 
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(deduped, f, ensure_ascii=False)
+        # 先按保留策略裁剪，再原子落盘（防写一半被杀留下半截文件）
+        _atomic_write_json(path, _prune_rollup(deduped))
     except Exception as e:
         print(f"Error folding token history: {e}")
 
@@ -268,15 +418,6 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
     这样前端 ``cacheRead / input`` 才是真实的命中比例。
     """
     try:
-        TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        logs = []
-        if TRACKER_FILE.exists():
-            try:
-                with open(TRACKER_FILE, "r", encoding="utf-8") as f:
-                    logs = json.load(f)
-            except Exception:
-                logs = []
-                
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -308,15 +449,15 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
             "source": "gateway"
         }
         
-        logs.append(entry)
-        if len(logs) > MAX_DETAIL:
-            # 滑出窗口的记录不能直接丢 —— 先折算进历史聚合再截断。
-            # 直接丢正是「词元统计只剩最近两天」的根因（用户 2026-10-02 反馈）。
-            fold_into_rollup(logs[:-MAX_DETAIL])
-            logs = logs[-MAX_DETAIL:]
-            
-        with open(TRACKER_FILE, "w", encoding="utf-8") as f:
-            json.dump(logs, f, ensure_ascii=False)
+        # 只入队，不在这里重写文件 —— 真正的落盘交给 flush_pending 攒批做，
+        # 避免每请求一次整文件读写（详见 flush_pending 的说明）。
+        with _PENDING_LOCK:
+            _PENDING.append(entry)
+            due = (len(_PENDING) >= PENDING_FLUSH_MAX
+                   or (time.time() - _LAST_FLUSH) >= PENDING_FLUSH_SEC)
+        if due:
+            flush_pending()
+        _ensure_flush_thread()
     except Exception as e:
         print(f"Error recording token usage: {e}")
 
@@ -338,6 +479,13 @@ def parse_time_to_ts(time_str: str) -> int:
         return int(time.time() * 1000)
 
 def get_aggregated_token_stats() -> Dict[str, Any]:
+    # 读取前先把内存里攒的记录落盘 —— 攒批是为了省写入 I/O，
+    # 但「刚发生的调用在统计页看不到」是不能接受的。
+    # 写侧攒批、读侧确保刷新，两端配合，既不费 I/O 又不丢实时性。
+    try:
+        flush_pending(force=True)
+    except Exception:
+        pass
     logs = []
     if TRACKER_FILE.exists():
         try:
