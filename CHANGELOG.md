@@ -31,6 +31,96 @@
 
 ---
 
+## [v0.9.29] - 2026-10-02
+
+<!-- summary: 用量明细迁到 SQLite（增量幂等写入 + 索引），聚合逻辑与输出契约一行未改 -->
+
+### 变更
+
+- **用量明细存储从单个 JSON 文件迁到 SQLite**（用户 2026-10-02 授权）。
+
+  原实现每次记录都要「读整个文件 → append → 写整个文件」，
+  窗口写满 3000 条时约 **1.28MB 一轮 I/O**，请求一密就把磁盘打满。
+  v0.9.27 的攒批只降低了**频率**，单次落盘仍是整文件重写，成本没变。
+
+  参考 sub2api（43k★）：明细落到数据库表，写入是**增量 INSERT**
+  且幂等（`ON CONFLICT ... DO NOTHING`），并建复合索引服务聚合查询。
+  现新增 `gateway/token_store.py`，写入改为 `INSERT OR IGNORE`
+  （语义等价），并按 sub2api 的思路建了复合索引：
+
+  ```
+  idx_usage_logs_date          (date)
+  idx_usage_logs_model_date    (model, date)
+  idx_usage_logs_account_date  (account_id, date)
+  idx_usage_logs_variant_date  (variant, date)
+  idx_usage_logs_ts            (ts DESC)
+  ```
+
+  **关键取舍：只换存储，不改聚合。** 聚合逻辑与输出契约
+  （`daily` / `models` / `projects` / `dailyByModel` / `requests` /
+  `sessions` / `summary`）**一行未改**，因此前端零改动、现有回归测试
+  继续验证语义。真正的瓶颈在写入，换成 INSERT 后即解决。
+
+  数据库用 WAL 模式：统计页读取不被写入阻塞，写入也不被读取阻塞。
+
+### 修复（迁移过程中发现并修掉的三处真实缺陷）
+
+- **迁移会把超出保留期的旧记录两头落空**。
+
+  旧 JSON 里必然混有超期记录（线上 3000 条里就有）。若一股脑
+  `INSERT` 进明细表，读取时会被时间窗口排除，而它们又没被折算进
+  聚合 —— **明细里没有、聚合里也没有，等于静默丢数据**。
+  现按保留期分流：新鲜的进明细，超期的直接折算进聚合。
+
+- **兜底折算写错了后端**。
+
+  队列撑不住时的降级路径固定写 JSON 聚合文件；SQLite 模式下读取侧
+  从 SQLite 读，这批数据落到没人看的地方 —— 同样是静默丢失。
+  现按 `TOKEN_STORE` 分发到当前后端。
+
+- **保留策略每次落盘都扫全表**。
+
+  明细超期是以**天**为单位的，每秒扫一次纯属浪费。改为按
+  `_RETENTION_CHECK_SEC`（默认 3600s）节流；不能只在启动时跑一次 ——
+  长跑进程跨过午夜后日期就变了，必须周期重判。
+
+- **硬导入会在容器里直接崩**（自查发现）。
+
+  `gateway/` 没有 `__init__.py`，且容器内以**顶层模块**方式运行
+  （`sys.path` 含 `/app/gateway`）。写成硬 `from gateway import token_store`
+  会 `ModuleNotFoundError`，网关一启动就挂。现改为两种模式都试，
+  与 `main.py` / `web_proxy.py` 的既有约定一致。
+
+### 兼容与回滚
+
+- 默认 `sqlite`；设 `AB_TOKEN_STORE=json` 即回到旧行为（保留可回滚）。
+- 首次读取时自动把旧 JSON 明细与聚合迁入 SQLite，**幂等**
+  （`meta` 标记 + `INSERT OR IGNORE`），线上历史数据不丢。
+- 明细默认保留 7 天（`AB_TOKEN_DETAIL_DAYS`），聚合 90 天
+  （`AB_TOKEN_ROLLUP_DAYS`），与 v0.9.28 语义一致。
+
+### 测试
+
+新增 `_test_token_store_sqlite.py` 26 项，覆盖 SQLite 后端契约：
+
+```
+[1] 幂等写入：同 request_id 重复写不重复计数（对齐 sub2api）
+[2] 超期明细折算进聚合，input/output/records 全部保住
+[3] 迁移：旧 JSON 超期记录不两头落空，重复迁移不翻倍
+[4] 输出契约与 JSON 后端一致（daily/models/projects/... 结构不变）
+[5] 默认后端必须是 sqlite，且保留 AB_TOKEN_STORE 回滚开关
+```
+
+三个既有测试改为显式钉住 `TOKEN_STORE = "json"` —— 它们断言的是
+JSON 文件行为（原子写、`.tmp` 残留、直接读 `TRACKER_FILE`），
+钉住后端既保留回归覆盖，也顺带守住了可回滚路径。
+
+```
+全量 19 个测试文件               ✅ 全绿
+五模块 AST                       ✅ 通过
+两种导入模式（顶层 / 包）        ✅ 均通过
+```
+
 ## [v0.9.28] - 2026-10-02
 
 <!-- summary: 补上 v0.9.27 遗留的两处缺口——队列撑不住时不再静默丢弃、明细改为按时间保留 -->
@@ -2479,7 +2569,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.28...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.29...HEAD
+[v0.9.29]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.28...v0.9.29
 [v0.9.28]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.27...v0.9.28
 [v0.9.27]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.26...v0.9.27
 [v0.9.26]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.25...v0.9.26

@@ -27,7 +27,33 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+# token_store 的导入必须容忍两种运行方式 —— 与本项目其它模块
+# （main.py / web_proxy.py）的既有约定保持一致：
+#
+#   · 容器内以顶层模块运行：sys.path 含 /app/gateway  → import token_store
+#   · 以包形式导入          ：                        → from gateway import token_store
+#
+# 这里写成硬 ``from gateway import token_store`` 会在第一种模式下
+# ModuleNotFoundError —— 网关一启动就崩。所以两种都试。
+try:
+    from gateway import token_store
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import token_store  # type: ignore[no-redef]
+
 TRACKER_FILE = Path("/data/.autobuddy/token_stats_logs.json")
+
+# Token 用量的存储后端。
+#
+# 历史上明细就存在上面的 TRACKER_FILE（单个 JSON），每次记录都要
+# 「读整个文件 → append → 写整个文件」，窗口写满时约 1.28MB 一轮 I/O。
+# v0.9.27 用攒批降低了频率，但单次落盘仍是整文件重写，成本没变。
+#
+# v0.9.29 起默认改走 SQLite（gateway/token_store.py）：写入变成增量
+# INSERT（幂等），聚合查询有复合索引。聚合逻辑与输出契约**一行未改**，
+# 换的只是「明细从哪来、往哪写」。
+#
+# 开关保留是为了可回滚：设 AB_TOKEN_STORE=json 即回到旧行为。
+TOKEN_STORE = (os.getenv("AB_TOKEN_STORE", "sqlite") or "sqlite").strip().lower()
 
 # 明细保留策略。
 #
@@ -149,6 +175,15 @@ def flush_pending(force: bool = False) -> int:
         _PENDING.clear()
 
     try:
+        if TOKEN_STORE != "json":
+            # SQLite：增量写入，不再是整文件重写
+            _store().insert_batch(batch)
+            # 保留策略按时间跑一次；不每次 flush 都扫全表 ——
+            # 明细超期是以天为单位的，没必要每秒检查一次。
+            _maybe_run_retention()
+            return len(batch)
+
+        # 旧路径（AB_TOKEN_STORE=json）：整文件读写
         logs: List[Dict[str, Any]] = []
         if TRACKER_FILE.exists():
             try:
@@ -184,7 +219,13 @@ def flush_pending(force: bool = False) -> int:
                 _PENDING[:0] = batch
                 return 0
         try:
-            fold_into_rollup(batch)
+            # 兜底折算必须写进**当前后端**，不能固定写 JSON：
+            # SQLite 模式下若写 JSON 聚合文件，读取侧从 SQLite 读，
+            # 这批数据等于落到了没人看的地方 —— 同样是静默丢失。
+            if TOKEN_STORE != "json":
+                _store().fold_into_rollup(batch)
+            else:
+                fold_into_rollup(batch)
             print(f"token usage backlog full: folded {len(batch)} "
                   f"records into rollup (detail lost, totals preserved)")
         except Exception as fold_err:
@@ -230,6 +271,47 @@ def _ensure_flush_thread() -> None:
 
     threading.Thread(target=_loop, name="token-usage-flusher",
                      daemon=True).start()
+
+
+# 保留策略的检查间隔。明细超期是以**天**为单位的，没必要每次落盘都扫全表。
+# 但也不能只在启动时跑一次 —— 长跑进程跨过午夜后日期就变了，
+# 必须周期性重新判定。
+_RETENTION_CHECK_SEC = float(os.getenv("AB_TOKEN_RETENTION_SEC", "3600") or 3600)
+_last_retention_check = 0.0
+_retention_lock = threading.Lock()
+
+
+def _maybe_run_retention() -> None:
+    """按节流间隔跑一次保留策略（超期明细折算进聚合后删除 + 裁剪聚合）。
+
+    放在落盘路径里而不是单独起线程：落盘本来就会发生，
+    顺手做一次检查几乎零成本，也省掉一个常驻线程。
+    """
+    global _last_retention_check
+    now = time.time()
+    if now - _last_retention_check < _RETENTION_CHECK_SEC:
+        return
+    with _retention_lock:
+        # 双重检查：并发下只需一个线程真正执行
+        if now - _last_retention_check < _RETENTION_CHECK_SEC:
+            return
+        _last_retention_check = now
+    try:
+        _store().expire_detail(DETAIL_MAX_DAYS)
+        _store().prune_rollup(ROLLUP_MAX_DAYS)
+    except Exception as e:
+        # 保留策略失败不能连累主流程（数据还在，下次再试）
+        print(f"Error running token retention: {e}")
+
+
+def _store():
+    """取存储后端，并把数据库文件对齐到 TRACKER_FILE 所在目录。
+
+    测试会把 TRACKER_FILE 指到临时目录，数据库必须跟随 ——
+    否则测试会写进生产库。
+    """
+    token_store.configure(TRACKER_FILE.parent / "token_stats.db")
+    return token_store
 
 
 def _rollup_path() -> Path:
@@ -537,13 +619,22 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
         flush_pending(force=True)
     except Exception:
         pass
-    logs = []
-    if TRACKER_FILE.exists():
-        try:
-            with open(TRACKER_FILE, "r", encoding="utf-8") as f:
-                logs = json.load(f)
-        except Exception:
-            logs = []
+    if TOKEN_STORE != "json":
+        # 首次读取时把旧 JSON 的历史数据迁进来（幂等，只做一次）
+        if TRACKER_FILE.exists():
+            try:
+                _store().migrate_from_json(TRACKER_FILE, _rollup_path())
+            except Exception:
+                pass
+        logs = _store().fetch_detail(DETAIL_MAX_DAYS, MAX_DETAIL)
+    else:
+        logs = []
+        if TRACKER_FILE.exists():
+            try:
+                with open(TRACKER_FILE, "r", encoding="utf-8") as f:
+                    logs = json.load(f)
+            except Exception:
+                logs = []
             
     existing_ids = {l.get("id") for l in logs}
     cloud_reqs = get_official_cloud_requests()

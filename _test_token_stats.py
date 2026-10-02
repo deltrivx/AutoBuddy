@@ -38,6 +38,10 @@ def check(label, condition, detail=""):
 
 _tmp = tempfile.TemporaryDirectory()
 token_tracker.TRACKER_FILE = Path(_tmp.name) / "token_stats_logs.json"
+# 本测试断言的是 JSON 文件后端的行为（直接读 TRACKER_FILE）。
+# v0.9.29 默认已切到 SQLite，这里显式钉住 json，
+# 既保留聚合语义的回归覆盖，也顺带守住可回滚路径（AB_TOKEN_STORE=json）。
+token_tracker.TOKEN_STORE = "json"
 # 云端流水抓取会去连容器内的官方服务，测试里直接短路，避免结果依赖环境。
 token_tracker.get_official_cloud_requests = lambda: []
 

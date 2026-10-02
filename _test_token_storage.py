@@ -52,6 +52,9 @@ tmp = tempfile.mkdtemp()
 import token_tracker  # noqa: E402
 
 token_tracker.TRACKER_FILE = Path(tmp) / "token_stats_logs.json"
+# 本文件断言 JSON 后端（原子写、.tmp 残留、按文件读明细等），
+# 显式钉住 json；SQLite 后端由 _test_token_store_sqlite.py 覆盖。
+token_tracker.TOKEN_STORE = "json"
 token_tracker.get_official_cloud_requests = lambda: []
 
 # 让批次数永远达不到，强制走「时间窗口」这条路径
