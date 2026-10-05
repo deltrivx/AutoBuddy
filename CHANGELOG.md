@@ -31,6 +31,69 @@
 
 ---
 
+## [v0.9.30] - 2026-10-05
+
+<!-- summary: 修复账号卡片读停更旧JSON导致新账号模型不显示、429响应体进日志、×N重复打印 -->
+
+### 修复
+
+- **新加账号有调用次数，但账号卡片上模型不显示**（用户 2026-10-05 反馈）。
+
+  实测：账号 `17521565831`（`16acb0ee`）在用量明细里有 **18 条调用记录**
+  （`deepseek-v4.1-flash` 1 次、`glm-5.3` 8 次、`hy4-preview-f` 9 次），
+  但 `/api/account-models` 返回它的 `used` / `gatewayCalls` 全为 `None`。
+
+  根因是 **v0.9.29 迁移引入的回归**：该接口仍直接读
+  `token_stats_logs.json`，而这个文件在 10-02 迁移到 SQLite 后
+  **就再没被写入过**（mtime 与最新记录都停在 `10-02 14:06`）。
+  新账号的调用只存在于 SQLite，旧 JSON 里根本没有 —— 于是看起来
+  就像「新账号没被调用过」。
+
+  新增 `token_tracker.load_tracker_records()`：读取明细时**自动走当前
+  存储后端**（SQLite 或 JSON），调用方不该再直接读那个 JSON 文件。
+  `account-models` 改用它；新路径失败时退回旧文件兜底，绝不整页空白。
+
+- **上游非 200 只记状态码，不记响应体 —— 429 无法定性**。
+
+  排查 429 时发现：日志里只有状态码，`rate limit` / `quota` /
+  上游错误体**一条都没有**。于是同一个 429 无法区分
+  「速率限流」（等一会儿就好）与「额度耗尽」（得充值或换号）——
+  历史上额度耗尽正是 `HTTP 429 + code=14018 Credits exhausted`。
+  两者处理方式完全不同，没有响应体就只能靠猜。
+
+  新增 `_log_upstream_error()`，挂在 `_looks_like_model_unavailable()`
+  这个两条转发路径（流式 / 非流式）的共同判定入口上，覆盖每一次
+  上游错误。写入前抹掉 `requestId` / `traceId`（每次都不同，
+  不抹掉就是一条一条刷屏），并截断到 400 字符。
+
+- **周期汇报的 `×N` 行每个周期重复打印**（用户 2026-10-05 反馈）。
+
+  实测：2727 条 `×N` 行里，**835 条与上一条一字不差**；
+  `/health` 更是连续 27 条 `×1` 完全相同。
+
+  两个成因，各自修掉：
+
+  1. 周期汇报是**直接 `print`**，不走 logging filter，
+     所以 `NOISY_PATHS` 黑名单对它无效 —— `/health` 这类探活
+     接口每 60s 稳定产出一条，独占 1561 条。
+     新增 `_is_noisy_access()`，复用同一份黑名单静音它们。
+  2. 与上一周期**同内容且同次数**= 没有新信息，不再打印
+     （`_ACCESS_DEDUP_LAST_PRINTED` 记录上次打印值）。
+
+### 说明
+
+`×N` 本身的字符渲染正确（实测 `200 ×6` 的字节为 `c39736`，
+即 U+00D7 `×` + `6`），不存在「符号与数字重复」。用户看到的
+「重复」是上面第 3 条描述的**整行重复**，已修。
+
+### 测试
+
+```
+全量 19 个测试文件               ✅ 全绿
+五模块 AST                       ✅ 通过
+注入 JS node --check             ✅ 通过
+```
+
 ## [v0.9.29] - 2026-10-02
 
 <!-- summary: 用量明细迁到 SQLite（增量幂等写入 + 索引），聚合逻辑与输出契约一行未改 -->
@@ -2569,7 +2632,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.29...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.30...HEAD
+[v0.9.30]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.29...v0.9.30
 [v0.9.29]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.28...v0.9.29
 [v0.9.28]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.27...v0.9.28
 [v0.9.27]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.26...v0.9.27

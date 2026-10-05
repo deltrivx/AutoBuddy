@@ -17,9 +17,11 @@ except ImportError:
     import account_policy
 
 try:
-    from gateway.token_tracker import get_aggregated_token_stats
+    from gateway.token_tracker import (get_aggregated_token_stats,
+                                       load_tracker_records)
 except ImportError:
-    from token_tracker import get_aggregated_token_stats
+    from token_tracker import (get_aggregated_token_stats,
+                               load_tracker_records)
 
 app = FastAPI()
 
@@ -6166,11 +6168,20 @@ async def account_models_api():
         return entry
 
     # ---- 来源 1：网关自身归因（实时、全账号） ----
+    #
+    # 走 load_tracker_records()，**不要**直接读 token_stats_logs.json：
+    # v0.9.29 起明细已迁到 SQLite，那个 JSON 自迁移后就不再写入，
+    # 直接读它只会拿到迁移当天为止的旧数据 —— 新账号（如 17521565831）
+    # 明明有调用却显示不出任何模型（v0.9.30 修复的回归）。
     try:
-        with open(tracker_file, "r", encoding="utf-8") as f:
-            tracker_logs = _json.load(f) or []
+        tracker_logs = load_tracker_records() or []
     except Exception:
-        tracker_logs = []
+        # 兜底：新路径失败时退回旧文件，至少不整页空白
+        try:
+            with open(tracker_file, "r", encoding="utf-8") as f:
+                tracker_logs = _json.load(f) or []
+        except Exception:
+            tracker_logs = []
 
     for rec in tracker_logs:
         if not isinstance(rec, dict):

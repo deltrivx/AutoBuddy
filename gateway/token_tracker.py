@@ -611,6 +611,39 @@ def parse_time_to_ts(time_str: str) -> int:
     except Exception:
         return int(time.time() * 1000)
 
+def load_tracker_records() -> List[Dict[str, Any]]:
+    """返回近期用量明细（后端无关），供账号卡片统计「调用过哪些模型」。
+
+    为什么需要它（v0.9.30 修复的回归）：
+    v0.9.29 把明细存储从 ``token_stats_logs.json`` 迁到了 SQLite，
+    但 ``/api/account-models`` 仍在直接读那个旧 JSON —— 该文件自迁移后
+    就**不再写入**，于是新账号的调用（只存在于 SQLite）在账号卡片上
+    显示不出任何模型，看上去像「新账号没被调用过」。
+
+    调用方一律走这个函数，不要再直接读 JSON 文件，
+    否则换后端时又会出现同样的双份数据源问题。
+    """
+    try:
+        flush_pending(force=True)
+    except Exception:
+        pass
+    if TOKEN_STORE != "json":
+        if TRACKER_FILE.exists():
+            try:
+                _store().migrate_from_json(TRACKER_FILE, _rollup_path())
+            except Exception:
+                pass
+        return _store().fetch_detail(DETAIL_MAX_DAYS, MAX_DETAIL)
+    try:
+        if TRACKER_FILE.exists():
+            with open(TRACKER_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+    return []
+
+
 def get_aggregated_token_stats() -> Dict[str, Any]:
     # 读取前先把内存里攒的记录落盘 —— 攒批是为了省写入 I/O，
     # 但「刚发生的调用在统计页看不到」是不能接受的。

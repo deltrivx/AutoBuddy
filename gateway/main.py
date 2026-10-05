@@ -45,7 +45,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.29"
+VERSION_DEFAULT = "0.9.30"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -779,12 +779,44 @@ _MODEL_UNAVAILABLE_PATTERNS = (
 )
 
 
+_UPSTREAM_ERR_LOG_MAX = 400
+
+
+def _log_upstream_error(status_code: int, body_text: str) -> None:
+    """把上游非 200 的响应体记进日志（截断 + 抹掉易变字段）。
+
+    为什么必须记：网关对非 200 此前**只记状态码**，于是同一个 429 无法区分
+    「速率限流」（等一会儿就好）与「额度耗尽」（得充值或换号）——
+    历史上额度耗尽正是 HTTP 429 + ``code=14018 Credits exhausted``。
+    两者处理方式完全不同，没有响应体就只能靠猜。
+
+    抹掉 ``requestId`` 是为了让相同的错误能被去重合并：
+    每次请求 id 都不同，不抹掉就是一条一条刷屏。
+    """
+    if status_code == 200:
+        return
+    snippet = (body_text or "").strip()
+    if not snippet:
+        return
+    # 去掉每次都不同的请求号，让同样的错误能折叠成 ×N
+    snippet = re.sub(r'"requestId"\s*:\s*"[^"]*"', '"requestId":"*"', snippet)
+    snippet = re.sub(r'"request_id"\s*:\s*"[^"]*"', '"request_id":"*"', snippet)
+    snippet = re.sub(r'"traceId"\s*:\s*"[^"]*"', '"traceId":"*"', snippet)
+    snippet = re.sub(r'\s+', ' ', snippet)[:_UPSTREAM_ERR_LOG_MAX]
+    lprint("upstream", f"HTTP {status_code} {snippet}")
+
+
 def _looks_like_model_unavailable(status_code: int, body_text: str) -> bool:
     """判断上游响应是否属于「该账号不支持该模型」（可换号重试）。
 
     只看**明确指向模型**的既有错误形状，不把限流/网络抖动/参数校验错误卷进来
     —— 那些换号也解决不了，重试只会放大故障。
+
+    顺带在这里把非 200 的响应体记进日志：本函数是两条转发路径
+    （流式 / 非流式）判定「要不要换号」的共同入口，挂在这里能覆盖
+    每一次上游错误，不必在两个地方各写一遍。
     """
+    _log_upstream_error(status_code, body_text)
     if status_code not in (400, 403, 404):
         return False
     raw = (body_text or "").strip()
@@ -2744,6 +2776,23 @@ _ACCESS_DEDUP_MAX_KEYS = 500
 _ACCESS_DEDUP_NEXT_FLUSH = 0.0
 
 
+# 上一周期打印过的 (内容 -> 次数)。用于识别「完全没有新信息」的重复汇报。
+_ACCESS_DEDUP_LAST_PRINTED: Dict[str, int] = {}
+
+
+def _is_noisy_access(key: str) -> bool:
+    """该 access 内容是否属于已知的无信息量轮询（连 ×N 行都不必打）。
+
+    周期汇报是**直接 print**，不走 logging filter，因此 NOISY_PATHS 黑名单
+    对它无效 —— 这正是 /health 这类探活接口每 60s 稳定产出一条 `×N`、
+    把真正有用的信息淹掉的原因（实测：/health 独占 1561 条）。
+    """
+    try:
+        return any(p in key for p in _AccessNoiseFilter.NOISY_PATHS)
+    except Exception:
+        return False
+
+
 def _flush_access_dedup(now: float = 0.0) -> None:
     """汇报并清空各条内容累积的重复次数。
 
@@ -2756,7 +2805,7 @@ def _flush_access_dedup(now: float = 0.0) -> None:
     所以改为按时间周期把各条内容的待报次数统一打出来并清零。
     这样既保留可观测性（不会被悄悄吞掉），又不破坏按内容去重的正确性。
     """
-    global _ACCESS_DEDUP_NEXT_FLUSH
+    global _ACCESS_DEDUP_NEXT_FLUSH, _ACCESS_DEDUP_LAST_PRINTED
     if not now:
         now = time.time()
     with _ACCESS_DEDUP_LOCK:
@@ -2770,7 +2819,19 @@ def _flush_access_dedup(now: float = 0.0) -> None:
                 _ACCESS_DEDUP_LAST.pop(k, None)
                 _ACCESS_DEDUP_COUNT.pop(k, None)
         _ACCESS_DEDUP_NEXT_FLUSH = now + _ACCESS_DEDUP_FLUSH_SEC
+        # 同步清理打印记录，避免随 key 无界增长
+        for kk in list(_ACCESS_DEDUP_LAST_PRINTED.keys()):
+            if kk not in _ACCESS_DEDUP_LAST:
+                _ACCESS_DEDUP_LAST_PRINTED.pop(kk, None)
     for k, c in pending:
+        # 已知无信息量的轮询接口，连 ×N 行也不打 —— 它们每个周期必然重复。
+        if _is_noisy_access(k):
+            continue
+        # 与上一周期**完全相同**（同内容、同次数）= 没有新信息，不再打印。
+        # 实测：/health 曾连续 27 条 `×1` 一字不差，这正是用户看到的「重复」。
+        if _ACCESS_DEDUP_LAST_PRINTED.get(k) == c:
+            continue
+        _ACCESS_DEDUP_LAST_PRINTED[k] = c
         # 同一行末尾追加 ×N：period 汇报是补打被打断的那条，
         # 行首留 UVICORN 风格的 INFO 前缀，重复次数放行尾，
         # 不额外制造一条重复记录（用户 2026-10-02 要求）。
