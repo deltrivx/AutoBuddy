@@ -27,6 +27,26 @@ except ImportError:
     import api_keys
 
 try:
+    from gateway import cooldown
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import cooldown  # type: ignore[no-redef]
+
+try:
+    from gateway import session_sticky
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import session_sticky  # type: ignore[no-redef]
+
+try:
+    from gateway import credit_floor
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import credit_floor  # type: ignore[no-redef]
+
+try:
+    from gateway import pricing
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import pricing  # type: ignore[no-redef]
+
+try:
     from gateway import model_policy, model_health, account_policy
 except ImportError:
     import model_policy
@@ -45,7 +65,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.30"
+VERSION_DEFAULT = "0.9.31"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -560,7 +580,8 @@ def selection_stats(limit: int = 20) -> Dict[str, Any]:
     }
 
 
-def select_account(requested_id: Optional[str] = None, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def select_account(requested_id: Optional[str] = None, model: Optional[str] = None,
+                   session_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """为每一个 API 请求选择账号。
 
     - X-AutoBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
@@ -633,6 +654,39 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         acc = explicit_by_id.get(str(config.get("manualAccountId")))
         return _remember_selection(acc, "manual") if acc else None
 
+    # 冷却过滤：被限流（429）/余额耗尽（402）的账号不参与自动轮询。
+    # 与账号级停用一致 —— 全部都在冷却时回退原集合，
+    # 宁可让上游返回真实错误，也不在网关层编一个「无账号」。
+    try:
+        cool_alive = cooldown.filter_cooling(candidates, _account_id)
+        if cool_alive:
+            candidates = cool_alive
+    except Exception:
+        pass
+
+    # 积分保底：余额触底的账号不参与「收费模型」的选号。
+    # 默认关闭（AB_CREDIT_FLOOR=0），开启后防止触底号继续挨打。
+    try:
+        floor_alive = credit_floor.filter_by_floor(candidates, _account_id, model)
+        if floor_alive:
+            candidates = floor_alive
+    except Exception:
+        pass
+
+    # 会话粘性：该会话已绑过账号，且那个账号仍在候选集里 → 优先复用。
+    # 这是**软偏好** —— 绑定的账号若已被冷却/停用/拉黑，自然不在 candidates 里，
+    # 于是自动落回普通选号，绝不把坏账号硬塞给请求。
+    if session_key and candidates:
+        try:
+            bound = session_sticky.get_bound(session_key)
+            if bound:
+                by_bound = {str(_account_id(a)): a for a in candidates if _account_id(a)}
+                acc = by_bound.get(str(bound))
+                if acc is not None:
+                    return _remember_selection(acc, "sticky")
+        except Exception:
+            pass
+
     # 全部账号都被账号级停用时，宁可回退到「包含停用账号」的集合也不返回 None：
     # 让上游去返回真实错误，比在网关层编一个「无账号」更利于排查
     # （与模型级全禁用的处理保持一致）。
@@ -660,6 +714,12 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         except ValueError:
             picked_pos = base
         _ACCOUNT_POOL_RUNTIME["next_index"] = (picked_pos + 1) % n
+    # 自动选号后登记粘性：下一次同会话请求会优先复用这个账号
+    if session_key:
+        try:
+            session_sticky.bind(session_key, str(_account_id(acc)))
+        except Exception:
+            pass
     return _remember_selection(acc, "auto")
 
 
@@ -780,6 +840,29 @@ _MODEL_UNAVAILABLE_PATTERNS = (
 
 
 _UPSTREAM_ERR_LOG_MAX = 400
+
+
+def _note_upstream_result(account_id: str, status_code: int, body_text: str) -> None:
+    """把一次上游结果记入冷却账本（成功清零、失败冷却）。
+
+    挂在这里而不是散落各处：两条转发路径（流式 / 非流式）都要经过它，
+    一处改动即可覆盖全部上游结果。
+
+    为什么需要冷却（实测依据）：此前 429 是**直接透传**给客户端的，
+    排查中发现 73 次 429 全部原样失败 —— 而池里有 17 个账号，
+    一个号被限流，完全可以换一个；余额耗尽（402）更该立刻停用。
+    没有冷却，被限流的账号仍在候选集里，每个请求都可能再撞一次。
+    """
+    if not account_id:
+        return
+    try:
+        if status_code == 200:
+            cooldown.record_success(account_id)
+        else:
+            cooldown.record_failure(account_id, status_code, body_text or "")
+    except Exception:
+        # 冷却记账失败绝不能连累转发主流程
+        pass
 
 
 def _log_upstream_error(status_code: int, body_text: str) -> None:
@@ -1981,7 +2064,16 @@ async def chat_completions(request: Request):
     raw_model = body.get("model", "hy3")
     target_model = MODEL_ALIAS_MAP.get(raw_model, raw_model)
 
-    acc = select_account(requested_account_id, model=raw_model)
+    # 会话粘性键：显式 conversation_id 优先，否则用 system+首条user 内容派生。
+    # 客户端不传会话标识时也能享受粘性（panel 的 d- 前缀回退做法）。
+    # 派生不出就传 None —— 此时按普通并发分摊选号，不影响行为。
+    try:
+        session_key = session_sticky.derive_session_key(body, dict(request.headers))
+    except Exception:
+        session_key = None
+
+    acc = select_account(requested_account_id, model=raw_model,
+                         session_key=session_key)
     if not acc or not acc.get("access_token"):
         if requested_account_id:
             raise HTTPException(status_code=409, detail="Requested WorkBuddy account is disabled, expired, or unavailable.")
@@ -2041,6 +2133,13 @@ async def chat_completions(request: Request):
             body_text = (await res.aread()).decode("utf-8", "ignore")
             await res.aclose()
             if not _looks_like_model_unavailable(res.status_code, body_text):
+                # 失败记账：429/402/404 等让该账号进入冷却，后续自动轮询跳过它
+                _note_upstream_result(served_account_id, res.status_code, body_text)
+                # 失败即解绑：这个号已经证明不可用，下次换号，别把会话继续钉在它身上
+                try:
+                    session_sticky.unbind(session_key)
+                except Exception:
+                    pass
                 await client.aclose()
                 _release_account_slot(served_account_id)
                 return Response(content=body_text.encode("utf-8"),
@@ -2104,6 +2203,9 @@ async def chat_completions(request: Request):
         except Exception:
             pass
 
+        # 成功：清零该账号的连续失败与软退避计数
+        _note_upstream_result(served_account_id, 200, "")
+
         return StreamingResponse(
             stream_generator(),
             status_code=res.status_code,
@@ -2112,12 +2214,19 @@ async def chat_completions(request: Request):
     else:
         req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
         res = await client.send(req, stream=True)
-        # 非流式路径同样做「模型不可用 → 拉黑 + 换号重试」，
-        # 判定与流式一致：只在响应体尚未转发时重试。
+        # 非流式路径同样做「模型不可用 → 拉黑 + 换号重试」,
+        # 判定与流式一致:只在响应体尚未转发时重试。
         while res.status_code != 200:
             body_text = (await res.aread()).decode("utf-8", "ignore")
             await res.aclose()
             if not _looks_like_model_unavailable(res.status_code, body_text):
+                # 失败记账（同流式路径）
+                _note_upstream_result(served_account_id, res.status_code, body_text)
+                # 失败即解绑（同流式路径）
+                try:
+                    session_sticky.unbind(session_key)
+                except Exception:
+                    pass
                 await client.aclose()
                 _release_account_slot(served_account_id)
                 return Response(content=body_text.encode("utf-8"),
@@ -2234,6 +2343,9 @@ async def chat_completions(request: Request):
                     "cache_creation_input_tokens": usage["cacheWrite"]} if usage else {})
             }
         }
+        # 非流式成功同样记账（成功清零失败计数）
+        _note_upstream_result(served_account_id, 200, "")
+
         return Response(
             content=json.dumps(result_payload, ensure_ascii=False),
             status_code=200,

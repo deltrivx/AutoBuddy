@@ -105,7 +105,10 @@ def init_db() -> None:
                     account_id    TEXT NOT NULL DEFAULT '',
                     account_name  TEXT NOT NULL DEFAULT '',
                     variant       TEXT NOT NULL DEFAULT '',
-                    source        TEXT NOT NULL DEFAULT 'gateway'
+                    source        TEXT NOT NULL DEFAULT 'gateway',
+                    -- 等价美元成本（观感用）。NULL = 未定价，不是 0 ——
+                    -- 0 表示「这个模型免费」，NULL 表示「没有定价数据」。
+                    cost          REAL
                 );
 
                 -- 服务「按天 / 按模型 / 按账号」三类聚合查询，
@@ -149,9 +152,37 @@ def init_db() -> None:
                 """
             )
             conn.commit()
+            # 老库升级：CREATE TABLE IF NOT EXISTS 对已存在的表不做任何事，
+            # 后加的列必须在这里补。生产库 v0.9.29 建表时还没有 cost。
+            _ensure_column(conn, "usage_logs", "cost", "REAL")
         finally:
             conn.close()
         _INIT_DONE = True
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str,
+                  decl: str) -> None:
+    """幂等补列 —— 老库升级用。
+
+    为什么必须有这一段：``CREATE TABLE IF NOT EXISTS`` 对**已存在的表**
+    不会做任何事。生产库在 v0.9.29 就已建好 usage_logs，那时还没有
+    cost 列；直接部署带 cost 的版本，写入/读取都会撞
+    ``sqlite3.OperationalError: no such column: cost``。
+
+    所以建表之后必须再逐列检查一次，缺了就 ALTER 补上。
+    重复执行安全（列已存在时直接返回）。
+    """
+    try:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    except Exception:
+        return
+    if column in cols:
+        return
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        conn.commit()
+    except Exception as e:
+        print(f"[token_store] add column {table}.{column} failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +214,8 @@ def _row_to_detail(row: sqlite3.Row) -> Dict[str, Any]:
         "accountName": row["account_name"] or "",
         "variant": row["variant"] or "",
         "source": row["source"] or "gateway",
+        # 未定价读回来是 None（不是 0），与写入语义一致
+        "cost": row["cost"],
     }
 
 
@@ -240,6 +273,8 @@ def insert_batch(entries: List[Dict[str, Any]]) -> int:
             str(e.get("accountName") or ""),
             str(e.get("variant") or ""),
             str(e.get("source") or "gateway"),
+            # 未定价模型写 None，不写 0（0 是「免费」，None 是「未知」）
+            (float(e["cost"]) if isinstance(e.get("cost"), (int, float)) else None),
         ))
     with _WRITE_LOCK:
         conn = _connect()
@@ -249,8 +284,8 @@ def insert_batch(entries: List[Dict[str, Any]]) -> int:
                 INSERT OR IGNORE INTO usage_logs
                     (id, ts, time, date, model, input, output, cache_read,
                      cache_write, uncached_input, duration, account_id,
-                     account_name, variant, source)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     account_name, variant, source, cost)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 rows,
             )

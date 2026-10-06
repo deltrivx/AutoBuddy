@@ -537,6 +537,24 @@ class UsageScanner:
                 if isinstance(content, str):
                     self.text_chars += len(content)
 
+def _estimate_cost(model: str, input_tokens: int, output_tokens: int,
+                  cached_tokens: int = 0) -> Optional[float]:
+    """把本次调用折算成等价美元成本（未定价模型返回 None）。
+    """
+    try:
+        import pricing as _pricing  # 顶层模块
+    except Exception:
+        try:
+            from gateway import pricing as _pricing  # noqa: F811
+        except Exception:
+            return None
+    try:
+        return _pricing.estimate_cost(model, input_tokens,
+                                     output_tokens, cached_tokens)
+    except Exception:
+        return None
+
+
 def record_token_usage(model: str, input_tokens: int, output_tokens: int, duration_sec: float = 0.0, request_id: str = "",
                        account_id: str = "", account_name: str = "", variant: str = "",
                        cache_read: int = 0, cache_write: int = 0):
@@ -579,7 +597,10 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
             "accountId": account_id or "",
             "accountName": account_name or "",
             "variant": variant or "",
-            "source": "gateway"
+            "source": "gateway",
+            # 等价美元成本（观感用，不是计费依据）。
+            # 未收录的模型为 None —— 不知道就是不知道，不编一个数字。
+            "cost": _estimate_cost(model, input_tokens, output_tokens, cache_read),
         }
         
         # 只入队，不在这里重写文件 —— 真正的落盘交给 flush_pending 攒批做，
