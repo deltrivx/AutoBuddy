@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.31](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.31)
+**当前稳定版：** [v0.9.32](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.32)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.32](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.32) | 2026-10-07 | 调用量与白名单下沉到每个 API 密钥，修正设置页的主次关系 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.32.md) |
 | [v0.9.31](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.31) | 2026-10-06 | 参照 workbuddy2api 补齐四项治理能力——429/402 冷却、会话粘性、积分保底、成本折算 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.31.md) |
 | [v0.9.30](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.30) | 2026-10-05 | 修复账号卡片读停更旧JSON导致新账号模型不显示、429响应体进日志、×N重复打印 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.30.md) |
 | [v0.9.29](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.29) | 2026-10-02 | 用量明细迁到 SQLite（增量幂等写入 + 索引），聚合逻辑与输出契约一行未改 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.29.md) |
@@ -124,7 +125,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.31    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.32    # 锁定版本
 ```
 
 ## 部署产物

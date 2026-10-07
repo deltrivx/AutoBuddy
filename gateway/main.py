@@ -65,7 +65,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.31"
+VERSION_DEFAULT = "0.9.32"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1727,12 +1727,13 @@ def _gateway_auth(request: Request) -> Dict[str, Any]:
 
     # IP 白名单：只免去密钥，不改变其他任何行为。关掉校验时这块整体不生效。
     wl = state.get("whitelist") or []
+    host = _client_host(request)
     if wl:
-        host = _client_host(request)
         if api_keys._ip_in_whitelist(host, wl):
             return {"ok": True, "mode": "whitelist", "requireKey": True, "client": host}
 
-    return api_keys.authenticate(_extract_api_key(request))
+    # 带上来源 IP：每个密钥还可以有自己的来源白名单（空 = 不限制）。
+    return api_keys.authenticate(_extract_api_key(request), client_host=host)
 
 
 def _gateway_info() -> Dict[str, Any]:
@@ -1833,9 +1834,13 @@ def api_keys_update(payload: Dict[str, Any]):
     key_id = payload.get("id")
     if not key_id:
         raise HTTPException(status_code=400, detail="id is required")
-    patch = {k: payload[k] for k in ("name", "enabled") if k in payload}
+    # whitelist 也允许随 update 提交：它现在是**每个密钥**自己的属性，
+    # 与 name/enabled 同级，不该再走另一个全局接口。
+    patch = {k: payload[k] for k in ("name", "enabled", "whitelist") if k in payload}
     if not patch:
         raise HTTPException(status_code=400, detail="nothing to update")
+    if "whitelist" in patch:
+        patch["whitelist"] = _validate_ip_list(patch.get("whitelist"), "whitelist")
     if patch.get("enabled") is False:
         _guard_last_enabled_key(str(key_id))
     record, error = api_keys.update_key(str(key_id), patch)
@@ -1883,27 +1888,25 @@ def api_keys_config(payload: Dict[str, Any]):
     return {"ok": True, "status": api_keys_status()}
 
 
-@app.put("/api-keys/whitelist")
-def api_keys_whitelist(payload: Dict[str, Any]):
-    """整份替换 IP 白名单。
+def _validate_ip_list(raw: Any, field: str = "whitelist") -> List[str]:
+    """把 IP 白名单入参归一并逐条校验，返回去重后的列表。
 
-    仅在开启密钥校验时才有意义 —— 未开启时整块放行，白名单不产生任何效果。
-    这里**不**因为未开启而报错：前端在那种情况下本就不会展示该入口，
-    但用户可能先配白名单再开校验；保留写入能力比硬拦更符合直觉。
+    供**全局白名单**与**单个密钥的白名单**共用：
+    两处解析与校验规则必须一致，否则同一个输入框在两个地方行为不同，
+    排查起来非常费劲。
 
-    传参：``{"whitelist": "192.168.31.5\n192.168.31.0/24"}`` 或数组形式。
+    支持：
+      · 字符串：逗号或换行分隔（textarea 里两种写法都常见）
+      · 数组：逐项 str 化
+    条目必须是合法 IP 或 CIDR，否则 400 并列出前几个非法项。
     """
-    if "whitelist" not in payload:
-        raise HTTPException(status_code=400, detail="whitelist is required")
-
-    raw = payload.get("whitelist")
-    # 先归一化成列表，再用同一个解析器逐条校验语法。
     if isinstance(raw, str):
         parts = [p.strip() for p in raw.replace(",", "\n").split("\n") if p.strip()]
     elif isinstance(raw, (list, tuple)):
         parts = [str(p).strip() for p in raw if str(p).strip()]
     else:
-        raise HTTPException(status_code=400, detail="whitelist must be a string or list")
+        raise HTTPException(status_code=400,
+                            detail=f"{field} must be a string or list")
 
     import ipaddress
     bad = []
@@ -1919,6 +1922,29 @@ def api_keys_whitelist(payload: Dict[str, Any]):
         raise HTTPException(status_code=400,
                             detail="以下条目不是合法 IP 或 CIDR：" + "、".join(bad[:5]))
 
+    # 去重保序
+    out: List[str] = []
+    for p in parts:
+        if p not in out:
+            out.append(p)
+    return out
+
+
+@app.put("/api-keys/whitelist")
+def api_keys_whitelist(payload: Dict[str, Any]):
+    """整份替换 IP 白名单。
+
+    仅在开启密钥校验时才有意义 —— 未开启时整块放行，白名单不产生任何效果。
+    这里**不**因为未开启而报错：前端在那种情况下本就不会展示该入口，
+    但用户可能先配白名单再开校验；保留写入能力比硬拦更符合直觉。
+
+    传参：``{"whitelist": "192.168.31.5\n192.168.31.0/24"}`` 或数组形式。
+    """
+    if "whitelist" not in payload:
+        raise HTTPException(status_code=400, detail="whitelist is required")
+
+    # 与单个密钥的白名单共用同一个解析器（_validate_ip_list）
+    parts = _validate_ip_list(payload.get("whitelist"), "whitelist")
     api_keys.set_whitelist(parts)
     return {"ok": True, "status": api_keys_status()}
 

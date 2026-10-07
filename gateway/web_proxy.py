@@ -3111,7 +3111,168 @@ COLLAPSE_SCRIPT = r"""
     authRow.appendChild(authToggle);
     card.appendChild(authRow);
 
-    // ---- 4.5 IP 白名单免验证（仅在开启密钥校验时展示）----
+
+    // ---- 5. 密钥列表 ----
+    var keyHead = wbEl("div", "wb-api-row");
+    var keyMain = wbEl("div", "wb-api-main");
+    keyMain.appendChild(wbEl("div", "wb-api-label", "API 密钥"));
+    keyMain.appendChild(wbEl("div", "wb-api-desc",
+      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个 · 累计调用 " + (stats.calls || 0) + " 次"
+      + " · 最近使用 " + wbTime(stats.lastUsedAt)));
+    keyHead.appendChild(keyMain);
+    var keyActions = wbEl("div", null);
+    keyActions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
+    var addKey = wbEl("button", "wb-api-btn wb-api-btn-primary", "新建密钥");
+    addKey.onclick = function () {
+      var name = window.prompt("给这个密钥起个名字（便于区分调用方，可留空）：", "");
+      if (name === null) return;
+      wbApiAction("/api/api-keys", "POST", { name: name }).then(function (res) {
+        if (res && res.key) wbCopy(res.key.key, "新密钥已生成并复制");
+      });
+    };
+    keyActions.appendChild(addKey);
+    if ((stats.total || 0) > 1) {
+      var clearKeys = wbEl("button", "wb-api-btn wb-api-btn-danger", "清空全部");
+      clearKeys.onclick = function () {
+        if (!window.confirm("确认清空全部 " + stats.total + " 个密钥？已在使用这些密钥的客户端会立即失去访问权限。")) return;
+        wbApiAction("/api/api-keys/delete-all", "POST", undefined, "已清空全部密钥");
+      };
+      keyActions.appendChild(clearKeys);
+    }
+    keyHead.appendChild(keyActions);
+    card.appendChild(keyHead);
+
+    var listRow = wbEl("div", "wb-api-row wb-api-row-stack");
+    if (!keys.length) {
+      listRow.appendChild(wbEl("div", "wb-api-empty",
+        "还没有密钥。点「新建密钥」生成一个 —— 密钥格式为 sk-ab-…，明文保存在 /data/.autobuddy/api_keys.json（权限 0600）。"));
+    } else {
+      keys.forEach(function (k) {
+        var line = wbEl("div", "wb-api-keyrow");
+        var enabled = wbEl("span", "wb-api-badge" + (k.enabled ? " wb-api-badge-ok" : " wb-api-badge-warn"),
+          k.enabled ? "启用" : "已停用");
+        line.appendChild(enabled);
+        line.appendChild(wbEl("span", "wb-api-keyname", k.name || "未命名"));
+        line.appendChild(wbChip(k.maskedKey));
+
+        // 调用量：归属到**这一个密钥**，不是全局汇总。
+        // 它必须挂在密钥行内 —— 摆在外面会让人误以为是整个网关的调用量。
+        var meta = wbEl("span", "wb-api-badge", "调用 " + (k.callCount || 0) + " 次");
+        meta.title = "该密钥累计调用次数\n创建于 " + wbTime(k.createdAt)
+          + " · 最近使用 " + wbTime(k.lastUsedAt);
+        line.appendChild(meta);
+
+        // 白名单：同样是**这个密钥自己**的来源限制，不是全局开关。
+        // 点一下就地展开编辑，保存只影响这一个密钥。
+        var kwl = k.whitelist || [];
+        var wlBadge = wbEl("span", "wb-api-badge",
+          kwl.length ? ("白名单 " + kwl.length + " 条") : "不限来源");
+        wlBadge.style.cursor = "pointer";
+        wlBadge.title = kwl.length
+          ? ("该密钥仅允许这些来源 IP 使用：\n" + kwl.join("\n") + "\n\n点击修改")
+          : "该密钥不限制来源 IP。点击设置来源白名单。";
+        line.appendChild(wlBadge);
+
+        var spacer = wbEl("span", null);
+        spacer.style.cssText = "flex:1 1 auto;";
+        line.appendChild(spacer);
+
+        var copyBtn = wbEl("button", "wb-api-btn", "复制明文");
+        copyBtn.onclick = function () { wbCopy(k.key, "已复制该密钥明文"); };
+        line.appendChild(copyBtn);
+
+        var toggleBtn = wbEl("button", "wb-api-btn", k.enabled ? "停用" : "启用");
+        toggleBtn.onclick = function () {
+          wbApiAction("/api/api-keys/update", "POST", { id: k.id, enabled: !k.enabled },
+            k.enabled ? "已停用该密钥" : "已启用该密钥");
+        };
+        line.appendChild(toggleBtn);
+
+        var delBtn = wbEl("button", "wb-api-btn wb-api-btn-danger", "删除");
+        delBtn.onclick = function () {
+          if (!window.confirm("确认删除密钥「" + (k.name || "未命名") + "」？使用它的客户端会立即失去访问权限。")) return;
+          wbApiAction("/api/api-keys/delete", "POST", { id: k.id }, "已删除");
+        };
+        line.appendChild(delBtn);
+
+        listRow.appendChild(line);
+
+        // 白名单行内编辑区（默认收起，点徽章展开）
+        var wlEdit = wbEl("div", "wb-api-keyrow");
+        wlEdit.style.display = "none";
+        wlEdit.style.cssText += "flex-direction:column;align-items:stretch;gap:6px;background:rgba(127,127,127,0.05);padding:10px;border-radius:8px;";
+        var wlEditHead = wbEl("div", "wb-api-desc",
+          "「" + (k.name || "未命名") + "」的来源 IP 白名单 —— 只作用于这个密钥，"
+          + "不影响其他密钥，也不影响下面的全局白名单。留空 = 不限制来源。");
+        wlEdit.appendChild(wlEditHead);
+
+        var wlBox = document.createElement("textarea");
+        wlBox.className = "wb-api-input wb-api-mono";
+        wlBox.rows = 2;
+        wlBox.spellcheck = false;
+        wlBox.placeholder = "192.168.31.5\n192.168.31.0/24";
+        wlBox.style.cssText = "width:100%;resize:vertical;line-height:1.5;";
+        wlBox.value = kwl.join("\n");
+        wlEdit.appendChild(wlBox);
+
+        var wlBtns = wbEl("div", null);
+        wlBtns.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
+        var wlSave = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存");
+        wlSave.onclick = function () {
+          wlSave.disabled = true;
+          wbApiAction("/api/api-keys/update", "POST",
+            { id: k.id, whitelist: wlBox.value }, "已更新该密钥的白名单")
+            .then(function () {
+              wlSave.disabled = false;
+              wlEdit.style.display = "none";
+            }, function () { wlSave.disabled = false; });
+        };
+        wlBtns.appendChild(wlSave);
+
+        var wlCancel = wbEl("button", "wb-api-btn", "取消");
+        wlCancel.onclick = function () {
+          wlBox.value = (k.whitelist || []).join("\n");
+          wlEdit.style.display = "none";
+        };
+        wlBtns.appendChild(wlCancel);
+
+        // 一键填入当前访问 IP（与全局白名单那块一致的手感）
+        var wlSelf = wbEl("button", "wb-api-btn", "添加当前 IP");
+        wlSelf.title = "把你现在访问控制台的来源 IP 加进这个密钥的白名单";
+        wlSelf.onclick = function () {
+          wlSelf.disabled = true;
+          fetch("/api/client-ip", { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : {}; })
+            .then(function (d) {
+              var ip = (d && d.ip) || "";
+              if (!ip) { wbToast("未能获取当前 IP", "warn"); return; }
+              var cur = wlBox.value.trim();
+              var parts = cur ? cur.split(/[\n,]/).map(function (s) { return s.trim(); }) : [];
+              if (parts.indexOf(ip) !== -1) { wbToast("当前 IP 已在名单中：" + ip, "ok"); return; }
+              wlBox.value = cur ? (cur + "\n" + ip) : ip;
+              wbToast("已填入当前 IP：" + ip + "，点「保存」生效", "ok");
+            })
+            .catch(function () { wbToast("获取当前 IP 失败", "err"); })
+            .then(function () { wlSelf.disabled = false; });
+        };
+        wlBtns.appendChild(wlSelf);
+        wlEdit.appendChild(wlBtns);
+        listRow.appendChild(wlEdit);
+
+        wlBadge.onclick = function () {
+          var open = wlEdit.style.display !== "none";
+          wlEdit.style.display = open ? "none" : "";
+          if (!open) wlBox.focus();
+        };
+      });
+    }
+    card.appendChild(listRow);
+    // ---- 5.5 全局 IP 白名单（免密钥）----
+    //
+    // 位置说明（用户 2026-10-07 反馈「主次关系混乱」）：
+    // 这块原先摆在密钥列表**前面**，于是看起来像「整个网关的总开关」；
+    // 但白名单的真正归属是**每个密钥**（上面每行都有自己的白名单）。
+    // 所以把它移到密钥列表之后，并明确标注为「兜底」，避免喧宾夺主。
     //
     // 为何要隐藏：关掉密钥校验时后端就整体放行了，白名单不产生任何效果。
     // 展示一个“没用”的输入框只会让人误会它在生效。配置本身会保留，
@@ -3119,10 +3280,12 @@ COLLAPSE_SCRIPT = r"""
     if (data.requireKey) {
       var wlRow = wbEl("div", "wb-api-row wb-api-row-stack");
       var wlHead = wbEl("div", null);
-      wlHead.appendChild(wbEl("div", "wb-api-label", "IP 白名单（免密钥）"));
+      wlHead.appendChild(wbEl("div", "wb-api-label", "全局 IP 白名单（免密钥 · 兜底）"));
       wlHead.appendChild(wbEl("div", "wb-api-desc",
-        "名单内的来源 IP 调用 /v1/* 无需携密钥。支持精确 IP（192.168.31.5）与 CIDR 网段"
-        + "（192.168.31.0/24），一行一个，也可用逗号分隔。留空则不启用白名单。"));
+        "兜底规则：名单内的来源 IP 调用 /v1/* 无需携带任何密钥。"
+        + "它作用于**所有**密钥之上，与上面每个密钥各自的白名单不是一回事 —— "
+        + "单个密钥的白名单管的是「这个密钥许不许这个 IP 用」，这里管的是「要不要密钥」。"
+        + "支持精确 IP（192.168.31.5）与 CIDR 网段（192.168.31.0/24），一行一个，也可用逗号分隔。留空则不启用。"));
       wlRow.appendChild(wlHead);
 
       var wlBox = document.createElement("textarea");
@@ -3171,80 +3334,6 @@ COLLAPSE_SCRIPT = r"""
       wlRow.appendChild(wlLine);
       card.appendChild(wlRow);
     }
-
-    // ---- 5. 密钥列表 ----
-    var keyHead = wbEl("div", "wb-api-row");
-    var keyMain = wbEl("div", "wb-api-main");
-    keyMain.appendChild(wbEl("div", "wb-api-label", "API 密钥"));
-    keyMain.appendChild(wbEl("div", "wb-api-desc",
-      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个 · 累计调用 " + (stats.calls || 0) + " 次"
-      + " · 最近使用 " + wbTime(stats.lastUsedAt)));
-    keyHead.appendChild(keyMain);
-    var keyActions = wbEl("div", null);
-    keyActions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
-    var addKey = wbEl("button", "wb-api-btn wb-api-btn-primary", "新建密钥");
-    addKey.onclick = function () {
-      var name = window.prompt("给这个密钥起个名字（便于区分调用方，可留空）：", "");
-      if (name === null) return;
-      wbApiAction("/api/api-keys", "POST", { name: name }).then(function (res) {
-        if (res && res.key) wbCopy(res.key.key, "新密钥已生成并复制");
-      });
-    };
-    keyActions.appendChild(addKey);
-    if ((stats.total || 0) > 1) {
-      var clearKeys = wbEl("button", "wb-api-btn wb-api-btn-danger", "清空全部");
-      clearKeys.onclick = function () {
-        if (!window.confirm("确认清空全部 " + stats.total + " 个密钥？已在使用这些密钥的客户端会立即失去访问权限。")) return;
-        wbApiAction("/api/api-keys/delete-all", "POST", undefined, "已清空全部密钥");
-      };
-      keyActions.appendChild(clearKeys);
-    }
-    keyHead.appendChild(keyActions);
-    card.appendChild(keyHead);
-
-    var listRow = wbEl("div", "wb-api-row wb-api-row-stack");
-    if (!keys.length) {
-      listRow.appendChild(wbEl("div", "wb-api-empty",
-        "还没有密钥。点「新建密钥」生成一个 —— 密钥格式为 sk-ab-…，明文保存在 /data/.autobuddy/api_keys.json（权限 0600）。"));
-    } else {
-      keys.forEach(function (k) {
-        var line = wbEl("div", "wb-api-keyrow");
-        var enabled = wbEl("span", "wb-api-badge" + (k.enabled ? " wb-api-badge-ok" : " wb-api-badge-warn"),
-          k.enabled ? "启用" : "已停用");
-        line.appendChild(enabled);
-        line.appendChild(wbEl("span", "wb-api-keyname", k.name || "未命名"));
-        line.appendChild(wbChip(k.maskedKey));
-
-        var meta = wbEl("span", "wb-api-badge", "调用 " + (k.callCount || 0) + " 次");
-        meta.title = "创建于 " + wbTime(k.createdAt) + " · 最近使用 " + wbTime(k.lastUsedAt);
-        line.appendChild(meta);
-
-        var spacer = wbEl("span", null);
-        spacer.style.cssText = "flex:1 1 auto;";
-        line.appendChild(spacer);
-
-        var copyBtn = wbEl("button", "wb-api-btn", "复制明文");
-        copyBtn.onclick = function () { wbCopy(k.key, "已复制该密钥明文"); };
-        line.appendChild(copyBtn);
-
-        var toggleBtn = wbEl("button", "wb-api-btn", k.enabled ? "停用" : "启用");
-        toggleBtn.onclick = function () {
-          wbApiAction("/api/api-keys/update", "POST", { id: k.id, enabled: !k.enabled },
-            k.enabled ? "已停用该密钥" : "已启用该密钥");
-        };
-        line.appendChild(toggleBtn);
-
-        var delBtn = wbEl("button", "wb-api-btn wb-api-btn-danger", "删除");
-        delBtn.onclick = function () {
-          if (!window.confirm("确认删除密钥「" + (k.name || "未命名") + "」？使用它的客户端会立即失去访问权限。")) return;
-          wbApiAction("/api/api-keys/delete", "POST", { id: k.id }, "已删除");
-        };
-        line.appendChild(delBtn);
-
-        listRow.appendChild(line);
-      });
-    }
-    card.appendChild(listRow);
 
     // ---- 6. 自检 ----
     var selfRow = wbEl("div", "wb-api-row");
