@@ -14,6 +14,7 @@
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
 | [v0.9.34](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.34) | 2026-10-07 | 移除全部 IP 白名单功能（含每密钥白名单与全局免密钥白名单），访问校验回归「密钥 + loopback」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.34.md) |
+| [v0.9.34](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.34) | 2026-10-07 | 移除全部 IP 白名单功能（含每密钥与全局免密钥），访问校验回归「密钥 + loopback」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.34.md) |
 | [v0.9.33](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.33) | 2026-10-07 | 移除密钥列表头部的全局「累计调用」汇总，彻底修正调用量的归属 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.33.md) |
 | [v0.9.32](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.32) | 2026-10-07 | 调用量与白名单下沉到每个 API 密钥，修正设置页的主次关系 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.32.md) |
 | [v0.9.31](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.31) | 2026-10-06 | 参照 workbuddy2api 补齐四项治理能力——429/402 冷却、会话粘性、积分保底、成本折算 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.31.md) |
