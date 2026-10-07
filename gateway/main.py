@@ -65,7 +65,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.33"
+VERSION_DEFAULT = "0.9.34"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1714,10 +1714,13 @@ def _gateway_auth(request: Request) -> Dict[str, Any]:
     """统一的 /v1 访问校验。返回 ``{"ok": bool, ...}``，失败时由调用方转 401。
 
     判定顺序（自宽到严）：
-      1. 未开启密钥校验        -> 直接放行；
-      2. loopback（同容器内）    -> 放行（WebUI 代理读 /v1/models 不能被打断）；
-      3. **IP 白名单**（仅开启校验时生效）-> 免密钥放行；
-      4. 否则才校验 Authorization / x-api-key。
+      1. 未开启密钥校验     -> 直接放行；
+      2. loopback（同容器内） -> 放行（WebUI 代理读 /v1/models 不能被打断）；
+      3. 否则校验 Authorization / x-api-key。
+
+    早先这里还有一步「IP 白名单免密钥」，已于 v0.9.34 移除 ——
+    它把「要不要密钥」和「这个来源能不能用」混在一起，
+    既难理解又难排查（用户 2026-10-07 反馈「方法做复杂了」）。
     """
     state = api_keys.get_state()
     if not state.get("requireKey"):
@@ -1725,15 +1728,7 @@ def _gateway_auth(request: Request) -> Dict[str, Any]:
     if _client_is_loopback(request):
         return {"ok": True, "mode": "internal", "requireKey": True}
 
-    # IP 白名单：只免去密钥，不改变其他任何行为。关掉校验时这块整体不生效。
-    wl = state.get("whitelist") or []
-    host = _client_host(request)
-    if wl:
-        if api_keys._ip_in_whitelist(host, wl):
-            return {"ok": True, "mode": "whitelist", "requireKey": True, "client": host}
-
-    # 带上来源 IP：每个密钥还可以有自己的来源白名单（空 = 不限制）。
-    return api_keys.authenticate(_extract_api_key(request), client_host=host)
+    return api_keys.authenticate(_extract_api_key(request))
 
 
 def _gateway_info() -> Dict[str, Any]:
@@ -1834,13 +1829,9 @@ def api_keys_update(payload: Dict[str, Any]):
     key_id = payload.get("id")
     if not key_id:
         raise HTTPException(status_code=400, detail="id is required")
-    # whitelist 也允许随 update 提交：它现在是**每个密钥**自己的属性，
-    # 与 name/enabled 同级，不该再走另一个全局接口。
-    patch = {k: payload[k] for k in ("name", "enabled", "whitelist") if k in payload}
+    patch = {k: payload[k] for k in ("name", "enabled") if k in payload}
     if not patch:
         raise HTTPException(status_code=400, detail="nothing to update")
-    if "whitelist" in patch:
-        patch["whitelist"] = _validate_ip_list(patch.get("whitelist"), "whitelist")
     if patch.get("enabled") is False:
         _guard_last_enabled_key(str(key_id))
     record, error = api_keys.update_key(str(key_id), patch)
@@ -1885,67 +1876,6 @@ def api_keys_config(payload: Dict[str, Any]):
         raise HTTPException(status_code=400,
                             detail="请先创建至少一个可用密钥，再开启密钥校验。")
     api_keys.set_require_key(require)
-    return {"ok": True, "status": api_keys_status()}
-
-
-def _validate_ip_list(raw: Any, field: str = "whitelist") -> List[str]:
-    """把 IP 白名单入参归一并逐条校验，返回去重后的列表。
-
-    供**全局白名单**与**单个密钥的白名单**共用：
-    两处解析与校验规则必须一致，否则同一个输入框在两个地方行为不同，
-    排查起来非常费劲。
-
-    支持：
-      · 字符串：逗号或换行分隔（textarea 里两种写法都常见）
-      · 数组：逐项 str 化
-    条目必须是合法 IP 或 CIDR，否则 400 并列出前几个非法项。
-    """
-    if isinstance(raw, str):
-        parts = [p.strip() for p in raw.replace(",", "\n").split("\n") if p.strip()]
-    elif isinstance(raw, (list, tuple)):
-        parts = [str(p).strip() for p in raw if str(p).strip()]
-    else:
-        raise HTTPException(status_code=400,
-                            detail=f"{field} must be a string or list")
-
-    import ipaddress
-    bad = []
-    for p in parts:
-        try:
-            if "/" in p:
-                ipaddress.ip_network(p, strict=False)
-            else:
-                ipaddress.ip_address(p)
-        except ValueError:
-            bad.append(p)
-    if bad:
-        raise HTTPException(status_code=400,
-                            detail="以下条目不是合法 IP 或 CIDR：" + "、".join(bad[:5]))
-
-    # 去重保序
-    out: List[str] = []
-    for p in parts:
-        if p not in out:
-            out.append(p)
-    return out
-
-
-@app.put("/api-keys/whitelist")
-def api_keys_whitelist(payload: Dict[str, Any]):
-    """整份替换 IP 白名单。
-
-    仅在开启密钥校验时才有意义 —— 未开启时整块放行，白名单不产生任何效果。
-    这里**不**因为未开启而报错：前端在那种情况下本就不会展示该入口，
-    但用户可能先配白名单再开校验；保留写入能力比硬拦更符合直觉。
-
-    传参：``{"whitelist": "192.168.31.5\n192.168.31.0/24"}`` 或数组形式。
-    """
-    if "whitelist" not in payload:
-        raise HTTPException(status_code=400, detail="whitelist is required")
-
-    # 与单个密钥的白名单共用同一个解析器（_validate_ip_list）
-    parts = _validate_ip_list(payload.get("whitelist"), "whitelist")
-    api_keys.set_whitelist(parts)
     return {"ok": True, "status": api_keys_status()}
 
 

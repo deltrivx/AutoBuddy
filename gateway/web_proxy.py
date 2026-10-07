@@ -3111,18 +3111,18 @@ COLLAPSE_SCRIPT = r"""
     authRow.appendChild(authToggle);
     card.appendChild(authRow);
 
+    // （原 4.5 IP 白名单免验证区块已移除 ——
+    //   它把「要不要密钥」和「这个来源能不能用」两件事混在一起，
+    //   既难理解又难排查；用户 2026-10-07 反馈「方法做复杂了」。
+    //   现在访问校验只保留「密钥 + loopback」两条规则。）
 
     // ---- 5. 密钥列表 ----
     var keyHead = wbEl("div", "wb-api-row");
     var keyMain = wbEl("div", "wb-api-main");
     keyMain.appendChild(wbEl("div", "wb-api-label", "API 密钥"));
-    // 这里**不再**放全局「累计调用 N 次 / 最近使用」——
-    // 那是上一版主次混乱的根源：调用量明明是每个密钥各自的，却还摆一个
-    // 全局汇总在标题上，于是看起来像是「整个网关的调用量」。
-    // 现在只保留数量概览，并明确指引到各行去看属于每个密钥的数据。
     keyMain.appendChild(wbEl("div", "wb-api-desc",
-      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个。"
-      + "每个密钥各自的调用次数与来源白名单见下方各行 —— 它们是各自的，不是全局汇总。"));
+      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个 · 累计调用 " + (stats.calls || 0) + " 次"
+      + " · 最近使用 " + wbTime(stats.lastUsedAt)));
     keyHead.appendChild(keyMain);
     var keyActions = wbEl("div", null);
     keyActions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
@@ -3159,23 +3159,9 @@ COLLAPSE_SCRIPT = r"""
         line.appendChild(wbEl("span", "wb-api-keyname", k.name || "未命名"));
         line.appendChild(wbChip(k.maskedKey));
 
-        // 调用量：归属到**这一个密钥**，不是全局汇总。
-        // 它必须挂在密钥行内 —— 摆在外面会让人误以为是整个网关的调用量。
         var meta = wbEl("span", "wb-api-badge", "调用 " + (k.callCount || 0) + " 次");
-        meta.title = "该密钥累计调用次数\n创建于 " + wbTime(k.createdAt)
-          + " · 最近使用 " + wbTime(k.lastUsedAt);
+        meta.title = "创建于 " + wbTime(k.createdAt) + " · 最近使用 " + wbTime(k.lastUsedAt);
         line.appendChild(meta);
-
-        // 白名单：同样是**这个密钥自己**的来源限制，不是全局开关。
-        // 点一下就地展开编辑，保存只影响这一个密钥。
-        var kwl = k.whitelist || [];
-        var wlBadge = wbEl("span", "wb-api-badge",
-          kwl.length ? ("白名单 " + kwl.length + " 条") : "不限来源");
-        wlBadge.style.cursor = "pointer";
-        wlBadge.title = kwl.length
-          ? ("该密钥仅允许这些来源 IP 使用：\n" + kwl.join("\n") + "\n\n点击修改")
-          : "该密钥不限制来源 IP。点击设置来源白名单。";
-        line.appendChild(wlBadge);
 
         var spacer = wbEl("span", null);
         spacer.style.cssText = "flex:1 1 auto;";
@@ -3200,144 +3186,9 @@ COLLAPSE_SCRIPT = r"""
         line.appendChild(delBtn);
 
         listRow.appendChild(line);
-
-        // 白名单行内编辑区（默认收起，点徽章展开）
-        var wlEdit = wbEl("div", "wb-api-keyrow");
-        wlEdit.style.display = "none";
-        wlEdit.style.cssText += "flex-direction:column;align-items:stretch;gap:6px;background:rgba(127,127,127,0.05);padding:10px;border-radius:8px;";
-        var wlEditHead = wbEl("div", "wb-api-desc",
-          "「" + (k.name || "未命名") + "」的来源 IP 白名单 —— 只作用于这个密钥，"
-          + "不影响其他密钥，也不影响下面的全局白名单。留空 = 不限制来源。");
-        wlEdit.appendChild(wlEditHead);
-
-        var wlBox = document.createElement("textarea");
-        wlBox.className = "wb-api-input wb-api-mono";
-        wlBox.rows = 2;
-        wlBox.spellcheck = false;
-        wlBox.placeholder = "192.168.31.5\n192.168.31.0/24";
-        wlBox.style.cssText = "width:100%;resize:vertical;line-height:1.5;";
-        wlBox.value = kwl.join("\n");
-        wlEdit.appendChild(wlBox);
-
-        var wlBtns = wbEl("div", null);
-        wlBtns.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
-        var wlSave = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存");
-        wlSave.onclick = function () {
-          wlSave.disabled = true;
-          wbApiAction("/api/api-keys/update", "POST",
-            { id: k.id, whitelist: wlBox.value }, "已更新该密钥的白名单")
-            .then(function () {
-              wlSave.disabled = false;
-              wlEdit.style.display = "none";
-            }, function () { wlSave.disabled = false; });
-        };
-        wlBtns.appendChild(wlSave);
-
-        var wlCancel = wbEl("button", "wb-api-btn", "取消");
-        wlCancel.onclick = function () {
-          wlBox.value = (k.whitelist || []).join("\n");
-          wlEdit.style.display = "none";
-        };
-        wlBtns.appendChild(wlCancel);
-
-        // 一键填入当前访问 IP（与全局白名单那块一致的手感）
-        var wlSelf = wbEl("button", "wb-api-btn", "添加当前 IP");
-        wlSelf.title = "把你现在访问控制台的来源 IP 加进这个密钥的白名单";
-        wlSelf.onclick = function () {
-          wlSelf.disabled = true;
-          fetch("/api/client-ip", { cache: "no-store" })
-            .then(function (r) { return r.ok ? r.json() : {}; })
-            .then(function (d) {
-              var ip = (d && d.ip) || "";
-              if (!ip) { wbToast("未能获取当前 IP", "warn"); return; }
-              var cur = wlBox.value.trim();
-              var parts = cur ? cur.split(/[\n,]/).map(function (s) { return s.trim(); }) : [];
-              if (parts.indexOf(ip) !== -1) { wbToast("当前 IP 已在名单中：" + ip, "ok"); return; }
-              wlBox.value = cur ? (cur + "\n" + ip) : ip;
-              wbToast("已填入当前 IP：" + ip + "，点「保存」生效", "ok");
-            })
-            .catch(function () { wbToast("获取当前 IP 失败", "err"); })
-            .then(function () { wlSelf.disabled = false; });
-        };
-        wlBtns.appendChild(wlSelf);
-        wlEdit.appendChild(wlBtns);
-        listRow.appendChild(wlEdit);
-
-        wlBadge.onclick = function () {
-          var open = wlEdit.style.display !== "none";
-          wlEdit.style.display = open ? "none" : "";
-          if (!open) wlBox.focus();
-        };
       });
     }
     card.appendChild(listRow);
-    // ---- 5.5 全局 IP 白名单（免密钥）----
-    //
-    // 位置说明（用户 2026-10-07 反馈「主次关系混乱」）：
-    // 这块原先摆在密钥列表**前面**，于是看起来像「整个网关的总开关」；
-    // 但白名单的真正归属是**每个密钥**（上面每行都有自己的白名单）。
-    // 所以把它移到密钥列表之后，并明确标注为「兜底」，避免喧宾夺主。
-    //
-    // 为何要隐藏：关掉密钥校验时后端就整体放行了，白名单不产生任何效果。
-    // 展示一个“没用”的输入框只会让人误会它在生效。配置本身会保留，
-    // 重新打开校验就原样恢复，不会因为隐藏而丢失。
-    if (data.requireKey) {
-      var wlRow = wbEl("div", "wb-api-row wb-api-row-stack");
-      var wlHead = wbEl("div", null);
-      wlHead.appendChild(wbEl("div", "wb-api-label", "全局 IP 白名单（免密钥 · 兜底）"));
-      wlHead.appendChild(wbEl("div", "wb-api-desc",
-        "兜底规则：名单内的来源 IP 调用 /v1/* 无需携带任何密钥。"
-        + "它作用于**所有**密钥之上，与上面每个密钥各自的白名单不是一回事 —— "
-        + "单个密钥的白名单管的是「这个密钥许不许这个 IP 用」，这里管的是「要不要密钥」。"
-        + "支持精确 IP（192.168.31.5）与 CIDR 网段（192.168.31.0/24），一行一个，也可用逗号分隔。留空则不启用。"));
-      wlRow.appendChild(wlHead);
-
-      var wlBox = document.createElement("textarea");
-      wlBox.className = "wb-api-input wb-api-mono";
-      wlBox.rows = 3;
-      wlBox.spellcheck = false;
-      wlBox.placeholder = "192.168.31.5\n192.168.31.0/24";
-      wlBox.style.cssText = "width:100%;margin-top:8px;resize:vertical;line-height:1.5;";
-      wlBox.value = (data.whitelist || []).join("\n");
-      wlRow.appendChild(wlBox);
-
-      var wlLine = wbEl("div", null);
-      wlLine.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px;";
-      var wlSave = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存白名单");
-      wlSave.onclick = function () {
-        wlSave.disabled = true;
-        wbApiAction("/api/api-keys/whitelist", "PUT", { whitelist: wlBox.value },
-          "白名单已保存").then(function () { wlSave.disabled = false; });
-      };
-      wlLine.appendChild(wlSave);
-
-      var wlSelf = wbEl("button", "wb-api-btn", "添加当前 IP");
-      wlSelf.title = "把你现在访问控制台的来源 IP 加进白名单";
-      wlSelf.onclick = function () {
-        wlSelf.disabled = true;
-        fetch("/api/client-ip", { cache: "no-store" })
-          .then(function (r) { return r.ok ? r.json() : {}; })
-          .then(function (d) {
-            var ip = (d && d.ip) || "";
-            if (!ip) { wbToast("未能获取当前 IP", "warn"); return; }
-            var cur = wlBox.value.trim();
-            if (cur.split(/[\n,]/).map(function (s) { return s.trim(); }).indexOf(ip) !== -1) {
-              wbToast("当前 IP 已在名单中：" + ip, "ok");
-              return;
-            }
-            wlBox.value = cur ? (cur + "\n" + ip) : ip;
-            wbToast("已填入当前 IP：" + ip + "，点「保存白名单」生效", "ok");
-          })
-          .catch(function () { wbToast("获取当前 IP 失败", "err"); })
-          .then(function () { wlSelf.disabled = false; });
-      };
-      wlLine.appendChild(wlSelf);
-
-      var wlCount = wbEl("span", "wb-api-desc", "共 " + (data.whitelistCount || 0) + " 条");
-      wlLine.appendChild(wlCount);
-      wlRow.appendChild(wlLine);
-      card.appendChild(wlRow);
-    }
 
     // ---- 6. 自检 ----
     var selfRow = wbEl("div", "wb-api-row");
@@ -6083,10 +5934,6 @@ async def api_keys_config(request: Request):
     return await _forward_gateway("PUT", "/api-keys/config", await request.body())
 
 
-@app.put("/api/api-keys/whitelist")
-async def api_keys_whitelist(request: Request):
-    """IP 白名单写入。与 config 同级，语义：仅在开启密钥校验时生效。"""
-    return await _forward_gateway("PUT", "/api-keys/whitelist", await request.body())
 
 
 @app.post("/api/gateway-selftest")

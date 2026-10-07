@@ -38,10 +38,6 @@ _LOCK = threading.RLock()
 _STATE: Dict[str, Any] = {
     "requireKey": False,
     "keys": [],
-    # IP 白名单：仅当 requireKey=True 时生效。命中名单的客户端免密钥放行。
-    # 典型用途：家里/公司的固定出口 IP、内网网关、CI 机器 —— 它们反复调用
-    # /v1/*，每次都带密钥既麻烦又容易在轮换时漏改（本项目刚因此踩过 401）。
-    "whitelist": [],
 }
 
 
@@ -53,7 +49,6 @@ def _load_locked() -> None:
     """从磁盘恢复。文件缺失 / 损坏 / 结构不对一律回退到默认值，绝不抛。"""
     _STATE["requireKey"] = False
     _STATE["keys"] = []
-    _STATE["whitelist"] = []
     try:
         if not KEYS_FILE.exists():
             return
@@ -62,9 +57,8 @@ def _load_locked() -> None:
         if not isinstance(data, dict):
             return
         _STATE["requireKey"] = bool(data.get("requireKey"))
-        wl = data.get("whitelist")
-        if isinstance(wl, list):
-            _STATE["whitelist"] = [str(x).strip() for x in wl if str(x).strip()]
+        # 旧版本落盘的 whitelist 字段已废弃：读到了也直接忽略，
+        # 不再恢复进内存状态（功能已整体移除）。
         keys = data.get("keys")
         if isinstance(keys, list):
             _STATE["keys"] = [k for k in keys if isinstance(k, dict) and k.get("key")]
@@ -72,7 +66,6 @@ def _load_locked() -> None:
         print(f"[api-keys] failed to load keys: {e}", flush=True)
         _STATE["requireKey"] = False
         _STATE["keys"] = []
-        _STATE["whitelist"] = []
 
 
 def _save_locked() -> None:
@@ -82,7 +75,6 @@ def _save_locked() -> None:
         tmp = KEYS_FILE.with_name(KEYS_FILE.name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"requireKey": _STATE["requireKey"],
-                       "whitelist": _STATE.get("whitelist") or [],
                        "keys": _STATE["keys"]},
                       f, ensure_ascii=False, indent=2)
         os.replace(tmp, KEYS_FILE)
@@ -120,13 +112,7 @@ def _public(record: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": bool(record.get("enabled", True)),
         "createdAt": record.get("createdAt"),
         "lastUsedAt": record.get("lastUsedAt"),
-        # 调用量是**每个密钥**自己的，不是全局的 —— 界面上必须挂在
-        # 每个密钥行内，否则会让人误以为是整个网关的调用量。
         "callCount": int(record.get("callCount") or 0),
-        # 该密钥自己的 IP 白名单（空 = 不限制来源）。
-        # 与全局 whitelist 的区别：全局那份是「免密钥放行」，这份是
-        # 「这个密钥只允许从这些 IP 使用」—— 归属到具体密钥上。
-        "whitelist": list(record.get("whitelist") or []),
     }
 
 
@@ -138,122 +124,26 @@ def get_state() -> Dict[str, Any]:
     with _LOCK:
         return {
             "requireKey": bool(_STATE["requireKey"]),
-            "whitelist": list(_STATE.get("whitelist") or []),
         }
 
 
 # ---------------------------------------------------------------------------
-# IP 白名单
+# 访问校验
 # ---------------------------------------------------------------------------
 #
-# 语义边界（很重要，避免把开关做成后门）：
-#   · 只在 requireKey=True 时生效。关掉密钥校验时一切放行，白名单没有意义，
-#     前端也据此隐藏这块 UI（配置保留但不可见，重新开启校验即恢复）。
-#   · 白名单只能「免去密钥」，不能绕过 loopback 判定之外的其他任何检查。
-#   · 支持精确 IP（192.168.31.5）与 CIDR 网段（192.168.31.0/24）。
-#     这里**必须**同时支持 CIDR —— 早先给 Hermes 配 NO_PROXY 时踩过
-#     「Python 不认 CIDR」的坑，那是另一回事（httpx 的 NO_PROXY 语义），
+# 语义边界：只做密钥校验，不做来源 IP 判断。
+# 早先版本有 IP 白名单（免密钥放行），已于 v0.9.34 整体移除 ——
+# 它把「要不要密钥」和「这个来源能不能用」两件事混在一起，
+# 既难理解又难排查（用户 2026-10-07 反馈「方法做复杂了」）。
 #     本模块自己解析，不依赖第三方库的环境变量行为。
-
-def _normalize_ip(value: str) -> str:
-    """把 IPv4-mapped IPv6（::ffff:192.168.31.5）归一到纯 IPv4 形态。"""
-    v = (value or "").strip()
-    if v.lower().startswith("::ffff:"):
-        v = v[7:]
-    return v
-
-
-def _ip_in_whitelist(host: str, entries: List[str]) -> bool:
-    """判断 IP 是否命中白名单。支持精确匹配与 CIDR，非法条目静默跳过。"""
-    import ipaddress
-
-    ip = _normalize_ip(host)
-    if not ip:
-        return False
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-
-    for raw in entries or []:
-        item = _normalize_ip(str(raw))
-        if not item:
-            continue
-        try:
-            if "/" in item:
-                if addr in ipaddress.ip_network(item, strict=False):
-                    return True
-            elif addr == ipaddress.ip_address(item):
-                return True
-        except ValueError:
-            # 用户手输的条目可能不合法。跳过而不是 500 —— 一个笔误不该
-            # 让整个鉴权路径挂掉。
-            continue
-    return False
-
-
-def _normalize_whitelist(entries: Any) -> List[str]:
-    """把白名单入参归一成去重后的字符串列表。
-
-    供**全局白名单**与**单个密钥的白名单**共用 —— 两处解析规则必须一致，
-    否则同一个输入框在两处行为不同，很难排查。
-
-    支持两种形态：
-      · 字符串：逗号或换行分隔（textarea 里两种写法都常见）
-      · 数组：逐项 str 化
-    """
-    if isinstance(entries, str):
-        parts = entries.replace(",", "\n").split("\n")
-    elif isinstance(entries, (list, tuple)):
-        parts = list(entries)
-    else:
-        parts = []
-    normalized: List[str] = []
-    for p in parts:
-        s = str(p).strip()
-        if s and s not in normalized:
-            normalized.append(s)
-    return normalized
-
-
-def set_whitelist(entries: Any) -> Dict[str, Any]:
-    """整份替换全局白名单。传进来的可能是逗号/换行分隔的字符串，也可能是数组。"""
-    with _LOCK:
-        _STATE["whitelist"] = _normalize_whitelist(entries)
-        _save_locked()
-    return get_config()
-
-
-def set_key_whitelist(key_id: str, entries: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """给**单个密钥**设置它自己的 IP 白名单。
-
-    为什么要有这个（用户 2026-10-07 反馈「主次关系混乱」）：
-    白名单原先只有全局一份，且 UI 上摆在密钥列表**前面**，
-    于是看起来像是「整个网关的开关」，而实际上它是要归属到具体密钥的。
-
-    现在每个密钥自带一份：空 = 不限制来源（保持旧行为），
-    非空 = 该密钥只允许从这些 IP 使用。
-    """
-    with _LOCK:
-        for record in _STATE["keys"]:
-            if str(record.get("id")) != str(key_id):
-                continue
-            record["whitelist"] = _normalize_whitelist(entries)
-            _save_locked()
-            return _public(record), None
-    return None, "key not found"
-
 
 def get_config() -> Dict[str, Any]:
     """给 /api-keys/status 用：连接信息面板需要知道当前是否强制密钥。"""
     with _LOCK:
         keys = [_public(k) for k in _STATE["keys"]]
-        whitelist = list(_STATE.get("whitelist") or [])
     enabled = [k for k in keys if k["enabled"]]
     return {
         "requireKey": bool(_STATE["requireKey"]),
-        "whitelist": whitelist,
-        "whitelistCount": len(whitelist),
         "keys": keys,
         "stats": {
             "total": len(keys),
@@ -290,8 +180,6 @@ def create_key(name: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Op
             "createdAt": int(time.time() * 1000),
             "lastUsedAt": None,
             "callCount": 0,
-            # 每个密钥独立一份白名单，默认不限制来源
-            "whitelist": [],
         }
         _STATE["keys"].append(record)
         _save_locked()
@@ -320,9 +208,6 @@ def update_key(key_id: str, patch: Dict[str, Any]) -> Tuple[Optional[Dict[str, A
                     record["name"] = name
             if "enabled" in patch:
                 record["enabled"] = bool(patch.get("enabled"))
-            if "whitelist" in patch:
-                # 复用全局白名单那套解析（支持字符串/数组、逗号或换行分隔）
-                record["whitelist"] = _normalize_whitelist(patch.get("whitelist"))
             _save_locked()
             return _public(record), None
     return None, "key not found"
@@ -350,15 +235,11 @@ def delete_all_keys() -> int:
 # 认证
 # ---------------------------------------------------------------------------
 
-def authenticate(provided: Optional[str], client_host: Optional[str] = None) -> Dict[str, Any]:
+def authenticate(provided: Optional[str]) -> Dict[str, Any]:
     """校验一个密钥。
 
     返回 ``{"ok": bool, ...}``，调用方据此决定放行或 401 —— 这里不抛异常，
     否则一次配置错误就会让整个网关不可用。
-
-    ``client_host`` 用于校验**该密钥自己的**来源 IP 白名单：
-    密钥若配了 whitelist，则只允许名单内的来源使用；未配（空）则不限制。
-    留空该参数 = 跳过这项检查（保持旧行为，便于单测与内部调用）。
     """
     with _LOCK:
         require = bool(_STATE["requireKey"])
@@ -385,20 +266,6 @@ def authenticate(provided: Optional[str], client_host: Optional[str] = None) -> 
                     "requireKey": True,
                     "detail": "该 API 密钥已被停用。",
                 }
-            # 该密钥自己的来源限制：配了才校验，没配就不限制。
-            # 与全局白名单（免密钥）是**两回事**：那份是「不带密钥也放行」，
-            # 这份是「这个密钥只许这些 IP 用」。
-            kwl = record.get("whitelist") or []
-            if kwl and client_host:
-                if not _ip_in_whitelist(client_host, kwl):
-                    return {
-                        "ok": False,
-                        "mode": "ip_denied",
-                        "requireKey": True,
-                        "keyId": record.get("id"),
-                        "keyName": record.get("name"),
-                        "detail": "该密钥不允许从当前来源 IP 使用（已配置来源白名单）。",
-                    }
             return {
                 "ok": True,
                 "mode": "key",
