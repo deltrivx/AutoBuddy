@@ -3116,9 +3116,13 @@ COLLAPSE_SCRIPT = r"""
     var keyHead = wbEl("div", "wb-api-row");
     var keyMain = wbEl("div", "wb-api-main");
     keyMain.appendChild(wbEl("div", "wb-api-label", "API 密钥"));
+    // 这里**不再**放全局「累计调用 N 次 / 最近使用」——
+    // 那是上一版主次混乱的根源：调用量明明是每个密钥各自的，却还摆一个
+    // 全局汇总在标题上，于是看起来像是「整个网关的调用量」。
+    // 现在只保留数量概览，并明确指引到各行去看属于每个密钥的数据。
     keyMain.appendChild(wbEl("div", "wb-api-desc",
-      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个 · 累计调用 " + (stats.calls || 0) + " 次"
-      + " · 最近使用 " + wbTime(stats.lastUsedAt)));
+      "共 " + (stats.total || 0) + " 个，启用 " + (stats.enabled || 0) + " 个。"
+      + "每个密钥各自的调用次数与来源白名单见下方各行 —— 它们是各自的，不是全局汇总。"));
     keyHead.appendChild(keyMain);
     var keyActions = wbEl("div", null);
     keyActions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
