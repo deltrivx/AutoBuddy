@@ -158,6 +158,35 @@ cd.record_failure("e2", 402, '{"msg":"Insufficient Balance"}')
 cd2 = cd
 check("落盘后重新载入仍在冷却", cd2.is_cooling("e2"), "重启后应保留")
 
+print("\n[7] 渠道拦截 400/11128：冷却该账号，但不误伤普通 400")
+
+# 实测依据（2026-10-07 晚）：窗口内 2 次 11128 全部落在「尘星途」(a944ccff…)，
+# 同期其他账号用**完全相同**的请求形态都成功 —— 所以这是账号级拦截，
+# 修复前 400 一律不冷却，被拦的号仍留在候选集里反复撞同一个 400。
+CHANNEL_BODY = '{"code":11128,"msg":"Illegal API invocation from an unapproved channel"}'
+
+cd.clear("f1")
+check("11128 归类为 channel", cd._classify(400, CHANNEL_BODY) == "channel",
+      f"got {cd._classify(400, CHANNEL_BODY)}")
+applied = cd.record_failure("f1", 400, CHANNEL_BODY)
+check("11128 施加 channel 冷却", applied == "channel", f"got {applied}")
+check("11128 账号进入冷却", cd.is_cooling("f1"), "应处于冷却")
+check("冷却原因记为 channel_blocked",
+      cd._load().get("f1", {}).get("reason") == "channel_blocked",
+      f"got {cd._load().get('f1', {}).get('reason')}")
+
+# 对照组：普通参数类 400 绝不能被卷进来（那不是账号的错）
+cd.clear("f2")
+applied2 = cd.record_failure("f2", 400, '{"code":11133,"msg":"bad param"}')
+check("普通 400 不冷却", applied2 is None, f"got {applied2}")
+check("普通 400 账号不进冷却", not cd.is_cooling("f2"), "不该冷却")
+
+# 被渠道拦截的账号要退出轮询，健康的号不受牵连
+kept = cd.filter_cooling([{"id": "f1"}, {"id": "f2"}], lambda a: a["id"])
+kept_ids = [a["id"] for a in kept]
+check("被拦截账号退出轮询", "f1" not in kept_ids, f"got {kept_ids}")
+check("健康账号仍在轮询", "f2" in kept_ids, f"got {kept_ids}")
+
 import shutil  # noqa: E402
 
 shutil.rmtree(tmp, ignore_errors=True)

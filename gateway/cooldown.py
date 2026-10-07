@@ -43,6 +43,7 @@ SOFT_RATE_BASE = int(os.getenv("AB_CD_SOFT_BASE", "600") or 600)          # 429 
 SOFT_RATE_MAX = int(os.getenv("AB_CD_SOFT_MAX", "7200") or 7200)          # 指数退避封顶 2h
 HARD_COOLDOWN_HOUR = int(os.getenv("AB_CD_HARD_HOUR", "4") or 4)          # 402 解封时刻（次日 04:00）
 NOT_FOUND_COOLDOWN = int(os.getenv("AB_CD_404", "60") or 60)              # 404 固定 60s
+CHANNEL_COOLDOWN = int(os.getenv("AB_CD_CHANNEL", "1800") or 1800)        # 渠道拦截 30m
 BREAKER_THRESHOLD = int(os.getenv("AB_CD_BREAKER_THRESHOLD", "3") or 3)   # 连续失败熔断阈值
 BREAKER_BASE = int(os.getenv("AB_CD_BREAKER_BASE", "1800") or 1800)       # 熔断基数 30m
 BREAKER_MAX = int(os.getenv("AB_CD_BREAKER_MAX", "21600") or 21600)       # 熔断封顶 6h
@@ -116,6 +117,18 @@ def _classify(status_code: int, body_text: str) -> Optional[str]:
         return "soft"
     if status_code == 404:
         return "not_found"
+    # 渠道拦截：400 + code=11128「Illegal API invocation from an unapproved channel」
+    #
+    # 实测依据（2026-10-07 晚）：窗口内 2 次，全部落在「尘星途」(a944ccff…) 一个账号，
+    # 同期其他账号用**完全相同**的请求形态都成功 —— 所以这是**账号级**拦截，
+    # 不是请求形态/UA 问题。结论：让它退出轮询（换号即可），而不是去改请求头。
+    #
+    # 修复前这里返回 None（400 一律不冷却）：被拦的账号仍留在候选集里，
+    # 后续请求会反复撞同一个 400。
+    if status_code == 400:
+        low = (body_text or "").lower()
+        if "11128" in (body_text or "") and "unapproved" in low:
+            return "channel"
     return None
 
 
@@ -152,6 +165,13 @@ def record_failure(account_id: str, status_code: int, body_text: str) -> Optiona
             acc["until"] = now + NOT_FOUND_COOLDOWN
             acc["reason"] = "not_found"
             applied = "not_found"
+        elif kind == "channel":
+            # 与 hard 同理：渠道拦截不叠加软退避，到期即恢复。
+            # 上游的一次策略判定不该被放大成长期封禁。
+            acc["until"] = now + CHANNEL_COOLDOWN
+            acc["reason"] = "channel_blocked"
+            acc["softStreak"] = 0
+            applied = "channel"
 
         # 熔断：连续失败达阈值，与上面的分类冷却并存（取更晚的解封时间）
         if fails >= BREAKER_THRESHOLD:

@@ -31,6 +31,59 @@
 
 ---
 
+## [v0.9.35] - 2026-10-08
+
+<!-- summary: 渠道拦截（400 code=11128）让该账号退出轮询 30 分钟；出站 UA 对齐官方桌面客户端形态 -->
+
+### 修复
+
+- **渠道拦截的账号不再反复撞同一个 400**（实测 2026-10-07 晚）。
+
+  上游偶发返回：
+
+  ```
+  HTTP 400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel"}
+  ```
+
+  修复前 `cooldown._classify()` 对 **400 一律返回 None**（不冷却），
+  于是被拦的账号仍留在候选集里，后续请求会反复撞同一个 400。
+
+  现在 400 + `code=11128` + `unapproved` 三者同时命中时归类为 `channel`，
+  施加 **30 分钟冷却**（`AB_CD_CHANNEL`，可配），让该账号退出自动轮询、
+  自动换号；到期即恢复，不叠加软退避 —— 上游的一次策略判定
+  不该被放大成长期封禁。
+
+- **出站 UA 对齐官方桌面客户端形态**。
+
+  此前三条转发路径（流式首试 / 流式换号重试 / 非流式换号重试）
+  都只带 `Authorization` 与 `Content-Type`，于是 httpx 自带默认
+  `python-httpx/0.23.3` —— 一眼就是脚本客户端。
+
+  现在统一走 `_upstream_headers()`，补上 `Accept` 与
+  `User-Agent: WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1`
+  （取自 `gateway/vendor/workbuddy_daily.py` 的 `DESKTOP_UA`，可用
+  `AB_UPSTREAM_UA` 覆盖）。三条路径共用一处构造，避免漏改其中一条。
+
+### 说明
+
+- ⚠️ **判据强度要诚实：UA 不是已证实的根因。**
+  窗口内 2 次 11128 **全部落在「尘星途」(a944ccff…) 一个账号**，
+  同期其他账号用**完全相同**的 `python-httpx` UA 全都成功 ——
+  所以 11128 更像**账号级渠道拦截**，不是请求形态问题。
+  本次改 UA 只是顺手把请求形态对齐官方、消除一个明确嫌疑点，
+  **真正解决问题的是「让它退出轮询」这条**。
+- 对照护栏：普通参数类 400（如 `code=11133`）**绝不冷却** ——
+  那不是账号的错，已加回归测试锁死。
+
+### 测试
+
+```
+全量 19 个测试文件               ✅ 全绿
+_test_cooldown.py                ✅ 34 项（新增 [7] 渠道拦截 8 项）
+```
+
+---
+
 ## [v0.9.34] - 2026-10-07
 
 <!-- summary: 移除全部 IP 白名单功能（含每密钥白名单与全局免密钥白名单），访问校验回归「密钥 + loopback」 -->
@@ -72,56 +125,6 @@
 若此前依赖「白名单免密钥」的客户端（例如某台固定内网 IP 的机器不带密钥
 调用 `/v1/*`），升级后需要改为携带 API 密钥。
 本项目自身的 OpenClay workbuddy provider 已配置 `apiKey`，不受影响。
-
-### 测试
-
-```
-全量 19 个测试文件               ✅ 全绿
-五模块 AST                       ✅ 通过
-注入 JS node --check             ✅ 通过
-```
-
-## [v0.9.34] - 2026-10-07
-
-<!-- summary: 移除全部 IP 白名单功能（含每密钥与全局免密钥），访问校验回归「密钥 + loopback」 -->
-
-### 移除
-
-- **取消所有白名单功能**（用户 2026-10-07 反馈「方法做复杂了」）。
-
-  撤销 v0.9.32（每密钥一份白名单）与 v0.9.33（头部调用量修正）引入的复杂度，
-  并一并移除更早版本就存在的**全局 IP 白名单（免密钥）**。
-
-  移除范围：
-
-  | 位置 | 移除内容 |
-  | :--- | :--- |
-  | `gateway/api_keys.py` | `_STATE["whitelist"]`、`_ip_in_whitelist()`、`set_whitelist()`、`_normalize_ip()`、`get_config()` 的 `whitelist/whitelistCount` 输出、`_load_locked()` 恢复 |
-  | `gateway/main.py` | `_gateway_auth()` 里的白名单免密钥判定、`PUT /api-keys/whitelist` 路由 |
-  | `gateway/web_proxy.py` | 设置页「IP 白名单（免密钥）」区块、`PUT /api/api-keys/whitelist` 转发 |
-  | 测试 | `_test_api_key_whitelist.py`、`_test_ip_whitelist.py`（测的正是被删功能） |
-
-  访问校验现在只剩两条规则，简单可预期：
-
-  ```
-  1. 未开启密钥校验      -> 放行
-  2. loopback（同容器内） -> 放行
-  3. 否则校验 Authorization / x-api-key
-  ```
-
-### 说明
-
-- **旧的 whitelist 落盘数据不再恢复**：`_load_locked()` 读到该字段直接忽略，
-  不回灌内存也不再写回磁盘（避免僵尸配置复活）。
-- **账号池白名单（`enabledAccountIds`）不受影响** —— 那是账号启用列表，
-  与本功能无关，完整保留。
-- **不影响现有密钥**：增删改、调用计数、启用停用全部照旧。
-
-### 兼容性提示
-
-若此前依赖「白名单免密钥」的客户端（例如某台固定内网 IP 的机器不带密钥
-调用 `/v1/*`），升级后需要改为携带 API 密钥。
-本项目 OpenClaw workbuddy provider 已配置 `apiKey`，不受影响。
 
 ### 测试
 
@@ -2941,7 +2944,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.34...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.35...HEAD
+[v0.9.35]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.34...v0.9.35
 [v0.9.34]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.33...v0.9.34
 [v0.9.33]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.32...v0.9.33
 [v0.9.32]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.31...v0.9.32

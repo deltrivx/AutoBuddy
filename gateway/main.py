@@ -65,7 +65,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.34"
+VERSION_DEFAULT = "0.9.35"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -97,6 +97,31 @@ SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
 MODEL_POLICY_FILE = DATA_DIR / "model_policy.json"
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
+
+# 出站 UA：对齐官方桌面客户端形态（取自 vendor/workbuddy_daily.py 的 DESKTOP_UA）。
+#
+# 为什么要显式设：不设的话 httpx 会自带 ``python-httpx/<ver>``，一眼就是脚本客户端。
+# 上游 400 code=11128 的提示语正是「可能不是官方客户端发出的，请用官方版本重新发送」。
+#
+# ⚠️ 判据强度要诚实：UA **不是**已证实的根因 —— 实测 11128 只出现在「尘星途」
+# 一个账号（2 次），同期其他账号用同一个 python-httpx UA 全都成功。所以 11128
+# 更像账号级渠道拦截；UA 这里只是顺手把请求形态对齐官方，消除一个明确嫌疑点。
+UPSTREAM_UA = os.getenv(
+    "AB_UPSTREAM_UA", "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1")
+
+
+def _upstream_headers(token: str) -> Dict[str, str]:
+    """构造转发到上游的请求头。
+
+    三条转发路径（流式首试 / 流式换号重试 / 非流式换号重试）共用这一处，
+    避免各写一遍、改的时候漏掉其中一条。
+    """
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": UPSTREAM_UA,
+    }
 
 # 基础模型清单：官方别名与路由模式。这些不一定会出现在 usage 记录里，因此常驻。
 # 注意：真实可用模型由 discover_models() 从官方 usage 数据自动补全，不要在这里逐个手工添加新模型。
@@ -2061,10 +2086,7 @@ async def chat_completions(request: Request):
 
     body["stream"] = True
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = _upstream_headers(token)
 
     client = httpx.AsyncClient(timeout=180.0)
 
@@ -2116,8 +2138,7 @@ async def chat_completions(request: Request):
             tried_account_ids.add(served_account_id)
             variant = acc2.get("variant", "ai")
             base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
-            headers = {"Authorization": f"Bearer {acc2['access_token']}",
-                       "Content-Type": "application/json"}
+            headers = _upstream_headers(acc2['access_token'])
             _acquire_account_slot(served_account_id)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)
@@ -2202,8 +2223,7 @@ async def chat_completions(request: Request):
             tried_account_ids.add(served_account_id)
             variant = acc2.get("variant", "ai")
             base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
-            headers = {"Authorization": f"Bearer {acc2['access_token']}",
-                       "Content-Type": "application/json"}
+            headers = _upstream_headers(acc2['access_token'])
             _acquire_account_slot(served_account_id)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)
