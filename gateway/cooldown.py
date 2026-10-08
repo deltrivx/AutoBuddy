@@ -29,11 +29,12 @@ AutoBuddy 此前对 429 是**直接透传**给客户端 —— 排查中发现 7
 
 import json
 import os
+import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 STATE_FILE = DATA_DIR / "cooldown_state.json"
@@ -132,6 +133,41 @@ def _classify(status_code: int, body_text: str) -> Optional[str]:
     return None
 
 
+_RESET_RX = re.compile(
+    r"将在\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})\s*UTC\+8\s*重置")
+# 本地时区固定按上游口径 UTC+8 —— 上游给的就是北京时间，不要再做本机时区换算。
+_CST = timezone(timedelta(hours=8))
+
+
+def _parse_6004_reset(body_text: str) -> Optional[float]:
+    """从 6004 的文案里解析出上游承诺的**重置墙钟**（UTC+8），返回 epoch 秒。
+
+    实测依据（2026-10-08）：上游 429 形如
+
+        您的使用量已超出频率限制，将在 2026-10-08 10:39:26 UTC+8 重置，
+        您也可以切换其他模型继续使用。
+
+    参考 workbuddy2api-panel 的做法：`code 6004`（**模型级**限流）带
+    「将在 … 重置」时**冷却到上游重置墙钟**，而不是盲目的 2 倍指数退避。
+
+    为什么这更好：退避是猜，重置时间是上游**明确承诺**的解封点。
+    退避过短会白撞几次，过长又浪费可用额度；直接用墙钟两者都不犯。
+
+    解析不出时返回 None，由调用方回退到指数退避 —— 宁可保守，也不错冷却。
+    """
+    if not body_text:
+        return None
+    m = _RESET_RX.search(body_text)
+    if not m:
+        return None
+    try:
+        dt = datetime.strptime(m.group(1) + " " + m.group(2), "%Y-%m-%d %H:%M:%S")
+        dt = dt.replace(tzinfo=_CST)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
 def record_failure(account_id: str, status_code: int, body_text: str) -> Optional[str]:
     """记录一次上游失败，返回施加的冷却类型（None = 不冷却）。"""
     if not account_id:
@@ -158,7 +194,15 @@ def record_failure(account_id: str, status_code: int, body_text: str) -> Optiona
             acc["softStreak"] = streak
             # 指数退避：base × 2^(连续次数-1)，封顶
             dur = min(SOFT_RATE_BASE * (2 ** (streak - 1)), SOFT_RATE_MAX)
-            acc["until"] = now + dur
+            until = now + dur
+            # 6004 带重置墙钟时，优先用上游承诺的解封点。
+            # 只在它**比退避更晚**时才采纳，避免上游给了一个过去的时间戳
+            # 反而缩短冷却（那样会白撞）。
+            reset_at = _parse_6004_reset(body_text) if "6004" in (body_text or "") else None
+            if reset_at and reset_at > now:
+                until = max(until, min(reset_at, now + SOFT_RATE_MAX))
+                acc["resetAt"] = reset_at
+            acc["until"] = until
             acc["reason"] = "rate_limit"
             applied = "soft"
         elif kind == "not_found":

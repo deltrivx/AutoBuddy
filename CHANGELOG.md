@@ -31,6 +31,71 @@
 
 ---
 
+## [v0.9.36] - 2026-10-08
+
+<!-- summary: 修复积分统计漏 15 个账号、token 统计只显示 2 天、429 盲目退避改为按上游重置墙钟冷却 -->
+
+### 修复
+
+- **积分统计漏掉 15 个账号**（实测：上游返回 34 个，过滤后只剩 5 个）。
+
+  根因在 `gateway/web_proxy.py` 的 `/api/credits/stats` 过滤逻辑：
+
+  ```python
+  for acc_file in [AB_DATA_DIR/"accounts.json", "/data/.wb-switch/accounts.json"]:
+      ...
+      if valid_account_ids:
+          break        # ← 取到第一个非空就停
+  ```
+
+  实测两份文件：
+
+  | 文件 | 账号数 |
+  | :--- | --- |
+  | `/data/.autobuddy/accounts.json` | **5 个** |
+  | `/data/.wb-switch/accounts.json` | **20 个**（完整） |
+
+  且 5 个是 20 个的**子集**（交集 5、仅后者有 15），于是用了不完整的那份做过滤。
+  佐证矛盾：summary 里 `todayCheckedInAccounts=15`，那 15 个账号正在签到却不在列表里。
+
+  改为两个来源取**并集**，谁都不漏。
+
+- **token 统计只显示 2 天**（数据其实有 8 天，15663 条全在库里）。
+
+  根因：`MAX_DETAIL`（3000，本是 **JSON 模式写入侧**的文件体积护栏）被借用来做
+  **SQLite 读取侧**的 `LIMIT`。实测本网关每天约 1900 条调用 —— 3000 的 LIMIT
+  只够覆盖约 1.5 天，于是 v0.9.28 定的「7 天时间保留」策略**形同虚设**。
+
+  实证：
+
+  ```
+  limit=  3000: 取回 3000 条, 覆盖 2 天
+  limit= 50000: 取回 15666 条, 覆盖 8 天
+  ```
+
+  新增 `DETAIL_READ_LIMIT`（默认 200000）专管读取侧；时间跨度仍由
+  `DETAIL_MAX_DAYS` 负责，写入侧护栏仍用 `MAX_DETAIL`，三者职责分开。
+
+- **429 盲目指数退避 → 按上游承诺的重置墙钟冷却**。
+
+  参考 workbuddy2api-panel：上游 429 `code=6004`（**模型级**限流）明确带
+  「将在 … UTC+8 重置，您也可以切换其他模型继续使用」，例如：
+
+  ```
+  将在 2026-10-08 10:39:26 UTC+8 重置
+  ```
+
+  退避是猜，重置时间是上游**明确承诺**的解封点。退避过短会白撞几次、过长又浪费
+  可用额度。现在解析出重置墙钟并采纳（只在它比退避更晚时才用，避免上游给了过去
+  的时间戳反而缩短冷却）。解析不出时回退到指数退避 —— 宁可保守，也不错冷却。
+
+### 测试
+
+```
+全量 19 个测试文件               ✅ 全绿
+_test_cooldown.py                ✅ 40 项（新增 [8] 6004 重置墙钟 6 项）
+```
+
 ## [v0.9.35] - 2026-10-08
 
 <!-- summary: 渠道拦截（400 code=11128）让该账号退出轮询 30 分钟；出站 UA 对齐官方桌面客户端形态 -->
@@ -2944,7 +3009,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.35...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.36...HEAD
+[v0.9.36]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.35...v0.9.36
 [v0.9.35]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.34...v0.9.35
 [v0.9.34]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.33...v0.9.34
 [v0.9.33]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.32...v0.9.33

@@ -5442,24 +5442,32 @@ async def credits_stats_proxy(request: Request):
         return Response(content=json.dumps({"error": str(e)}), status_code=502, media_type="application/json")
 
     # 读取当前有效的真实账号列表
+    #
+    # ⚠️ 修复（2026-10-08 实测）：原先「取到第一个非空就 break」，而
+    # ``/data/.autobuddy/accounts.json`` 只有 5 个、``/data/.wb-switch/accounts.json``
+    # 有 20 个（实测前者是后者的子集：交集 5、仅后者有 15），于是用了不完整的那份
+    # 做过滤，把 15 个账号从积分统计里**误过滤**掉 —— 上游原本返回 34 个账号，
+    # 过滤后只剩 5 个，但 summary 里 todayCheckedInAccounts=15，明显矛盾（那 15 个
+    # 正在签到，却不在列表里）。
+    #
+    # 正确做法：两个来源取**并集**，谁都不漏。
     valid_account_ids = set()
-    for acc_file in [Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json", Path("/data/.wb-switch/accounts.json")]:
-        if acc_file.exists():
-            try:
-                with open(acc_file, "r", encoding="utf-8") as f:
-                    acc_data = json.load(f)
-                if isinstance(acc_data, list):
-                    for a in acc_data:
-                        if a.get("id"):
-                            valid_account_ids.add(str(a["id"]))
-                elif isinstance(acc_data, dict) and "accounts" in acc_data:
-                    for a in acc_data["accounts"]:
-                        if a.get("id"):
-                            valid_account_ids.add(str(a["id"]))
-                if valid_account_ids:
-                    break
-            except Exception:
-                pass
+    for acc_file in [Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json",
+                     Path("/data/.wb-switch/accounts.json")]:
+        if not acc_file.exists():
+            continue
+        try:
+            with open(acc_file, "r", encoding="utf-8") as f:
+                acc_data = json.load(f)
+            items = acc_data if isinstance(acc_data, list) else (
+                acc_data.get("accounts") if isinstance(acc_data, dict) else None)
+            if not isinstance(items, list):
+                continue
+            for a in items:
+                if isinstance(a, dict) and a.get("id"):
+                    valid_account_ids.add(str(a["id"]))
+        except Exception:
+            pass
 
     if valid_account_ids and "accounts" in data and isinstance(data["accounts"], list):
         # 仅保留真实存在的账号

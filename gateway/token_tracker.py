@@ -69,6 +69,20 @@ DETAIL_MAX_DAYS = int(os.getenv("AB_TOKEN_DETAIL_DAYS", "7") or 7)
 # 把文件撑到不可控 —— 正常情况由上面的时间维度先兜住。
 MAX_DETAIL = int(os.getenv("AB_TOKEN_DETAIL_MAX", "3000") or 3000)
 
+# ---- 读取上限（SQLite 模式专用）----
+#
+# ⚠️ 修复（2026-10-08 实测）：此前读取直接把 ``MAX_DETAIL``（3000）当 LIMIT 用，
+# 而实测本网关**每天约 1900 条**调用 —— 3000 的 LIMIT 只够覆盖约 1.5 天，
+# 于是「7 天时间保留」策略形同虚设，统计页永远只显示 2 天
+# （实测：limit=3000 → 覆盖 2 天；limit=50000 → 覆盖全部 8 天，数据都在库里）。
+#
+# MAX_DETAIL 是**写入侧**的行数护栏（JSON 模式下防止文件膨胀），
+# 不该被借用来限制**读取侧**的时间跨度。两者职责不同，必须分开。
+#
+# 读取侧改由时间维度（DETAIL_MAX_DAYS）负责，这里只留一个防止极端情况的
+# 硬上限（兜底防内存被打爆，正常量级下远不会触发）。
+DETAIL_READ_LIMIT = int(os.getenv("AB_TOKEN_READ_LIMIT", "200000") or 200000)
+
 # ---------------------------------------------------------------------------
 # 批量落盘
 #
@@ -654,7 +668,7 @@ def load_tracker_records() -> List[Dict[str, Any]]:
                 _store().migrate_from_json(TRACKER_FILE, _rollup_path())
             except Exception:
                 pass
-        return _store().fetch_detail(DETAIL_MAX_DAYS, MAX_DETAIL)
+        return _store().fetch_detail(DETAIL_MAX_DAYS, DETAIL_READ_LIMIT)
     try:
         if TRACKER_FILE.exists():
             with open(TRACKER_FILE, "r", encoding="utf-8") as f:
@@ -680,7 +694,7 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
                 _store().migrate_from_json(TRACKER_FILE, _rollup_path())
             except Exception:
                 pass
-        logs = _store().fetch_detail(DETAIL_MAX_DAYS, MAX_DETAIL)
+        logs = _store().fetch_detail(DETAIL_MAX_DAYS, DETAIL_READ_LIMIT)
     else:
         logs = []
         if TRACKER_FILE.exists():

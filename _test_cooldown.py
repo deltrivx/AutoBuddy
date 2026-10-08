@@ -187,6 +187,53 @@ kept_ids = [a["id"] for a in kept]
 check("被拦截账号退出轮询", "f1" not in kept_ids, f"got {kept_ids}")
 check("健康账号仍在轮询", "f2" in kept_ids, f"got {kept_ids}")
 
+print("\n[8] 6004 模型级限流：冷却到上游承诺的重置墙钟，而不是盲退避")
+
+# 参考 workbuddy2api-panel：code 6004 带「将在 … 重置」时，
+# 冷却到**上游重置墙钟**。退避是猜，重置时间是上游明确承诺的解封点 ——
+# 退避过短会白撞几次，过长又浪费可用额度。
+import datetime  # noqa: E402
+
+CST = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def _msg_at(when):
+    return when.strftime(
+        "您的使用量已超出频率限制，将在 %Y-%m-%d %H:%M:%S UTC+8 重置，"
+        "您也可以切换其他模型继续使用。")
+
+
+# A) 未来的重置时间 -> 采纳，且落盘 resetAt
+future = datetime.datetime.now(CST) + datetime.timedelta(hours=2)
+body_future = '{"code":6004,"msg":"%s"}' % _msg_at(future)
+cd.clear("g1")
+applied = cd.record_failure("g1", 429, body_future)
+check("6004 仍归类为 soft", applied == "soft", f"got {applied}")
+check("6004 账号进入冷却", cd.is_cooling("g1"), "应处于冷却")
+acc = cd._load().get("g1") or {}
+expect = future.timestamp()
+check("冷却终点取上游重置墙钟",
+      acc.get("resetAt") is not None and abs(acc.get("until", 0) - expect) < 5,
+      f"until={acc.get('until')} expect≈{expect}")
+
+# B) 对照：不带重置时间的 6004 -> 普通指数退避，不写 resetAt
+cd.clear("g2")
+cd.record_failure("g2", 429, '{"code":6004,"msg":"rate"}')
+acc2 = cd._load().get("g2") or {}
+check("无重置时间时不写 resetAt", acc2.get("resetAt") is None, f"got {acc2.get('resetAt')}")
+check("无重置时间时仍退避冷却", cd.is_cooling("g2"), "应处于冷却")
+
+# C) 护栏：过去的重置时间不能被采纳来**缩短**冷却（否则会白撞）
+past = datetime.datetime.now(CST) - datetime.timedelta(hours=1)
+body_past = '{"code":6004,"msg":"%s"}' % _msg_at(past)
+cd.clear("g3")
+cd.record_failure("g3", 429, body_past)
+acc3 = cd._load().get("g3") or {}
+until3 = float(acc3.get("until") or 0)
+check("过期重置时间不缩短冷却",
+      until3 > datetime.datetime.now(CST).timestamp(),
+      f"until={until3} 应晚于现在")
+
 import shutil  # noqa: E402
 
 shutil.rmtree(tmp, ignore_errors=True)
