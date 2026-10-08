@@ -31,6 +31,77 @@
 
 ---
 
+## [v0.9.37] - 2026-10-09
+
+<!-- summary: 请求级指标面板、成长任务等待异步计分落定后补领奖，并标注配置的热/冷边界 -->
+
+### 新增
+
+- **请求级指标（脱敏）与面板数据源**（参照 workbuddy2api-panel 的 `internal/reqlog`）。
+
+  新增 `gateway/reqlog.py`：只归档**请求元数据**（模型 / 账号 / 是否流式 / 耗时 / 状态 /
+  来源 IP 与 UA，受 `AB_REQLOG_CLIENT` 控制），**不写提示词、响应正文、Authorization 或其它凭证**。
+
+  设计取舍：
+  - 有界环形缓冲（默认 200 条，`AB_REQLOG_RECENT` 可调）+ 进程级累计计数 —— 不会随时间无限增长；
+  - **流式响应在流结束后才记 `total_ms`**，首字节耗时单独记 `ttfb_ms`。
+    否则流式请求的耗时会严重低估（TTFB 只有 1~2s，整条流可能几十秒），指标完全失真；
+  - 只埋点 `/chat/completions` —— 面板轮询接口（`/api/*`）若也埋点会把指标刷爆，
+    且对「模型调用成功率/耗时」这个问题没有价值。
+
+  对外两端点：
+  - 网关侧 `GET /reqlog`（快照：成功率 / 耗时分位 / 最近请求）；
+  - WebUI 侧 `GET /api/reqstats` 转发到它。
+
+  ⚠️ **为什么必须走 HTTP 转发，不能让 web_proxy 直接 import**：
+  指标是**进程内内存态**，只有网关进程（18091）持有。WebUI 代理（18090）是**另一个进程**，
+  直接 `import reqlog` 拿到的是**另一个空实例**，面板永远显示 0 条 ——
+  而代码、`py_compile`、全套测试全绿，看不出任何问题。
+  （与 `token_tracker` 走 SQLite 可跨进程读不同。）
+
+### 修复
+
+- **成长任务：等「异步计分落定」后再补领奖**（调研确认的真实缺口）。
+
+  vendor 脚本在 `run_account` 末尾**一次性**领走当时已 completed 的任务；但上游进度是
+  **异步累加**的 —— 脚本跑完时仍是 `accepted` / `in_progress` 的任务可能几秒后才达标，
+  而脚本已经退出，这些任务**永远不会被领**。
+
+  新增 `_wait_and_claim_pending()`（在 `gateway/wb_daily.py` 服务层，
+  **不改 vendor 脚本**，遵守 `vendor/README.md` 的「不做任何修改」）：
+  vendor 子进程返回后，对脚本退出时仍未达标的任务码最多 5 轮 × 2s 轮询，达标即补领。
+
+  两个护栏：
+  - vendor 领过的都已 `claimed`，**不会重复领**；
+  - **AT 来源必须有优先级**（实测踩点）：vendor 运行期会 refresh 出新 AT 并写回
+    `WORK_DIR/wb_refresh_tokens.json`，服务层 `store` 里仍是脚本启动前的旧 AT，
+    直接用旧 AT 会 401。
+    故优先读刷新后的 token 文件，读不到才回退旧 AT。整体约 10 秒，异常不影响主流程。
+
+### 变更
+
+- **在线配置：明确「热 / 冷」边界**（不再含糊）。
+
+  实测澄清两件事：
+  - **面板配置本来就是热的**：`_scheduler_loop()` 每 5 分钟重读 `load_config()`、
+    `_execute()` 每次重新读 —— 改 `enabled` / `interval_hours` 下一轮即按新值走，**不需重启**。
+    ⇒ 不要为此做 livecfg 过度设计（曾误判为「缺热生效」，实际已有）。
+  - **env 常量是冷的**：模块导入时读一次（实测改 env 后 `SOFT_RATE_BASE` 不变），
+    **必须重启容器**才生效。
+
+  `GET /api/wb-daily/health` 新增 `config_scope`，把两组分开返回：
+  `hot`（面板项，由 `DEFAULT_CONFIG` 派生）与 `cold_env`（env 常量名）。
+  ⇒ 目的是消除「改了 env 却期待立即生效」这类误报：先核对改的是面板项还是 env 常量，
+  别急着改调度逻辑。
+
+### 测试
+
+```
+全量 21 个测试文件               ✅ 全绿
+_test_reqlog.py                  ✅ 13 项（归档 / 流式耗时不被低估 / 有界缓冲 / reset）
+_test_config_scope.py            ✅ 11 项（热冷分组 / 补键写入）
+```
+
 ## [v0.9.36] - 2026-10-08
 
 <!-- summary: 修复积分统计漏 15 个账号、token 统计只显示 2 天、429 盲目退避改为按上游重置墙钟冷却 -->
@@ -3009,7 +3080,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.36...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.37...HEAD
+[v0.9.37]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.36...v0.9.37
 [v0.9.36]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.35...v0.9.36
 [v0.9.35]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.34...v0.9.35
 [v0.9.34]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.33...v0.9.34

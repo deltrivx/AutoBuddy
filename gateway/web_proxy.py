@@ -5520,6 +5520,33 @@ async def token_stats_api(request: Request):
     stats = get_aggregated_token_stats()
     return stats
 
+@app.get("/api/reqstats")
+async def reqstats_api(limit: int = 50):
+    """请求级指标（成功率 / 耗时分位 / 最近请求）。
+
+    转发到网关进程的 /reqlog 拿数据。
+
+    ⚠️ 为什么必须走 HTTP 而不是 import reqlog：指标是**进程内内存态**，
+    只有网关进程（18091）持有。WebUI 代理（18090）在另一个进程，
+    直接 import 拿到的是另一个空实例，永远没有数据。
+    与 token-stats 走 SQLite 可跨进程读不同，内存态指标必须经 HTTP 转发。
+
+    归档只含元数据（模型 / 账号 / 耗时 / 状态 / 来源 IP 与 UA，受 AB_REQLOG_CLIENT 控制），
+    不含提示词与凭证。
+    """
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.get(GATEWAY_BASE_URL + "/reqlog", params={"limit": limit})
+            return Response(
+                content=r.content, status_code=r.status_code,
+                media_type="application/json",
+            )
+    except Exception as e:
+        return Response(
+            content=json.dumps({"error": str(e)}), status_code=502,
+            media_type="application/json",
+        )
+
 
 GATEWAY_BASE_URL = os.getenv("AB_GATEWAY_BASE_URL", "http://127.0.0.1:18091")
 GATEWAY_MODELS_URL = os.getenv("AB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/models")

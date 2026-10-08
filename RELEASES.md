@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.36](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.36)
+**当前稳定版：** [v0.9.37](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.37)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,7 +13,8 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v0.9.36](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.36) | 2026-10-08 | 修复积分统计漏 15 个账号、token 统计只显示 2 天、429 盲目退避改为按上游重置墙钟冷却 | — |
+| [v0.9.37](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.37) | 2026-10-09 | 请求级指标面板、成长任务等待异步计分落定后补领奖，并标注配置的热/冷边界 | — |
+| [v0.9.36](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.36) | 2026-10-08 | 修复积分统计漏 15 个账号、token 统计只显示 2 天、429 盲目退避改为按上游重置墙钟冷却 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.36.md) |
 | [v0.9.35](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.35) | 2026-10-08 | 渠道拦截（400 code=11128）让该账号退出轮询 30 分钟；出站 UA 对齐官方桌面客户端形态 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.35.md) |
 | [v0.9.34](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.34) | 2026-10-07 | 移除全部 IP 白名单功能（含每密钥白名单与全局免密钥白名单），访问校验回归「密钥 + loopback」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.34.md) |
 | [v0.9.33](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.33) | 2026-10-07 | 移除密钥列表头部的全局「累计调用」汇总，彻底修正调用量的归属 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.33.md) |
@@ -129,7 +130,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.36    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.37    # 锁定版本
 ```
 
 ## 部署产物

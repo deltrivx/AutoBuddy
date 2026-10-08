@@ -32,6 +32,11 @@ except ImportError:  # pragma: no cover - 取决于运行方式
     import cooldown  # type: ignore[no-redef]
 
 try:
+    from gateway import reqlog
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import reqlog  # type: ignore[no-redef]
+
+try:
     from gateway import session_sticky
 except ImportError:  # pragma: no cover - 取决于运行方式
     import session_sticky  # type: ignore[no-redef]
@@ -65,7 +70,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.36"
+VERSION_DEFAULT = "0.9.37"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -867,7 +872,8 @@ _MODEL_UNAVAILABLE_PATTERNS = (
 _UPSTREAM_ERR_LOG_MAX = 400
 
 
-def _note_upstream_result(account_id: str, status_code: int, body_text: str) -> None:
+def _note_upstream_result(account_id: str, status_code: int, body_text: str,
+                         rid: Optional[str] = None) -> None:
     """把一次上游结果记入冷却账本（成功清零、失败冷却）。
 
     挂在这里而不是散落各处：两条转发路径（流式 / 非流式）都要经过它，
@@ -880,6 +886,15 @@ def _note_upstream_result(account_id: str, status_code: int, body_text: str) -> 
     """
     if not account_id:
         return
+    # 请求指标：顺带把这次请求记进 reqlog（rid 为空则跳过，不影响冷却记账）。
+    # 放在签名里而不是调用点各自记 —— 一处覆盖两条转发路径，
+    # 避免以后加路径时漏掉指标埋点。
+    if rid:
+        try:
+            reqlog.done(rid, reqlog.OUTCOME_SUCCESS if status_code == 200
+                        else reqlog.OUTCOME_HTTP_ERROR)
+        except Exception:
+            pass
     try:
         if status_code == 200:
             cooldown.record_success(account_id)
@@ -1919,6 +1934,19 @@ def health():
         "rotate": _rotate_state_snapshot()
     }
 
+@app.get("/reqlog")
+def reqlog_snapshot(limit: int = 50):
+    """请求级指标快照（成功率 / 耗时分位 / 最近请求）。
+
+    指标是**进程内内存态**，只有网关进程（18091）持有。WebUI 代理（18090）必须走 HTTP 转发拿到，不能在自己进程 import —— 那是另一个实例，永远是空。
+
+    只归档元数据（模型 / 账号 / 耗时 / 状态 / 来源 IP 与 UA，受 AB_REQLOG_CLIENT 控制），不写提示词与凭证。
+    """
+    try:
+        return reqlog.snapshot(limit=limit)
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
 @app.get("/v1/models")
 @app.get("/models")
 async def list_models(request: Request):
@@ -2073,6 +2101,11 @@ async def chat_completions(request: Request):
     # 所以统一挂在 finally / 生成器收尾两处。
     _acquire_account_slot(served_account_id)
 
+    # 请求级指标：只记元数据（模型/账号/是否流式），不记提示词与凭证。
+    rid = reqlog.new_request_id()
+    reqlog.begin(rid, model=raw_model, account=served_account_name,
+                 stream=bool(body.get("stream", False)))
+
     requested_stream = body.get("stream", False)
 
     body["model"] = target_model
@@ -2112,7 +2145,7 @@ async def chat_completions(request: Request):
             await res.aclose()
             if not _looks_like_model_unavailable(res.status_code, body_text):
                 # 失败记账：429/402/404 等让该账号进入冷却，后续自动轮询跳过它
-                _note_upstream_result(served_account_id, res.status_code, body_text)
+                _note_upstream_result(served_account_id, res.status_code, body_text, rid=rid)
                 # 失败即解绑：这个号已经证明不可用，下次换号，别把会话继续钉在它身上
                 try:
                     session_sticky.unbind(session_key)
@@ -2152,6 +2185,10 @@ async def chat_completions(request: Request):
                 async for chunk in res.aiter_bytes():
                     yield chunk
                     scanner.feed(chunk)
+                reqlog.done(rid, reqlog.OUTCOME_SUCCESS)
+            except Exception:
+                reqlog.done(rid, reqlog.OUTCOME_STREAM_ERROR)
+                raise
             finally:
                 await res.aclose()
                 await client.aclose()
@@ -2198,7 +2235,7 @@ async def chat_completions(request: Request):
             await res.aclose()
             if not _looks_like_model_unavailable(res.status_code, body_text):
                 # 失败记账（同流式路径）
-                _note_upstream_result(served_account_id, res.status_code, body_text)
+                _note_upstream_result(served_account_id, res.status_code, body_text, rid=rid)
                 # 失败即解绑（同流式路径）
                 try:
                     session_sticky.unbind(session_key)
@@ -2321,6 +2358,7 @@ async def chat_completions(request: Request):
         }
         # 非流式成功同样记账（成功清零失败计数）
         _note_upstream_result(served_account_id, 200, "")
+        reqlog.done(rid, reqlog.OUTCOME_SUCCESS)
 
         return Response(
             content=json.dumps(result_payload, ensure_ascii=False),

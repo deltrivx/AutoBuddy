@@ -92,6 +92,13 @@ DEFAULT_CONFIG = {
     "lazy_refresh_hours": 6,  # 惰性刷新（小时）
     "checkin_enabled": True,  # 启动时核验服务端状态，未签到账号自动补签
 }
+
+# 冷配置：模块导入时读一次的 env 常量（改了**必须重启容器**才生效）。
+# 与「面板配置热生效」区分开 —— 用户改了 env 却期待立即生效，是最常见的误解。
+_COLD_ENV_KEYS = (
+    "AB_DATA_DIR",     # 数据目录（模块级读一次）
+    "WB_DAILY_PORT",   # 本服务端口（__main__ 读）
+)
 # 参与账号**自动关联账号池**（国内版 cn 账号），不提供手动加入入口。
 # 历史上曾有过 extra_accounts（手填「手机号:RT」），已移除：账号池本身就是
 # 唯一权威来源，再开一个手填入口只会让「哪些账号在跑」出现两个答案。
@@ -486,6 +493,105 @@ def _tail_summary(lines: list[str], n: int = 6) -> list[str]:
     return kept[-n:]
 
 
+async def _wait_and_claim_pending(job: DailyJob, store: dict) -> int:
+    """等「异步计分落定」后补领奖（本地补丁，不改 vendor 脚本）。
+
+    背景（调研确认）：vendor 脚本在 run_account 末尾一次性领走当时已 completed 的任务，
+    但上游进度是**异步累加**的 —— 脚本跑完时仍是 accepted / in_progress 的任务，
+    可能几秒后才达标，而脚本已经退出，于是这些任务永远不会被领。
+
+    本函数在 vendor 子进程**返回之后**运行，只补领「脚本结束时还没达标、后来变 completed」的。
+
+    ⚠️ AT 来源必须有优先级（实测踩点）：vendor 运行期会 refresh 出新 AT 并写回
+    WORK_DIR/wb_refresh_tokens.json（vendor 343-344 行），而服务层的 store 里仍是
+    **脚本启动前的旧 AT** —— 直接用旧 AT 调接口会 401。⇒ 优先读刷新后的 token 文件，
+    读不到才回退 store 的旧 AT。
+
+    保守边界：
+    - 只处理脚本退出时处于 accepted / in_progress 的任务码（vendor 领过的都已 claimed，不会重复领）；
+    - 最多 5 轮 × 2s 轮询，整体约 10 秒，绝不拖长任务；
+    - 任何异常都不影响主流程（只记日志）。
+    """
+    try:
+        import httpx
+    except Exception as e:
+        job.log_line("[wait-claim] 缺少 httpx，跳过: %s" % str(e)[:120])
+        return 0
+
+    # 优先读 vendor 运行期刷新后写回的 token（含新 AT）
+    refreshed = {}
+    try:
+        tf = WORK_DIR / "wb_refresh_tokens.json"
+        if tf.exists():
+            refreshed = json.load(open(tf, encoding="utf-8")) or {}
+    except Exception:
+        refreshed = {}
+
+    ua = "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1"
+    base = "https://www.workbuddy.cn"
+    claimed = 0
+    try:
+        async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
+            for user, ent in (store or {}).items():
+                # AT 来源：刷新后的优先，旧 AT 兜底
+                at = ""
+                r = refreshed.get(user)
+                if isinstance(r, dict):
+                    at = (r.get("access_token") or "").strip()
+                if not at:
+                    at = (ent.get("access_token") or "").strip()
+                if not at:
+                    continue
+                headers = {
+                    "Authorization": "Bearer " + at,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/plain, */*",
+                    "Origin": base,
+                    "Referer": base + "/profile/growth-center",
+                    "User-Agent": ua,
+                }
+                try:
+                    r0 = await client.get(base + "/v2/activity/growth/tasks", headers=headers)
+                    t0 = ((r0.json() or {}).get("data") or {}).get("tasks") or []
+                except Exception:
+                    continue
+                pending = [t.get("task_code") for t in t0
+                           if isinstance(t, dict)
+                           and t.get("accept_status") in ("accepted", "in_progress")
+                           and t.get("task_code")]
+                if not pending:
+                    continue
+                job.log_line("[wait-claim] %s: 待落定 %d 项" % (user, len(pending)))
+                for _round in range(5):
+                    await asyncio.sleep(2)
+                    try:
+                        r = await client.get(base + "/v2/activity/growth/tasks", headers=headers)
+                        tasks = ((r.json() or {}).get("data") or {}).get("tasks") or []
+                    except Exception:
+                        continue
+                    m = {t.get("task_code"): t for t in tasks if isinstance(t, dict)}
+                    ready = [c for c in pending
+                             if (m.get(c) or {}).get("accept_status") in ("completed", "claimed")]
+                    if not ready:
+                        continue
+                    for code in ready:
+                        try:
+                            cr = await client.post(
+                                base + "/activity/growth/tasks/%s/claim" % code,
+                                json={}, headers=headers, timeout=15.0)
+                            if cr.status_code == 200:
+                                claimed += 1
+                                job.log_line("[wait-claim] 补领成功 %s" % code)
+                        except Exception as e:
+                            job.log_line("[wait-claim] %s 领奖异常: %s" % (code, str(e)[:60]))
+                    pending = [c for c in pending if c not in ready]
+                    if not pending:
+                        break
+    except Exception as e:
+        job.log_line("[wait-claim] 整体异常（不影响主流程）: %s" % str(e)[:120])
+    return claimed
+
+
 async def _execute(job: DailyJob):
     """生成 token 池并子进程执行 vendor 脚本（默认完整任务模式）。"""
     global _last_run_at
@@ -588,6 +694,13 @@ async def _execute(job: DailyJob):
         return
     if rc == 0:
         job.log_line("本轮每日任务执行完成")
+        # 补领「脚本退出时还没达标、几秒后才完成」的任务（vendor 已领过的都已 claimed，不会重复领）
+        try:
+            extra = await _wait_and_claim_pending(job, store)
+            if extra:
+                job.log_line(f"本轮补领 {extra} 项（等待异步计分落定后）")
+        except Exception as e:
+            job.log_line(f"补领异常（不影响主流程）: {str(e)[:80]}")
         job.finish("done", {"rc": 0, "summary": _tail_summary(all_lines)})
     else:
         job.log_line(f"脚本退出码 {rc}，请查看日志定位失败账号")
@@ -822,6 +935,16 @@ async def health_api():
         "running_job_id": running[0].id if running else None,
         "last_run_at": _last_run_at or cfg.get("last_run_at"),
         "next_due_at": next_due,
+        # ── 热 / 冷口径 ──
+        # hot：面板改的这些键**立即生效** —— _scheduler_loop 每 5 分钟重读、_execute 每次 load_config()，
+        #      不需要重启（实测：改 enabled / interval_hours 后下一轮调度即按新值走）。
+        # cold_env：模块导入时读一次的 env 常量，改了**必须重启容器**。
+        # ⚠️ 区别这两者的意义：用户改了 env 却期待立即生效，是「配置没热生效」这类误报最常见的来源 ——
+        # 先核对改的是面板项还是 env 常量，别急着改调度逻辑。
+        "config_scope": {
+            "hot": sorted(DEFAULT_CONFIG.keys()),
+            "cold_env": list(_COLD_ENV_KEYS),
+        },
     }
 
 
