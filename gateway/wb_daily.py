@@ -493,6 +493,102 @@ def _tail_summary(lines: list[str], n: int = 6) -> list[str]:
     return kept[-n:]
 
 
+async def _retry_accept_pending(job: DailyJob, store: dict) -> int:
+    """补登记：重试脚本运行期被「前置未满足」拒掉的任务登记。
+
+    实证依据（2026-10-09 job 285268d7eb92，账号 15828020689，完成度仅 1/18）：
+    vendor 日志里 16 项报 `prerequisite not met: first_buddy`，脚本据此判定
+    「服务端仍无 Buddy 实例」并**永久放弃**；但任务结束后实测：
+
+      - GET /buddy/visible            → has_buddy = **true**（实例其实已存在）
+      - first_buddy 任务              → accept_status = claimed，进度 1/1
+      - 对那 7 个被拒任务逐个 accept  → **7/7 返回 200 accepted**，回读全部 accepted
+
+    ⇒ 拒绝是**时序问题**（登记那一瞬前置尚未满足），不是任务不可完成。
+    但 vendor 一旦放弃就不再重试，这些任务会一直卡在 not_accepted，
+    每轮重跑都被同一条理由拒掉 —— 这正是「完成度卡在 1/18」的真因。
+
+    本函数在补领**之前**运行，把所有 not_accepted 的任务重新登记一遍。
+    登记成功后任务进入 accepted，下一轮脚本就会对它执行上报动作，进而完成并领奖。
+
+    保守边界（与补领一致）：
+    - 只重试 accept_status == not_accepted 的任务；未下发的任务码不管；
+    - 逐个 accept + 1s 间隔，不给上游压力；
+    - 任何异常都不影响主流程（只记日志）。
+    """
+    try:
+        import httpx
+    except Exception as e:
+        job.log_line("[re-accept] 缺少 httpx，跳过: %s" % str(e)[:120])
+        return 0
+
+    # AT 来源同补领：优先读 vendor 运行期刷新写回的 token
+    refreshed = {}
+    try:
+        tf = WORK_DIR / "wb_refresh_tokens.json"
+        if tf.exists():
+            refreshed = json.load(open(tf, encoding="utf-8")) or {}
+    except Exception:
+        refreshed = {}
+
+    ua = "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1"
+    base = "https://www.workbuddy.cn"
+    accepted = 0
+    try:
+        async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
+            for user, ent in (store or {}).items():
+                at = ""
+                r = refreshed.get(user)
+                if isinstance(r, dict):
+                    at = (r.get("access_token") or "").strip()
+                if not at:
+                    at = (ent.get("access_token") or "").strip()
+                if not at:
+                    continue
+                headers = {
+                    "Authorization": "Bearer " + at,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/plain, */*",
+                    "Origin": base,
+                    "Referer": base + "/profile/growth-center",
+                    "User-Agent": ua,
+                }
+                try:
+                    r0 = await client.get(base + "/v2/activity/growth/tasks", headers=headers)
+                    t0 = ((r0.json() or {}).get("data") or {}).get("tasks") or []
+                except Exception:
+                    continue
+                codes = [t.get("task_code") for t in t0
+                         if isinstance(t, dict)
+                         and t.get("accept_status") == "not_accepted"
+                         and t.get("task_code")]
+                if not codes:
+                    continue
+                job.log_line("[re-accept] %s: 未登记 %d 项，重试登记" % (user, len(codes)))
+                got = 0
+                for code in codes:
+                    try:
+                        ar = await client.post(
+                            base + "/v2/activity/growth/tasks/accept",
+                            json={"task_codes": [code]}, headers=headers, timeout=15.0)
+                        if ar.status_code != 200:
+                            continue
+                        d = ar.json() or {}
+                        results = (d.get("data") or {}).get("results") or []
+                        st = (results[0].get("status") or "") if results else ""
+                        if st == "accepted":
+                            got += 1
+                    except Exception:
+                        continue
+                    await asyncio.sleep(1.0)
+                if got:
+                    accepted += got
+                    job.log_line("[re-accept] %s: 补登记成功 %d 项" % (user, got))
+    except Exception as e:
+        job.log_line("[re-accept] 整体异常（不影响主流程）: %s" % str(e)[:120])
+    return accepted
+
+
 async def _wait_and_claim_pending(job: DailyJob, store: dict) -> int:
     """等「异步计分落定」后补领奖（本地补丁，不改 vendor 脚本）。
 
@@ -694,7 +790,16 @@ async def _execute(job: DailyJob):
         return
     if rc == 0:
         job.log_line("本轮每日任务执行完成")
-        # 补领「脚本退出时还没达标、几秒后才完成」的任务（vendor 已领过的都已 claimed，不会重复领）
+        # ① 补登记：脚本运行期被「前置未满足」拒掉的任务，此刻前置往往已满足，重试一次。
+        #    实证（2026-10-09）：被拒的 7 项在任务结束后逐个 accept 全部 200/accepted ——
+        #    拒绝是时序问题，不是任务不可完成。登记成功后下一轮才会执行上报动作。
+        try:
+            n_acc = await _retry_accept_pending(job, store)
+            if n_acc:
+                job.log_line(f"本轮补登记 {n_acc} 项（前置未满足被拒，现已登记）")
+        except Exception as e:
+            job.log_line(f"补登记异常（不影响主流程）: {str(e)[:80]}")
+        # ② 补领「脚本退出时还没达标、几秒后才完成」的任务（vendor 已领过的都已 claimed，不会重复领）
         try:
             extra = await _wait_and_claim_pending(job, store)
             if extra:

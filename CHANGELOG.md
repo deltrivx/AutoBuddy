@@ -31,6 +31,43 @@
 
 ---
 
+## [v0.9.39] - 2026-10-09
+
+<!-- summary: 补登记——任务结束后重试运行期被「前置未满足」拒掉的任务登记，解开成长任务完成度卡死 -->
+
+### 新增
+
+- **补登记 `_retry_accept_pending()`**（解开「完成度卡在 1/18」的真因）。
+
+  实证（2026-10-09 job `285268d7eb92`，账号 `15828020689` 完成度 1/18）：vendor 日志里
+  16 项报 `prerequisite not met: first_buddy`，脚本据此判定「服务端仍无 Buddy 实例」并永久放弃。
+  但任务结束后在容器内直连上游实测：
+
+  | 查验 | 结果 |
+  | :--- | :--- |
+  | `GET /buddy/visible` | `has_buddy = true`（实例其实已存在） |
+  | `first_buddy` 任务 | `accept_status = claimed`，进度 1/1 |
+  | 对 7 个被拒任务逐个 `accept` | **7/7 返回 `200 accepted`**，回读全部 `accepted` |
+
+  ⇒ 拒绝是**时序问题**（登记那一瞬前置尚未满足），不是任务不可完成。但 vendor 一拒就不再重试，
+  任务永远卡在 `not_accepted`，每轮重跑都被同一理由拒掉。
+
+  本函数在**补领之前**运行，把所有 `not_accepted` 的任务重新登记一遍，使其进入 `accepted`，
+  由下一轮脚本执行上报动作进而完成领奖。保守边界：只重试 `not_accepted`（未下发的任务码不管）；
+  逐个 accept + 1s 间隔；任何异常都不影响主流程。
+
+### 变更
+
+- **补登记与补领的分工明确**：补登记负责 `not_accepted → accept`（前置未满足导致的登记失败），
+  补领负责 `accepted/in_progress → 等达标 → claim`（异步计分延迟导致的漏领）。
+  只做补领看不到卡在登记这一步的任务 —— 这正是本次补上的缺口。
+
+### 测试
+
+- 新增 `_test_re_accept.py`（20 项）：锁住补登记五条契约（函数存在并接线在补领之前、
+  只重试 `not_accepted`、AT 来源优先级、异常不影响主流程）+ 等价算法验证。
+- 全量 23 个测试文件全绿。
+
 ## [v0.9.38] - 2026-10-09
 
 <!-- summary: 补领（等待异步计分落定后领奖）补上回归测试 -->
@@ -3121,7 +3158,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.38...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.39...HEAD
+[v0.9.39]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.38...v0.9.39
 [v0.9.38]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.37...v0.9.38
 [v0.9.37]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.36...v0.9.37
 [v0.9.36]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.35...v0.9.36
