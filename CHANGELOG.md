@@ -31,6 +31,46 @@
 
 ---
 
+## [v0.9.40] - 2026-10-09
+
+<!-- summary: 修复「近7日/本月消耗比今日消耗还低」——累计值小于单日值，数学上不可能 -->
+
+### 修复
+
+- **积分面板累计消耗小于单日消耗**（用户报告：「近7日消耗和本月消耗比今日消耗还低」）。
+
+  线上实测 `/api/credits/stats`：
+
+  | 字段 | 顶层 `summary`（全量 20 账号） | `officialUsage.summary`（前端实际采用） |
+  | :--- | :--- | :--- |
+  | `usageToday` | 5280.01 | 5280.01 |
+  | `usage7Days` | 19573.14 | **3597.49** |
+  | `usageThisMonth` | 21435.50 | **3819.01** |
+
+  根因：`officialUsage` 这条采集通道只覆盖 **6 个账号**，顶层是全量 **20 个账号**，
+  合计类字段天然偏小；而官方前端优先采用 `officialUsage`（`status=complete` 即视为可用），
+  于是把全量累计值覆盖成了残缺值。
+
+  这是 2026-10-08 修复「今日消耗一直是 0」留下的**半截尾巴**：当时只对账了 `usageToday`，
+  并假设「`usage7Days` / `usageThisMonth` 官方是有值的」——该假设已被实测推翻。
+
+- **新增单调护栏**：即便两份数据仍打架，也保证「近7日 >= 今日」且「本月 >= 今日」，
+  不会向用户展示累计小于单日的数字。刻意**不**断言「本月 >= 近7日」——月初前几天
+  本月窗口可能短于 7 天，那样断言会造出新的错误。
+
+### 变更
+
+- 修正 `_reconcile_official_usage()` 里那条误导性注释，把教训留在文件内：
+  「部分字段准」不等于「其余字段也准」，给外部数据源做对账时必须**逐个字段**验证。
+
+### 测试
+
+- 新增 `_test_credits_usage_monotonic.py`（15 项）。用 `ast` 从源码抠出
+  `_reconcile_official_usage` 真实 `exec`（不是字符串匹配），灌入复现缺陷的真实数据后断言输出：
+  累计取顶层全量值且满足单调；顶层缺失时不用残缺值覆盖也不清零；
+  `officialUsage` 今日为 0 时 daily 兜底仍生效；缺失 / 为空 / summary 为 None 时不崩溃。
+- 全量 24 个测试文件全绿。
+
 ## [v0.9.39] - 2026-10-09
 
 <!-- summary: 补登记——任务结束后重试运行期被「前置未满足」拒掉的任务登记，解开成长任务完成度卡死 -->
@@ -3158,7 +3198,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.39...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.40...HEAD
+[v0.9.40]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.39...v0.9.40
 [v0.9.39]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.38...v0.9.39
 [v0.9.38]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.37...v0.9.38
 [v0.9.37]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.36...v0.9.37

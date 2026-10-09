@@ -5275,8 +5275,16 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
     - 顶层也为 0（或缺失）时，才回退到用 ``daily`` 里**今天**那条数据重算；
     - 各账号同样按其 daily 重算，并用顶层同账号的 currentRemaining 补 null。
 
-    只动「今日」这一个维度：usage7Days / usageThisMonth 官方是有值的，
-    动它们反而会引入新的不一致。
+    合计类维度一律以顶层为准：usageToday（2026-10-08 修复）+
+    usage7Days / usageThisMonth（2026-10-09 修复，理由见文件内注释）。
+
+    ⚠️ 下面这句是**旧结论，已被实测推翻**，保留在此作为教训：
+        「usage7Days / usageThisMonth 官方是有值的，动它们反而会引入新的不一致」
+    事实是 officialUsage 只覆盖 6 个账号而顶层是全量 20 个，它的所有合计类
+    字段都偏小。当时只修了「今日」，留下累计维度没管，于是用户看到
+    「近7日/本月 比 今日 还低」这种违反常识的数字。
+    → 教训：给 external source 做对账时，「部分字段准」不等于「其余字段也准」；
+      凡是被覆盖的子集，它的**合计类**字段一律不可信，必须逐个验证。
     """
     ou = data.get("officialUsage")
     if not isinstance(ou, dict) or not ou:
@@ -5338,6 +5346,39 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
         ou_summary["usageToday"] = round(float(top_today), 4)
     elif recomputed_total is not None:
         ou_summary["usageToday"] = round(recomputed_total, 4)
+
+    # ---- 累计维度同样必须以顶层为准（2026-10-09 实测修正）----
+    #
+    # 这里原先的假设是「usage7Days / usageThisMonth 官方是有值的，动它们反而会
+    # 引入新的不一致」。实测证明**该假设不成立**：officialUsage 只采集到 6 个账号，
+    # 而顶层 summary 是全量 20 个账号的合计，于是前端拿到
+    #   usage7Days=3597.49 / usageThisMonth=3819.01  对比  usageToday=5280.01
+    # —— 累计值竟然比单日值还低，这在数学上不可能，用户一眼就能看出是错的。
+    #
+    # 和「今日」同一个道理：officialUsage 的账号覆盖不全，它的**合计类**字段
+    # 不可信；顶层是全量，以顶层为准。
+    def _pos(value):
+        try:
+            f = float(value or 0.0)
+        except Exception:
+            return 0.0
+        return f if f > 0 else 0.0
+
+    for _key in ("usage7Days", "usageThisMonth"):
+        _top_val = _pos(top_summary.get(_key))
+        if _top_val > 0:
+            ou_summary[_key] = round(_top_val, 4)
+
+    # 单调兜底：累计值必须 >= 今日值（今日窗口必然被包含在近7日/本月内）。
+    # 若数据本身仍打架，就按已校准的今日值拉平 —— 宁可保守，也不能展示
+    # 一个违反常识的数字。注意这里**不**强行让「本月 >= 近7日」：月初前几天
+    # 本月窗口可能短于 7 天，那样断言反而会造出一个新的错误。
+    _today_final = _pos(ou_summary.get("usageToday"))
+    if _today_final > 0:
+        if _pos(ou_summary.get("usage7Days")) < _today_final:
+            ou_summary["usage7Days"] = round(_today_final, 4)
+        if _pos(ou_summary.get("usageThisMonth")) < _today_final:
+            ou_summary["usageThisMonth"] = round(_today_final, 4)
 
 
 # ---------------------------------------------------------------------------
