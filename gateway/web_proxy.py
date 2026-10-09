@@ -5470,6 +5470,231 @@ def _checkin_status_store(payload: Any) -> None:
     _CHECKIN_STATUS_CACHE["at"] = time.time()
 
 
+# ---------------------------------------------------------------------------
+# 今日消耗重归因：把后端「今日桶」里跨天串账的部分归还给昨天
+#
+# 实测（2026-10-10 01:17，今天才过 1.29 小时，面板却显示 6371.68）：
+# 后端快照约 5 小时一次，今日桶的基准锚在**昨晚 20:07** 那条快照上，
+# 于是把 10-09 晚间约 3.5 小时（含 22:24 那轮每日任务）的消耗整段算进了 10-10。
+# 交叉验证：当天仅 395 次请求，而往常 3135 次请求对应 5280.01 —— 差约 10 倍。
+#
+# 为什么不能只信后端：后端是闭源引擎，其 daily 桶由稀疏快照做差值得出，
+# 快照间隔（~5h）远大于日界精度要求，跨天必然串账。网关侧改不了它的采集。
+#
+# 修法：用网关自己的**高分辨率**请求账本（token_stats.db，逐请求带时间戳）
+# 把这段窗口内的消耗按「午夜前后的请求数」拆分；没有请求数据时退化为按时间
+# 占比拆分。**守恒**：拆出来的部分加回昨天，总量不变。
+#
+# 快照约 5 小时才更新一次，所以修正结果在快照刷新前是稳定的 —— 用 TTL 缓存
+# 避免每次请求都去读 1MB 快照文件。
+# ---------------------------------------------------------------------------
+
+_SNAP_CACHE = {"at": 0.0, "payload": None}
+_SNAP_TTL_SEC = 120.0
+_REQ_CACHE = {"at": 0.0, "payload": None}
+_REQ_TTL_SEC = 60.0
+
+
+def _credit_snapshot_files():
+    """快照文件（两个位置都可能有，合并读取）。"""
+    out = []
+    for p in (Path("/data/.wb-switch/credit_usage_snapshots.json"),
+              Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "credit_usage_snapshots.json"):
+        try:
+            if p.exists():
+                out.append(p)
+        except Exception:
+            pass
+    return out
+
+
+def _load_credit_snapshots() -> dict:
+    """读取积分快照，返回 {accountId: [(ts_ms, remaining), ...]}（按 ts 升序）。
+
+    带 TTL 缓存：快照文件约 1MB / 5000 条，且后端约 5 小时才更新一次。
+    读失败返回空 dict —— 归因只是增强，失败必须优雅退化。
+    """
+    now = time.time()
+    hit = _SNAP_CACHE.get("payload")
+    if hit is not None and (now - float(_SNAP_CACHE.get("at") or 0.0)) < _SNAP_TTL_SEC:
+        return hit
+    acc = {}
+    for p in _credit_snapshot_files():
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            aid = str(r.get("accountId") or "")
+            if not aid:
+                continue
+            try:
+                ts = float(r.get("ts"))
+                rem = float(r.get("remaining"))
+            except Exception:
+                continue
+            if ts < 1e12:      # 秒级时间戳统一到毫秒
+                ts *= 1000.0
+            acc.setdefault(aid, []).append((ts, rem))
+    for k in acc:
+        acc[k].sort()
+    _SNAP_CACHE["payload"] = acc
+    _SNAP_CACHE["at"] = now
+    return acc
+
+
+def _plan_from_snapshots(snaps: dict, midnight_ms: float) -> dict:
+    """纯函数：算出每个账号需要重归因的窗口。
+
+    返回 {accountId: (baseline_ts, latest_ts, delta)}：
+      - baseline = 午夜**之前**最后一条快照（后端今日桶的基准，可能远早于午夜）
+      - latest   = 最新快照
+      - delta    = baseline.remaining - latest.remaining（后端记为「今日」的量）
+
+    跳过：无基准快照、delta <= 0（配额补充导致的负消耗）、窗口全在午夜前。
+    """
+    plan = {}
+    for aid, seq in (snaps or {}).items():
+        if not seq:
+            continue
+        base = None
+        for ts, rem in seq:
+            if ts <= midnight_ms:
+                base = (ts, rem)
+            else:
+                break
+        latest = seq[-1]
+        if base is None:
+            continue
+        delta = base[1] - latest[1]
+        if delta <= 0:
+            continue
+        if latest[0] <= midnight_ms:
+            continue        # 窗口未跨午夜，不存在串账
+        plan[aid] = (base[0], latest[0], delta)
+    return plan
+
+
+def _split_fraction(baseline_ts: float, latest_ts: float, midnight_ms: float,
+                    n_before: int, n_after: int) -> float:
+    """纯函数：窗口内消耗应归给「今日」的比例。
+
+    优先按请求数拆分（高分辨率证据）；无请求数据时退化为按时间占比。
+    返回 0.0 ~ 1.0。
+    """
+    total = int(n_before or 0) + int(n_after or 0)
+    if total > 0:
+        frac = float(n_after or 0) / float(total)
+    else:
+        span = float(latest_ts - baseline_ts)
+        if span <= 0:
+            return 1.0
+        frac = float(latest_ts - midnight_ms) / span
+    return max(0.0, min(1.0, frac))
+
+
+def _request_rows_cached(win_start_ms: float, win_end_ms: float) -> dict:
+    """取窗口内的请求时间戳，返回 {account_id: [ts, ...]}。带 TTL 缓存。"""
+    now = time.time()
+    hit = _REQ_CACHE.get("payload")
+    if hit is not None and (now - float(_REQ_CACHE.get("at") or 0.0)) < _REQ_TTL_SEC:
+        return hit
+    out = {}
+    db = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "token_stats.db"
+    try:
+        if db.exists():
+            import sqlite3
+            conn = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
+            try:
+                # 多取一些（向前扩 24h），保证能覆盖各账号各异的 baseline
+                lo = float(win_start_ms) - 86400_000.0
+                for aid, ts in conn.execute(
+                        "SELECT account_id, ts FROM usage_logs WHERE ts >= ? AND ts <= ?",
+                        (lo, float(win_end_ms))):
+                    if aid is None or ts is None:
+                        continue
+                    out.setdefault(str(aid), []).append(float(ts))
+            finally:
+                conn.close()
+    except Exception:
+        return out
+    _REQ_CACHE["payload"] = out
+    _REQ_CACHE["at"] = now
+    return out
+
+
+def _reattribute_today_usage(data: dict) -> float:
+    """把后端今日桶里的跨天串账部分归还给昨天，返回挪走的总量。
+
+    直接就地修正 data["accounts"] 的 usageToday 与 daily 桶（今日/昨日）。
+    任何异常都吞掉并返回 0.0 —— 归因是增强，绝不能让积分页打不开。
+    """
+    try:
+        accounts = data.get("accounts")
+        if not isinstance(accounts, list) or not accounts:
+            return 0.0
+        snaps = _load_credit_snapshots()
+        if not snaps:
+            return 0.0
+
+        now_ts = time.time()
+        lt = time.localtime(now_ts)
+        midnight_ts = time.mktime(time.struct_time(
+            (lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, lt.tm_isdst)))
+        midnight_ms = midnight_ts * 1000.0
+        tmd = time.strftime("%Y-%m-%d", lt)
+        ymd = time.strftime("%Y-%m-%d", time.localtime(midnight_ts - 86400))
+
+        plan = _plan_from_snapshots(snaps, midnight_ms)
+        if not plan:
+            return 0.0
+
+        rows = _request_rows_cached(min(p[0] for p in plan.values()),
+                                    max(p[1] for p in plan.values()))
+
+        moved = 0.0
+        for a in accounts:
+            if not isinstance(a, dict):
+                continue
+            aid = str(a.get("accountId") or "")
+            if aid not in plan:
+                continue
+            b_ts, l_ts, delta = plan[aid]
+            nb = na = 0
+            for ts in rows.get(aid, ()):
+                if b_ts <= ts < midnight_ms:
+                    nb += 1
+                elif midnight_ms <= ts <= l_ts:
+                    na += 1
+            frac = _split_fraction(b_ts, l_ts, midnight_ms, nb, na)
+            today_true = delta * frac
+            carry = delta - today_true
+            moved += carry
+
+            a["usageToday"] = round(today_true, 4)
+            dl = a.get("daily")
+            if isinstance(dl, list):
+                for row in dl:
+                    if not isinstance(row, dict):
+                        continue
+                    rd = str(row.get("date") or "")
+                    if rd == tmd:
+                        row["usage"] = round(today_true, 4)
+                    elif rd == ymd:
+                        row["usage"] = round(float(row.get("usage") or 0.0) + carry, 4)
+        if moved > 0:
+            logging.info("[credits] 今日重归因：把 %.2f 从今日桶归还给昨日（快照稀疏导致跨天串账）",
+                         moved)
+        return moved
+    except Exception:
+        return 0.0
+
+
 @app.get("/api/credits/stats")
 async def credits_stats_proxy(request: Request):
     """过滤官方 credits/stats 中的已删除僵尸账号，只保留当前账号池真实账号，并校准汇总指标。"""
@@ -5515,17 +5740,48 @@ async def credits_stats_proxy(request: Request):
         filtered_accounts = [a for a in data["accounts"] if str(a.get("accountId")) in valid_account_ids]
         data["accounts"] = filtered_accounts
 
+        # ① 今日桶重归因：必须在汇总**之前**做，否则汇总会用上未修正的值。
+        #    后端 daily 桶由约 5 小时一次的稀疏快照做差值，基准锚在昨晚上一条，
+        #    于是把昨天晚间的消耗整段算进今天（实测 01:17 就显示 6371.68）。
+        _reattribute_today_usage(data)
+
+        # ② 7日 / 本月改为**由 daily 桶滚动求和**。
+        #    实测后端本就是这么算的（25941.74 = 末7日求和、27807.18 = 10月求和，
+        #    均精确匹配），这里显式重算的好处是：daily 桶每天自动前进一格，
+        #    7日/本月就自动滚动刷新，不会像 officialUsage 那样停更 16 天；
+        #    且今日桶修正后它们能立刻保持一致。
+        _month_prefix = time.strftime("%Y-%m")
+        for _a in filtered_accounts:
+            _dl = _a.get("daily")
+            if not isinstance(_dl, list):
+                continue
+            _by_date = {}
+            for _row in _dl:
+                if isinstance(_row, dict) and _row.get("date"):
+                    try:
+                        _by_date[str(_row["date"])] = float(_row.get("usage") or 0.0)
+                    except Exception:
+                        pass
+            if not _by_date:
+                continue
+            _last7 = sorted(_by_date)[-7:]
+            _a["usage7Days"] = round(sum(_by_date[d] for d in _last7), 2)
+            _a["usageThisMonth"] = round(
+                sum(v for d, v in _by_date.items() if d.startswith(_month_prefix)), 2)
+
         # 重新校准 summary
         total_remaining = sum((a.get("currentRemaining") or 0.0) for a in filtered_accounts)
         total_capacity = sum((a.get("totalCapacity") or 0.0) for a in filtered_accounts)
         usage_7d = sum((a.get("usage7Days") or 0.0) for a in filtered_accounts)
         usage_today = sum((a.get("usageToday") or 0.0) for a in filtered_accounts)
+        usage_month = sum((a.get("usageThisMonth") or 0.0) for a in filtered_accounts)
 
         if "summary" in data and isinstance(data["summary"], dict):
             data["summary"]["currentRemaining"] = round(total_remaining, 2)
             data["summary"]["currentCapacity"] = round(total_capacity, 2)
             data["summary"]["usage7Days"] = round(usage_7d, 2)
             data["summary"]["usageToday"] = round(usage_today, 4)
+            data["summary"]["usageThisMonth"] = round(usage_month, 2)
 
     _reconcile_official_usage(data, valid_account_ids)
 
