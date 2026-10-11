@@ -55,19 +55,37 @@ def check(name, cond, extra=""):
 # ---------------------------------------------------------------------------
 tree = ast.parse(SRC)
 fn_node = None
+_mdl_node = None
 for node in ast.walk(tree):
     if isinstance(node, ast.FunctionDef) and node.name == "_reconcile_official_usage":
         fn_node = node
-        break
+    elif isinstance(node, ast.FunctionDef) and node.name == "_gateway_models_by_account":
+        _mdl_node = node
 
 if fn_node is None:
     print("  FAIL 找不到 _reconcile_official_usage；测试无法进行")
     raise SystemExit(1)
 
-ns = {"time": time}
-mod = ast.Module(body=[fn_node], type_ignores=[])
+ns = {"time": time, "os": __import__("os"), "Path": Path,
+      # 模块级缓存常量：被抽取的函数会引用，缺了会 NameError，
+      # 而生产代码的兜底 try 会把它吞掉 —— 症状是「未接管却静默通过」。
+      "_MDL_CACHE": {"at": 0.0, "payload": None},
+      "_MDL_TTL_SEC": 120.0,
+      "_SNAP_CACHE": {"at": 0.0, "payload": None},
+      "_SNAP_TTL_SEC": 120.0,
+      "_REQ_CACHE": {"at": 0.0, "payload": None},
+      "_REQ_TTL_SEC": 60.0}
+# _reconcile_official_usage 现在依赖 _gateway_models_by_account（读网关账本聚合
+# 逐模型明细）；必须一起抽取，否则运行时 NameError 会被生产代码的兜底 try 吞掉，
+# 症状是「未接管但测试不报错」。
+body = [n for n in (_mdl_node, fn_node) if n is not None]
+mod = ast.Module(body=body, type_ignores=[])
 exec(compile(mod, "<extracted>", "exec"), ns)
 reconcile = ns["_reconcile_official_usage"]
+# 注入桩：不读真实 DB，返回固定的逐模型明细（覆盖当天）
+ns["_gateway_models_by_account"] = lambda: {
+    "acc1": {time.strftime("%Y-%m-%d"): [
+        {"model": "glm-5.2", "requestCount": 2, "credit": 12.03}]}}
 
 
 def build_case(top_today=5280.01, top_7d=19573.14, top_month=21435.49999674,
@@ -181,9 +199,18 @@ d5["officialUsage"]["accounts"] = [
 ]
 reconcile(d5, {"acc1"})
 ou5 = d5["officialUsage"]
-check("ou.accounts 被替换为顶层实时账号",
-      ou5["accounts"] is d5["accounts"],
-      f"ou.accounts 账号数={len(ou5.get('accounts') or [])}")
+# 按官方模板 schema 重构：ou.accounts 与 top accounts 字段集合一致但不 alias
+check("ou.accounts 已按模板重构（非 alias）",
+      ou5["accounts"][0] is not d5["accounts"][0],
+      "不应直接引用顶层账号对象")
+OU_TEMPLATE_FIELDS = {"accountId", "accountName", "daily", "detailTruncated", "error",
+                      "fetchedCount", "models", "ok", "reportedTotal", "requestCount",
+                      "usage7Days", "usageThisMonth", "usageToday"}
+check("包含官方模板全部字段", OU_TEMPLATE_FIELDS.issubset(set(ou5["accounts"][0].keys())),
+      f"缺: {OU_TEMPLATE_FIELDS - set(ou5['accounts'][0].keys())}")
+check("daily 行含 models 字段（官方模板）",
+      "models" in (ou5["accounts"][0]["daily"][-1] or {}),
+      f"daily 行字段: {list(ou5['accounts'][0]['daily'][-1].keys())}")
 check("接管后 daily 滚动到今天（不再停在 9-24）",
       (ou5["accounts"][0]["daily"][-1]["date"] == today),
       f"末条日期={ou5['accounts'][0]['daily'][-1]['date']}")
@@ -192,6 +219,8 @@ check("接管后账号的 7日/本月是实时值",
       f"got={ou5['accounts'][0]['usage7Days']}")
 check("来源标记 source=gateway-realtime", ou5.get("source") == "gateway-realtime")
 check("rangeEnd 对齐到今天", ou5.get("rangeEnd") == today, f"got={ou5.get('rangeEnd')}")
+check("ok=True / error=None（模板安全值）",
+      ou5["accounts"][0].get("ok") is True and ou5["accounts"][0].get("error") is None)
 
 # 顶层 accounts 为空时不得接管（保留官方原始数据）
 d5b = build_case()

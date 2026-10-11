@@ -54,10 +54,17 @@
 
 ### 变更
 
-- **ou.accounts[] 整体接管**：参照 workbuddy2api-panel（2k stars，自建
-  usage.Recorder 不消费 officialUsage）的思路，网关侧用已完成重归因 + 滚动求和的
-  顶层实时账号替换 `ou.accounts[]`，标记 `source: "gateway-realtime"`，`rangeEnd`
+- **ou.accounts[] 整体接管（按官方模板 schema 重构）**：参照 workbuddy2api-panel
+  （2k stars，自建 usage.Recorder 不消费 officialUsage）的思路，网关侧用已重归因 +
+  滚动求和的实时账号重建 `ou.accounts[]`，标记 `source: "gateway-realtime"`，`rangeEnd`
   对齐到今天；freshness 文案区分接管状态。顶层 accounts 为空时不接管。
+
+  ⚠️ 必须**按官方模板重构而非直接引用顶层账号**：官方 ou.accounts 的 schema 含
+  `models` / `requestCount` / `reportedTotal` / `fetchedCount` / `ok` / `error` /
+  `detailTruncated`，且 daily 行含 `models`；而顶层 accounts 是另一套 schema
+  （`checkedInToday` / `currentRemaining` / `variant` …）。直接 alias 会让按官方模板
+  渲染的账号明细与模型分解缺料。逐模型明细（credit / requestCount）由新增的
+  `_gateway_models_by_account()` 从网关账本 token_stats.db 按账号 + 日期聚合。
 
 ### 测试
 

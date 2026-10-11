@@ -32,7 +32,22 @@ workbuddy2api-panel（2k stars）**根本不消费 officialUsage**——自建
 `internal/usage.Recorder`（逐请求记录 + 窗口聚合 + 三种统计窗口）。
 没有「同样问题」因为它压根不用那条数据链路。
 
-## 修复：账号明细整体接管
+## 修复：账号明细按官方模板整体接管
+
+### ⚠️ 必须先纠正的一处做法
+
+初版实现是**直接把顶层 accounts 对象引用**赋给 `ou.accounts[]`。这不符合仓库既定的
+「1:1 复刻官方页面」模板规范 —— 两套 schema 不一样：
+
+| | 官方 ou.accounts schema | 顶层 accounts schema |
+|---|---|---|
+| 账号级 | `models`、`requestCount`、`reportedTotal`、`fetchedCount`、`ok`、`error`、`detailTruncated` | `checkedInToday`、`currentRemaining`、`variant`、`lastCheckinAt` … |
+| daily 行 | `date` + `usage` + **`models`** | 仅 `date` + `usage` |
+
+直接 alias 会让按官方模板渲染的**账号明细与逐模型分解全部缺料**。
+本版改为**按官方模板 schema 重建**：13 个字段一个不缺，daily 行补 `models`，
+逐模型明细（`credit` / `requestCount`）由新增的 `_gateway_models_by_account()`
+从网关账本 `token_stats.db` 按「账号 + 日期」聚合 —— 官方那套已停更，这里是等价替代。
 
 参照 panel 的思路，网关侧全量接管 ou.accounts[]：
 

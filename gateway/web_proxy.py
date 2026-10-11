@@ -5261,6 +5261,48 @@ async def get_icon():
         return Response(content=r.content, media_type="image/png")
 
 
+def _gateway_models_by_account() -> dict:
+    """从网关自己的高分辨率账本聚合「账号×日期 → 逐模型明细」。
+
+    官方 ou.accounts 的 models 行模板 = {credit, model, requestCount}；
+    官方那套自 9-24 停更，这里用 token_stats.db（逐请求带时间戳/账号/模型）
+    重建等价数据。credit 用 cost 列（网关按 OpenRouter 牌价折算的消耗），
+    与官方「credit」同义（都是折算额度）。带 TTL 缓存，读失败返回空 dict ——
+    只是增强，失败必须优雅退化（此时 models 为空数组，页面不至于坏）。
+    """
+    now = time.time()
+    hit = _MDL_CACHE.get("payload")
+    if hit is not None and (now - float(_MDL_CACHE.get("at") or 0.0)) < _MDL_TTL_SEC:
+        return hit
+    out: Dict[str, Dict[str, list]] = {}
+    db = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "token_stats.db"
+    try:
+        if db.exists():
+            import sqlite3
+            conn = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
+            try:
+                # 只取近 62 天（覆盖 31 天明细窗口 + 余量），避免全表扫
+                lo = time.strftime("%Y-%m-%d", time.localtime(now - 62 * 86400))
+                for aid, date, model, cnt, cost in conn.execute(
+                        "SELECT account_id, date, model, COUNT(*), SUM(cost) "
+                        "FROM usage_logs WHERE date >= ? "
+                        "GROUP BY account_id, date, model", (lo,)):
+                    if not aid or not date:
+                        continue
+                    out.setdefault(str(aid), {}).setdefault(str(date), []).append({
+                        "model": str(model or "unknown"),
+                        "requestCount": int(cnt or 0),
+                        "credit": round(float(cost or 0.0), 6),
+                    })
+            finally:
+                conn.close()
+    except Exception:
+        return out
+    _MDL_CACHE["payload"] = out
+    _MDL_CACHE["at"] = now
+    return out
+
+
 def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
     """校准 ``officialUsage`` 里失真的「今日消耗」。
 
@@ -5399,10 +5441,63 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
     try:
         top_accounts = data.get("accounts")
         if isinstance(top_accounts, list) and top_accounts:
-            ou["accounts"] = top_accounts
-            ou["source"] = "gateway-realtime"
-            # 范围端点跟着对齐，避免「数据截止 9-24」的误导继续挂着
-            ou["rangeEnd"] = time.strftime("%Y-%m-%d")
+            # 按官方模板 schema 重构，而非直接 alias：
+            #   官方 ou.accounts 字段 = accountId, accountName, daily[{date, models, usage}],
+            #     detailTruncated, error, fetchedCount, models, ok, reportedTotal,
+            #     requestCount, usage7Days, usageThisMonth, usageToday
+            # 而 top accounts 是另一套 schema（checkedInToday / currentRemaining / variant…），
+            # 直接替换会让按官方模板渲染的账号明细/模型分解缺料。
+            # models 的真实逐模型明细（credit/requestCount）从网关自己的高分辨率
+            # 账本（token_stats.db）按账号+日期聚合 —— 官方那套已停更。
+            _models_by_acc = _gateway_models_by_account()
+            rebuilt = []
+            for _ta in top_accounts:
+                if not isinstance(_ta, dict):
+                    continue
+                _mbd = _models_by_acc.get(str(_ta.get("accountId") or "")) or {}
+                _new_daily = []
+                _acc_models = {}
+                _req_total = 0
+                for _row in (_ta.get("daily") or []):
+                    if not isinstance(_row, dict):
+                        continue
+                    _d = str(_row.get("date") or "")
+                    _m = [dict(x) for x in (_mbd.get(_d) or [])]
+                    _new_daily.append({"date": _d, "usage": _row.get("usage") or 0.0,
+                                       "models": _m})
+                    for _x in _m:
+                        _acc_models.setdefault(_x["model"],
+                                               {"credit": 0.0, "model": _x["model"], "requestCount": 0})
+                        _acc_models[_x["model"]]["credit"] += _x.get("credit") or 0.0
+                        _acc_models[_x["model"]]["requestCount"] += _x.get("requestCount") or 0
+                        _req_total += _x.get("requestCount") or 0
+                _usage_total = 0.0
+                try:
+                    _usage_total = round(sum(float(r.get("usage") or 0.0)
+                                             for r in _new_daily), 4)
+                except Exception:
+                    pass
+                rebuilt.append({
+                    "accountId": _ta.get("accountId"),
+                    "accountName": _ta.get("accountName"),
+                    "daily": _new_daily,
+                    "detailTruncated": True,
+                    "error": None,
+                    "fetchedCount": _req_total,
+                    "models": sorted(_acc_models.values(),
+                                     key=lambda x: -(x.get("credit") or 0.0)),
+                    "ok": True,
+                    "reportedTotal": _usage_total,
+                    "requestCount": _req_total,
+                    "usage7Days": _ta.get("usage7Days"),
+                    "usageThisMonth": _ta.get("usageThisMonth"),
+                    "usageToday": _ta.get("usageToday"),
+                })
+            if rebuilt:
+                ou["accounts"] = rebuilt
+                ou["source"] = "gateway-realtime"
+                # 范围端点跟着对齐，避免「数据截止 9-24」的误导继续挂着
+                ou["rangeEnd"] = time.strftime("%Y-%m-%d")
     except Exception:
         pass
 
@@ -5528,6 +5623,8 @@ _SNAP_CACHE = {"at": 0.0, "payload": None}
 _SNAP_TTL_SEC = 120.0
 _REQ_CACHE = {"at": 0.0, "payload": None}
 _REQ_TTL_SEC = 60.0
+_MDL_CACHE = {"at": 0.0, "payload": None}
+_MDL_TTL_SEC = 120.0
 
 
 def _credit_snapshot_files():
