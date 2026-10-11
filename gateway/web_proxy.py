@@ -78,6 +78,10 @@ COLLAPSE_SCRIPT = r"""
     padding-left: 10px !important;
     padding-right: 10px !important;
   }
+  /* 切换视图时纵向滚动条出现/消失会让内容区宽度突变，视觉上就是「页面横向漂移」。
+     scrollbar-gutter: stable 为滚动条预留固定槽位，消除这个抖动。 */
+  html { scrollbar-gutter: stable; }
+
   aside.wb-collapsed div.min-w-0 {
     display: none !important;
   }
@@ -3911,6 +3915,11 @@ COLLAPSE_SCRIPT = r"""
     }
   }
 
+  /* 每日任务视图的数据新鲜度：切换回本页时若数据仍在 TTL 内就不重拉，
+     避免每次切换都重渲染造成闪屏（实测切换瞬间 DOM mutation 上百次）。 */
+  var __wbDailyLoadedAt = 0;
+  var WB_DAILY_DATA_TTL_MS = 30000;
+
   function wbUpdateWbDailyView() {
     var isDaily = window.location.hash === "#/wb-daily";
     var navLink = document.getElementById("wb-nav-wb-daily");
@@ -3946,7 +3955,13 @@ COLLAPSE_SCRIPT = r"""
       Array.prototype.slice.call(main.children).forEach(function(child) {
         if (child !== dailyView) child.style.display = "none";
       });
-      wbLoadWbDailyData();
+      // 只在数据缺失/过期时才重拉：每次切换都重渲染会让页面闪一下
+      // （实测切换瞬间 DOM mutation 上百次，视觉上就是闪屏）。
+      var __now = Date.now();
+      if (!__wbDailyLoadedAt || (__now - __wbDailyLoadedAt) > WB_DAILY_DATA_TTL_MS) {
+        __wbDailyLoadedAt = __now;
+        wbLoadWbDailyData();
+      }
     } else {
       if (dailyView) dailyView.style.display = "none";
       Array.prototype.slice.call(main.children).forEach(function(child) {

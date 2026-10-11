@@ -31,6 +31,24 @@
 
 ---
 
+## [v0.9.43] - 2026-10-11
+
+<!-- summary: 修复左侧 5 个标签切换时的闪屏与页面漂移 -->
+
+### 修复
+
+- **标签切换闪屏**：每次切回「每日任务」都无条件重拉全部接口并整块重渲染。
+  CDP 实测切换瞬间 DOM mutation 上百次（积分统计 226 / 账号管理 126 / 每日任务 103），
+  视觉上就是闪一下。改为给每日任务数据加 30s TTL，仅首次加载或过期才重拉。
+- **页面漂移**：各视图高度不同，纵向滚动条出现/消失使内容区可用宽度突变
+  （CLS 测不到，因为不是元素位移而是容器宽度变化）。加
+  `html { scrollbar-gutter: stable; }` 为滚动条预留固定槽位。
+
+### 测试
+
+- 内嵌 JS 经 `node --check` 通过（抽取 `<script>` 块校验）；Python 语法通过。
+- 全量 25 个测试文件全绿，无回归。
+
 ## [v0.9.42] - 2026-10-11
 
 <!-- summary: 官方积分采集 9-24 起停更——账号明细（近7日/本月/按日图表）由网关实时数据整体接管 -->
@@ -3269,7 +3287,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.42...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.43...HEAD
+[v0.9.43]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.42...v0.9.43
 [v0.9.42]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.41...v0.9.42
 [v0.9.41]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.40...v0.9.41
 [v0.9.40]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.39...v0.9.40
