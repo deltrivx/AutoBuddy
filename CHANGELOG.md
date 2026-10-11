@@ -31,6 +31,40 @@
 
 ---
 
+## [v0.9.42] - 2026-10-11
+
+<!-- summary: 官方积分采集 9-24 起停更——账号明细（近7日/本月/按日图表）由网关实时数据整体接管 -->
+
+### 修复
+
+- **账号卡片与按日图表的近7日/本月消耗不滚动**（用户报告：「近7天和近一个月消耗就没变过」）。
+
+  实测定位：网关自己的 summary 一直在滚动（25910 → 37561 → 38570），没变的是
+  `officialUsage.accounts[]` —— 每个账号的 daily 全部停在 `2026-08-25 → 2026-09-24`，
+  usage7Days / usageThisMonth 是 9-24 的旧值，而账号卡片和按日图表读的正是这份。
+  v0.9.40 只校准了 ou.summary 三个数，漏了 ou.accounts[]。
+
+  根因：官方闭源引擎的 officialUsage 采集环节 9-24 起停更（collectedAt 停在
+  2026-09-24，已 18 天）。接口本身没坏 —— 直连 `:57890/api/credits/stats` 返回
+  HTTP 200（17ms），顶层 summary 实时（usageToday=8731.84）。
+
+- **今日消耗 7162.85 的真实性已独立验证**：快照剩余差核算 7823.46（23:07 时点），
+  面板 7355.55 略低是 v0.9.41 重归因把午夜前 0.55h 归还昨天所致；请求量 1991 次
+  交叉吻合。创新高是账号池扩容 + 每日任务 + 正常调用的真实水位。
+
+### 变更
+
+- **ou.accounts[] 整体接管**：参照 workbuddy2api-panel（2k stars，自建
+  usage.Recorder 不消费 officialUsage）的思路，网关侧用已完成重归因 + 滚动求和的
+  顶层实时账号替换 `ou.accounts[]`，标记 `source: "gateway-realtime"`，`rangeEnd`
+  对齐到今天；freshness 文案区分接管状态。顶层 accounts 为空时不接管。
+
+### 测试
+
+- `_test_credits_usage_monotonic.py` 扩至 21 项：新增接管契约（替换生效、daily 滚动
+  到今天、7日/本月取实时值、source 标记、rangeEnd 对齐、顶层为空时不接管）。
+- 全量 25 个测试文件全绿。
+
 ## [v0.9.41] - 2026-10-10
 
 <!-- summary: 修复今日消耗在北京时间 0 点未重置（凌晨 1 点就显示昨日全天量级），并让 7 日/本月改为按日滚动求和自动刷新 -->
@@ -3228,7 +3262,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.41...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.42...HEAD
+[v0.9.42]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.41...v0.9.42
 [v0.9.41]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.40...v0.9.41
 [v0.9.40]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.39...v0.9.40
 [v0.9.39]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.38...v0.9.39

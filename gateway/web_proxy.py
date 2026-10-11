@@ -5380,6 +5380,32 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
         if _pos(ou_summary.get("usageThisMonth")) < _today_final:
             ou_summary["usageThisMonth"] = round(_today_final, 4)
 
+    # ---- 账号明细整体接管（2026-10-11 实测修正）----
+    #
+    # 官方采集停更后，ou.accounts[] 是重灾区：每个账号的 daily 全部停在
+    # 2026-08-25 → 2026-09-24（31 天窗口不滚动），usage7Days / usageThisMonth
+    # 是 9-24 的旧值，账号卡片和按日图表读的正是这份 —— 这就是用户看到
+    # 「近 7 天和近一个月消耗就没变过」的真因。v0.9.40 只校准了 ou.summary
+    # 三个数，漏了 ou.accounts[]。
+    #
+    # 参考同类项目 workbuddy2api-panel 的思路：它根本不消费官方的
+    # officialUsage，而是自建 usage.Recorder（逐请求记录 + 窗口聚合）。
+    # 本网关已有等价资产 —— 顶层 accounts 的 daily 由实时快照驱动（实测
+    # 已滚动到当天）。既然官方通道停更（接口本身没坏，是采集环节停了），
+    # 网关侧就全量接管：用校准后的实时账号替换 ou.accounts[]，并注明来源。
+    #
+    # 守恒性：顶层 accounts 在 credits_stats_proxy 里已完成重归因 + 滚动求和，
+    # 直接引用同一份数据，ou 与顶层天然一致，不会再出现两栏数字打架。
+    try:
+        top_accounts = data.get("accounts")
+        if isinstance(top_accounts, list) and top_accounts:
+            ou["accounts"] = top_accounts
+            ou["source"] = "gateway-realtime"
+            # 范围端点跟着对齐，避免「数据截止 9-24」的误导继续挂着
+            ou["rangeEnd"] = time.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # 官方用量数据的「陈旧度」标记
@@ -5426,13 +5452,22 @@ def _official_usage_freshness(data: dict) -> Dict[str, Any]:
         out["ageDays"] = round(age, 2)
         out["stale"] = age >= OFFICIAL_USAGE_STALE_DAYS
         if out["stale"]:
-            out["reason"] = (
-                "官方用量数据由闭源底层引擎采集，当前未再刷新："
-                "最近一次采集距今约 %.1f 天，数据截止 %s。"
-                "该采集环节在官方二进制内部，网关侧无法触发重写；"
-                "本页的今日消耗已改用实时数据校准，不受此影响。"
-                % (age, ou.get("rangeEnd") or "未知")
-            )
+            if ou.get("source") == "gateway-realtime":
+                # 账号明细已由网关实时接管（_reconcile_official_usage），
+                # 陈旧的只是官方原始采集那份；面板看到的数据是实时的。
+                out["reason"] = (
+                    "官方原始采集已停更（最近一次 %.1f 天前），但本页数据已由网关"
+                    "用实时快照接管，汇总与按日明细均为实时口径。"
+                    % age
+                )
+            else:
+                out["reason"] = (
+                    "官方用量数据由闭源底层引擎采集，当前未再刷新："
+                    "最近一次采集距今约 %.1f 天，数据截止 %s。"
+                    "该采集环节在官方二进制内部，网关侧无法触发重写；"
+                    "本页的今日消耗已改用实时数据校准，不受此影响。"
+                    % (age, ou.get("rangeEnd") or "未知")
+                )
     elif not ou:
         out["reason"] = "官方用量数据缺失（闭源底层未返回 officialUsage）。"
     else:

@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.41](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.41)
+**当前稳定版：** [v0.9.42](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.42)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.42](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.42) | 2026-10-11 | 官方积分采集 9-24 起停更——账号明细（近7日/本月/按日图表）由网关实时数据整体接管 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.42.md) |
 | [v0.9.41](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.41) | 2026-10-10 | 修复今日消耗在北京时间 0 点未重置（凌晨 1 点就显示昨日全天量级），并让 7 日/本月改为按日滚动求和自动刷新 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.41.md) |
 | [v0.9.40](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.40) | 2026-10-09 | 修复「近7日/本月消耗比今日消耗还低」——累计值小于单日值，数学上不可能 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.40.md) |
 | [v0.9.39](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.39) | 2026-10-09 | 补登记——任务结束后重试运行期被「前置未满足」拒掉的任务登记，解开成长任务完成度卡死 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.39.md) |
@@ -134,7 +135,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.41    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.42    # 锁定版本
 ```
 
 ## 部署产物

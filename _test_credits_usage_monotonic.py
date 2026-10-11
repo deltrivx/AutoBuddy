@@ -163,5 +163,43 @@ for bad in ({}, {"officialUsage": {}}, {"officialUsage": {"summary": {}}},
         print(f"      异常: {type(e).__name__}: {e}")
     check(f"不崩溃: {str(bad)[:40]}", ok)
 
+print("\n[5] 账号明细整体接管（2026-10-11：官方采集停更后 ou.accounts 必须由实时数据接管）")
+
+# 复现线上真实场景：ou.accounts 的 daily 停在 9-24，而顶层 daily 滚动到今天
+d5 = build_case()
+stale_day = "2026-09-24"
+today = time.strftime("%Y-%m-%d")
+d5["accounts"] = [
+    {"accountId": "acc1", "usageToday": 5280.01, "usage7Days": 19573.14,
+     "usageThisMonth": 21435.50, "currentRemaining": 1000.0,
+     "daily": [{"date": today, "usage": 5280.01}]},
+]
+d5["officialUsage"]["accounts"] = [
+    {"accountId": "acc1", "usageToday": 0.0, "usage7Days": 57.98,
+     "usageThisMonth": 279.50, "currentRemaining": None,
+     "daily": [{"date": stale_day, "usage": 57.98}]},
+]
+reconcile(d5, {"acc1"})
+ou5 = d5["officialUsage"]
+check("ou.accounts 被替换为顶层实时账号",
+      ou5["accounts"] is d5["accounts"],
+      f"ou.accounts 账号数={len(ou5.get('accounts') or [])}")
+check("接管后 daily 滚动到今天（不再停在 9-24）",
+      (ou5["accounts"][0]["daily"][-1]["date"] == today),
+      f"末条日期={ou5['accounts'][0]['daily'][-1]['date']}")
+check("接管后账号的 7日/本月是实时值",
+      ou5["accounts"][0]["usage7Days"] == 19573.14,
+      f"got={ou5['accounts'][0]['usage7Days']}")
+check("来源标记 source=gateway-realtime", ou5.get("source") == "gateway-realtime")
+check("rangeEnd 对齐到今天", ou5.get("rangeEnd") == today, f"got={ou5.get('rangeEnd')}")
+
+# 顶层 accounts 为空时不得接管（保留官方原始数据）
+d5b = build_case()
+d5b["accounts"] = []
+reconcile(d5b, {"acc1"})
+check("顶层为空时不接管（保留官方 ou.accounts）",
+      len(d5b["officialUsage"].get("accounts") or []) == 1
+      and d5b["officialUsage"].get("source") is None)
+
 print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
 raise SystemExit(1 if _fail else 0)
