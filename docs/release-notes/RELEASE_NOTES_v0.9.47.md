@@ -1,60 +1,48 @@
-> 企业微信完整交互：内置回调端点（echo 校验 + 消息接收 + 指令自动回复），零辅助容器。
+> 企业微信双向交互：回调（接收消息服务器）+ 可信 IP 解锁路径 + 指令式交互。
 
-## 背景
+## 新增：企业微信回调（完整交互功能）
 
-用户需求：接通企业微信通知的同时，给 AutoBuddy 提供完整交互功能；且**必须内置**，
-其他用户自行搭建好公网（FRP/任意反代）和企微后台配置即可用，不部署辅助容器。
+用户需求：接通通知的同时，提供完整交互功能。
 
-## 实现
+### 回调端点（挂网关公网入口）
 
-### ① 企微回调协议（gateway/notify.py）
+- `GET /api/notify/wecom/callback` —— 企微后台「启用 API 接收」的验证
+  （校验签名 → AES 解密 echostr → 明文回显）
+- `POST /api/notify/wecom/callback` —— 收成员消息（加密 XML）→ 解析指令 →
+  加密回复 XML（WXBizMsgCrypt 协议全实现：SHA1 签名 + AES-256-CBC +
+  PKCS7 + receiveid 校验）
+- 公网入口：`https://autobuddy.deltrivx.com`（Cloudflare tunnel + nginx →
+  网关 18091；本次补了 nginx reload，域名已实测 200）
 
-完整实现企微「接收消息服务器」协议（对齐 MoviePilot 的交互思路）：
+### 交互指令（首版）
 
-- AES-256-CBC 加解密（key = Base64(EncodingAESKey + "=")，32 字节）；
-  容器内无 pycryptodome/cryptography，用 **openssl CLI** 实现（已实测往返一致），
-  回调是低频路径（成员发消息才触发），subprocess 开销可接受；
-- 明文结构 = 16 随机字节 + 4 字节网络序消息长度 + XML + corpid，PKCS7(32) 填充；
-- 签名 = SHA1(sorted(token, timestamp, nonce, 密文))；
-- echo 校验（企微保存配置时的 GET）+ 消息解密 + 加密回复。
+成员在企业微信里对 AutoBuddy 应用发消息：
+- `帮助` / `help` —— 指令清单
+- `积分` / `余额` —— 账号池剩余积分汇总（读 credit 快照）
+- `签到` / `任务` —— 异步启动一轮每日任务，完成回执
+- `状态` —— 网关健康状态
+- 其余文本 —— 引导语
 
-### ② 回调端点（web_proxy.py）
+### 配置（设置页 → 通知管理 → 企业微信）
 
-`GET/POST /api/notify/wecom/callback/<path>`——**不设登录鉴权**：调用方是企微
-服务器，鉴权靠消息体签名（密钥只有双方知道），比 cookie 更强。路径带随机段，
-经 FRP（VPS → 本机 18090）公网可达即可。
+新增三个字段：回调 Token、回调 EncodingAESKey（secret，均不回传明文）、
+回调 URL（预填公网地址）。配齐后到企微后台「接收消息 → 设置API接收」填入
+同值并启用——**启用 API 接收也是解锁「企业可信 IP」配置前置的方式之一**，
+可信 IP 加入网关出网 IP 后，通知发送即全通。
 
-### ③ 内置交互指令（零辅助容器）
+### 其他
 
-被动回复全部在 5 秒内完成（不触发企微重推），长时间任务只回"已启动"：
-
-| 指令 | 功能 |
-|---|---|
-| `help` / `帮助` / `?` | 指令菜单 |
-| `status` | 网关与账号池状态 |
-| `credits` | 积分与今日/近7天/本月消耗 |
-| `accounts` | 账号余额清单（前 15 个） |
-| `models` | 模型目录规模 |
-| `daily` | 最近一轮每日任务状态 |
-| `run` | 启动一轮每日任务 |
-| `checkin` | 全部账号签到 |
-| `notify on/off` | 开关通知推送 |
-
-### ④ 渠道注册表扩展
-
-企业微信渠道新增 `cb_token`（回调 Token）与 `cb_aes_key`（EncodingAESKey）
-两个字段，设置页表单自动渲染（注册表驱动，前端零改动）。
+- Dockerfile 新增 `pycryptodome`（AES 加解密依赖）
+- nginx `autobuddy.deltrivx.com` server 块此前已存在但缺 reload，公网 404
+  已修复（`nginx -t` → reload → 实测 200）
 
 ## 测试
 
-新增 `_test_wecom_callback_crypto.py`（15 项）：AES key 解码、加解密往返、
-签名（含顺序无关性）、echo 校验（正确通过/错误拒绝）、完整回调链
-（解密消息 → 构造回复 → 回复包再解回）、长文本多块往返、PKCS7 边界。
-全量 29 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+- `_test_notify.py` 扩至 25 项（字段注册断言含回调三件）
+- 全量 28 个测试文件全绿
 
 ## 升级说明
 
-重建容器即可。启用交互三步：
-1. 设置页「通知管理 → 企业微信」填入 CorPID/Secret/AgentId + 回调 Token/AESKey（企微后台「接收消息」页生成）；
-2. 把 `http://<公网地址>/api/notify/wecom/callback/<随机段>` 填到企微后台接收消息服务器 URL（公网可用 FRP，如 VPS IP:端口 → 本机 18090）；
-3. 保存配置（企微会发 GET 校验，通过即接入成功）。之后在企业微信里给应用发消息即可交互。
+重建容器（新镜像含 pycryptodome）。回调三要素在设置页填入后，需到企微后台
+「应用管理 → AutoBuddy → 接收消息 → 设置API接收」填 URL/Token/EncodingAESKey
+并保存（企微会立即回调验证 GET）。
