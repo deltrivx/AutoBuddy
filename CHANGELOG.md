@@ -31,6 +31,28 @@
 
 ---
 
+## [v0.9.57] - 2026-10-13
+
+<!-- summary: 修复积分感知调度失效——调度器读的余额快照 9-23 起停更，改用实时快照 -->
+
+### 修复
+
+- **积分感知调度未按预期工作**：验证「承接量 ∝ 余额」时发现相关系数 -0.137
+  （应正相关），余额最低的号反而承接第二多。根因：调度器经 `credit_floor`
+  只读 `DATA_DIR/credit_usage_snapshots.json`，该文件 **9-23 起停更**
+  （mtime 2026-09-23 23:03）；实时数据在 `.wb-switch` 那份
+  （mtime 2026-10-13 17:12）。权重按 20 天前旧余额计算 → 失真。
+  改为 `_pick_snapshot_file()` 取候选清单中**存在且最新**的一份
+  （`.wb-switch` 优先、`DATA_DIR` 回退）。
+
+### 变更
+
+- 按用户要求清除 Telegram 通道配置（凭据置空、渠道停用），仅保留企业微信。
+
+### 测试
+
+- 全量 32 个测试文件全绿。
+
 ## [v0.9.56] - 2026-10-13
 
 <!-- summary: 通知管理前端对齐 MoviePilot——渠道卡片网格 + 配置弹窗（每渠道独立启用/消息场景） -->
@@ -3590,7 +3612,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.56...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.57...HEAD
+[v0.9.57]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.56...v0.9.57
 [v0.9.56]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.55...v0.9.56
 [v0.9.55]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.54...v0.9.55
 [v0.9.54]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.53...v0.9.54

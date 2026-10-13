@@ -33,7 +33,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
-SNAPSHOT_FILE = DATA_DIR / "credit_usage_snapshots.json"
+# ⚠️ 2026-10-13 修复：此前只读 DATA_DIR 自己那份快照，但它 9-23 起停更
+# （实测停在 2026-09-23 23:03）；实时数据在 .wb-switch 那份（官方引擎持续写入）。
+# 调度器（积分感知）与保底都因读到 20 天前的旧余额而失真。
+# 现按顺序取**第一个存在且较新**的：优先 .wb-switch（实时），回退 DATA_DIR。
+def _pick_snapshot_file():
+    candidates = [
+        Path("/data/.wb-switch/credit_usage_snapshots.json"),
+        DATA_DIR / "credit_usage_snapshots.json",
+    ]
+    best = None
+    best_mtime = -1.0
+    for f in candidates:
+        try:
+            if f.exists():
+                m = f.stat().st_mtime
+                if m > best_mtime:
+                    best, best_mtime = f, m
+        except Exception:
+            continue
+    return best
+
+SNAPSHOT_FILE = _pick_snapshot_file()
 
 # 0 = 关闭（默认）
 FLOOR = float(os.getenv("AB_CREDIT_FLOOR", "0") or 0)
