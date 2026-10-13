@@ -31,6 +31,33 @@
 
 ---
 
+## [v0.9.52] - 2026-10-13
+
+<!-- summary: 新增 Telegram 通知通道（含渠道级独立代理）+ probe 自检端点；并更正此前「与 MoviePilot 对齐」的不准确表述 -->
+
+### 新增
+
+- **Telegram 通知通道**：注册 `telegram` 渠道（bot_token / chat_id / proxy），
+  前端按注册表自动渲染。**渠道级代理**只作用于本通道的通知与交互，
+  不写入全局设置、不改变网关出网行为（与 MoviePilot 的「全局 PROXY 一份」不同，
+  这里是每渠道独立）。
+- **`POST /api/notify/probe`**：不发消息的连通性自检（Telegram 走 getMe 验 Token）。
+
+### 更正（此前表述不准确）
+
+- 「其他用户仅配置几个字段就行」——不准确：通知填字段即可，但**交互**（回调+菜单）
+  需要**公网入口**这一硬门槛；无公网只能收通知、用不了交互。
+- 「与 MoviePilot 对齐」——不准确：MoviePilot 企微有两个模块，`wechat.py`
+  （应用消息）字段仅 CORPID/SECRET/AGENTID/PROXY、只发不收无回调；`wechatbot.py`
+  （机器人）走 WebSocket。本实现是企微官方「自建应用接收消息服务器」（HTTP 回调+菜单），
+  属另一种合法方式，并非对齐 MoviePilot。
+
+### 测试
+
+- 新增 `_test_telegram.py`（17 项）：注册表字段、secret 脱敏、代理隔离性源码契约、
+  空配置健壮性、不影响既有企微。
+- 全量 31 个测试文件全绿。
+
 ## [v0.9.51] - 2026-10-13
 
 <!-- summary: 修复交互指令取不到值——/api/* 端点误打到网关(18091)，实际在 web_proxy(18090) -->
@@ -3472,7 +3499,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.51...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.52...HEAD
+[v0.9.52]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.51...v0.9.52
 [v0.9.51]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.50...v0.9.51
 [v0.9.50]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.49...v0.9.50
 [v0.9.49]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.48...v0.9.49

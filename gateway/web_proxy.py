@@ -6746,6 +6746,23 @@ async def notify_test(request: Request):
                         status_code=500, media_type="application/json")
 
 
+@app.post("/api/notify/probe")
+async def notify_probe(request: Request):
+    """渠道连通性自检（不发消息）。当前支持 telegram（getMe 验 Token）。"""
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        channel = str(payload.get("channel") or "").strip()
+        if payload.get("save"):
+            _notify.update_config(payload.get("config") or {})
+        if channel == "telegram":
+            cfg = _notify._load().get("channels", {}).get("telegram") or {}
+            return _notify.telegram_get_me(cfg)
+        return {"ok": False, "error": "该渠道暂无自检：%s" % (channel or "未指定")}
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
+
+
 # ---------------------------------------------------------------------------
 # 企微回调（接收消息服务器）：echo 校验 + 消息接收 + 被动回复。
 #

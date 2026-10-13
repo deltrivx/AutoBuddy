@@ -59,7 +59,24 @@ CHANNELS: List[Dict[str, Any]] = [
              "placeholder": "公网可达地址，如 http://<VPS>:10083/api/notify/wecom/callback/<随机段>"},
         ],
     },
-    # 后续渠道（Telegram / 钉钉 / Bark…）往这里追加注册即可，
+    {
+        "key": "telegram",
+        "name": "Telegram",
+        "desc": "Telegram 机器人。Bot Token 由 @BotFather 创建机器人时给出；"
+                "Chat ID 可从 @userinfobot 或机器人收到的消息里取。",
+        "fields": [
+            {"key": "bot_token", "label": "Bot Token", "secret": True,
+             "placeholder": "@BotFather 给出的 Token"},
+            {"key": "chat_id", "label": "Chat ID", "secret": False,
+             "placeholder": "接收消息的会话 ID，如 8646289271"},
+            # 渠道级代理：只用于本通道的通知与交互，不写进全局 PROXY、
+            # 也不影响网关出网（用户 2026-10-13 要求），与 MoviePilot 的
+            # 全局 PROXY 不同——那里是全局一份，这里是每渠道独立。
+            {"key": "proxy", "label": "代理（仅本通道）", "secret": False,
+             "placeholder": "留空=直连；如 http://192.168.31.10:7890"},
+        ],
+    },
+    # 后续渠道（钉钉 / Bark…）往这里追加注册即可，
     # 前端表单与后端分发都会自动带上。
 ]
 
@@ -207,7 +224,59 @@ def _send_wecom(ch_cfg: Dict[str, Any], text: str) -> Dict[str, Any]:
         return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
 
 
-_SENDERS = {"wecom": _send_wecom}
+def _send_telegram(ch_cfg: Dict[str, Any], text: str) -> Dict[str, Any]:
+    """Telegram Bot 发送（渠道级代理，不影响全局/网关）。
+
+    与 MoviePilot 的差异（如实说明）：它用**全局** PROXY 一份；
+    本实现按用户要求做成**每渠道独立**代理 —— 只作用于 Telegram 通道的
+    通知与交互，不写进全局设置、不改网关出网行为。
+    """
+    token = str(ch_cfg.get("bot_token") or "").strip()
+    chat_id = str(ch_cfg.get("chat_id") or "").strip()
+    if not (token and chat_id):
+        return {"ok": False, "error": "Telegram 配置不完整（Bot Token / Chat ID）"}
+    proxy = str(ch_cfg.get("proxy") or "").strip()
+    try:
+        import httpx
+        url = "https://api.telegram.org/bot%s/sendMessage" % token
+        kwargs = {"timeout": 20.0, "verify": False}
+        # 仅本通道代理：直接传给该请求，不动任何全局/环境变量
+        if proxy:
+            kwargs["proxy"] = proxy
+        with httpx.Client(**kwargs) as client:
+            r = client.post(url, json={"chat_id": chat_id, "text": text})
+            d = r.json() if r.status_code == 200 else {}
+        if (d or {}).get("ok") is True:
+            return {"ok": True}
+        return {"ok": False, "error": "发送失败：%s" % _sanitize_token(
+            str((d or {}).get("description") or r.status_code)[:160])}
+    except Exception as e:
+        return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
+
+
+def telegram_get_me(ch_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """连通性自检：调 getMe 验证 Token 有效（不发消息）。"""
+    token = str(ch_cfg.get("bot_token") or "").strip()
+    if not token:
+        return {"ok": False, "error": "Bot Token 未配置"}
+    proxy = str(ch_cfg.get("proxy") or "").strip()
+    try:
+        import httpx
+        kwargs = {"timeout": 20.0, "verify": False}
+        if proxy:
+            kwargs["proxy"] = proxy
+        with httpx.Client(**kwargs) as client:
+            r = client.get("https://api.telegram.org/bot%s/getMe" % token)
+            d = r.json() if r.status_code == 200 else {}
+        res = (d or {}).get("result") or {}
+        if (d or {}).get("ok") is True:
+            return {"ok": True, "username": res.get("username"), "id": res.get("id")}
+        return {"ok": False, "error": str((d or {}).get("description") or r.status_code)[:160]}
+    except Exception as e:
+        return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
+
+
+_SENDERS = {"wecom": _send_wecom, "telegram": _send_telegram}
 
 
 def send(text: str, channel: Optional[str] = None) -> Dict[str, Any]:

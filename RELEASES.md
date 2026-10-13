@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.51](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.51)
+**当前稳定版：** [v0.9.52](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.52)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.52](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.52) | 2026-10-13 | 新增 Telegram 通知通道（含渠道级独立代理）+ probe 自检端点；并更正此前「与 MoviePilot 对齐」的不准确表述 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.52.md) |
 | [v0.9.51](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.51) | 2026-10-13 | 修复交互指令取不到值——/api/* 端点误打到网关(18091)，实际在 web_proxy(18090) | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.51.md) |
 | [v0.9.50](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.50) | 2026-10-13 | 补齐 MoviePilot 同款核心交互——自动生成企微应用底部菜单（点按钮即交互），而非让用户手打命令 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.50.md) |
 | [v0.9.49](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.49) | 2026-10-13 | 修复企微回调 echo 校验解密失败——AES 块大小误写 32 + openssl 与企微填充约定冲突（双重填充） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.49.md) |
@@ -144,7 +145,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.51    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.52    # 锁定版本
 ```
 
 ## 部署产物
