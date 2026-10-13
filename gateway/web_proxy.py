@@ -4109,7 +4109,12 @@ COLLAPSE_SCRIPT = r"""
               '<span class="wb-api-label">账号签到与凭据（最近 30 天）</span>' +
               // 去掉内联 font-size：它会压过 .wb-daily-wrap .wb-api-btn，
               // 导致这个按钮比同页其它按钮小一档（11px vs 14px）。
-              '<button id="wb-dl-checkin-all-btn" class="wb-api-btn">全部立即签到</button>' +
+              // 「全部执行任务」与「全部立即签到」并列（用户 2026-10-13 反馈：
+              // 有手动签到按钮但没有手动执行任务按钮）。
+              '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
+                '<button id="wb-dl-tasks-all-btn" class="wb-api-btn">全部执行任务</button>' +
+                '<button id="wb-dl-checkin-all-btn" class="wb-api-btn">全部立即签到</button>' +
+              '</div>' +
             '</div>' +
             '<div class="wb-api-desc" style="margin-bottom:6px">自动关联账号池里的国内版（cn）账号，新增账号无需在此登记；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。</div>' +
             '<div id="wb-dl-checkin-logs-box" style="width:100%;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
@@ -4181,6 +4186,35 @@ COLLAPSE_SCRIPT = r"""
       });
     }
     var checkinAllBtn = v.querySelector("#wb-dl-checkin-all-btn");
+    // 「全部执行任务」：走每日任务服务的全量模式（签到+成长任务+玩法+领奖），
+    // 与「立即执行」同源，只是入口放在账号列表区（用户 2026-10-13 需求：
+    // 有手动签到按钮，缺手动执行任务按钮）。若已有任务在跑会返回 409，
+    // 提示用户去「执行进度」看。
+    var tasksAllBtn = v.querySelector("#wb-dl-tasks-all-btn");
+    if (tasksAllBtn) {
+      tasksAllBtn.addEventListener("click", function() {
+        if (tasksAllBtn.disabled) return;
+        tasksAllBtn.disabled = true;
+        tasksAllBtn.textContent = "启动中…";
+        fetch("/api/wb-daily/run", { method: "POST" })
+          .then(function(r) { return r.json().catch(function() { return {}; }); })
+          .then(function(d) {
+            tasksAllBtn.disabled = false;
+            tasksAllBtn.textContent = "全部执行任务";
+            if (d && d.job_id) {
+              wbToast("任务已启动，可在下方看进度", "ok");
+              wbDailyPoll(d.job_id);
+            } else {
+              wbToast("启动失败：" + ((d && (d.detail || d.error)) || "已有任务在执行"), "err");
+            }
+          })
+          .catch(function() {
+            tasksAllBtn.disabled = false;
+            tasksAllBtn.textContent = "全部执行任务";
+            wbToast("请求失败，请重试", "err");
+          });
+      });
+    }
     if (checkinAllBtn) {
       checkinAllBtn.addEventListener("click", function() {
         if (checkinAllBtn.disabled) return;

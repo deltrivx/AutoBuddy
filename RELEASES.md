@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.44](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.44)
+**当前稳定版：** [v0.9.45](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.45)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.45](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.45) | 2026-10-13 | 接入 /v3/config 动态模型目录（官方新模型即时可见）+ 补全「手动执行任务」按钮 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.45.md) |
 | [v0.9.44](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.44) | 2026-10-13 | 三项急迫修复——模型发现双通道全断、官方消耗图表停更（漏三个顶层字段）、积分感知调度 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.44.md) |
 | [v0.9.43](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.43) | 2026-10-11 | 修复左侧 5 个标签切换时的闪屏与页面漂移 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.43.md) |
 | [v0.9.42](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.42) | 2026-10-11 | 官方积分采集 9-24 起停更——账号明细（近7日/本月/按日图表）由网关实时数据整体接管 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.42.md) |
@@ -137,7 +138,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.44    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.45    # 锁定版本
 ```
 
 ## 部署产物

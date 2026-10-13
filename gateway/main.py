@@ -74,7 +74,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.44"
+VERSION_DEFAULT = "0.9.45"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -89,11 +89,13 @@ async def lifespan(_app: FastAPI):
         _HEALTH_RUNTIME["lastRunAt"] = last.get("checkedAt")
     task = asyncio.create_task(account_rotate_loop())
     health_task = asyncio.create_task(model_health_loop())
+    upstream_task = asyncio.create_task(upstream_models_loop())
     try:
         yield
     finally:
         task.cancel()
         health_task.cancel()
+        upstream_task.cancel()
 
 
 app = FastAPI(title="AutoBuddy OpenAI Gateway", version=GATEWAY_VERSION, lifespan=lifespan)
@@ -265,6 +267,125 @@ def _discover_from_token_stats() -> List[str]:
         return []
 
 
+# /v3/config 动态模型拉取（2026-10-13，参照 workbuddy2api-panel 的 FetchModels）。
+#
+# 背景：用户反馈「官方已发布新模型但目录里看不到」。既有发现通道（usage 回溯
+# + SQLite 账本）都是**事后发现**——只有账号真正调用过某模型才会进目录；
+# 官方新发布的模型没人调过，就永远不出现。panel 的做法是主动拉官方
+# **动态目录**：/v3/config（主，IDE UA 完整能力版）+ 企业端点补缺的并集。
+#
+# 这里实现 CN 侧主通道 /v3/config（口径对齐 panel 的 fetchV3ConfigModelMap）：
+#   - UA 必须能解析出 CodeBuddy 版本号，否则上游 400（panel 实测）；
+#   - data.models[] 为主，ProductFeaturesConfig.ModelTrialBanner.banners[]
+#     的试用模型（modelId）也要补入——panel 实测 hy4-preview-f 只出现在横幅里。
+#
+# 结果写入 DATA_DIR / upstream_models.json，由 _discover_from_upstream() 读入
+# 目录；每 6 小时后台刷新一次，失败保留旧文件（优雅退化）。
+V3_CONFIG_URL = "https://copilot.tencent.com/v3/config"
+V3_IDE_UA = "CodeBuddyIDE/4.12.0 CodeBuddy/4.12.0"
+UPSTREAM_MODELS_FILE = DATA_DIR / "upstream_models.json"
+_V3_REFRESH_SEC = int(os.getenv("AB_V3_REFRESH_HOURS", "6") or 6) * 3600
+
+
+# 非对话模型的排除规则（对齐 panel 的 nonChatModel 过滤，口径：补全/跳转/图像/代理类
+# 不应出现在 chat 目录）。panel 按 tags+maxTokens 判定；这里上游未透出 tags，
+# 用实测清单的 id 模式近似：实测出现在 /v3/config 但非 chat 的有
+# auto / codewise-completions / codewise-default-model-v2 / codewise-jump /
+# codewise-rewrite / hunyuan-image-alpha / nes-gf / space-bunny。
+_NON_CHAT_PREFIXES = ("codewise-",)
+_NON_CHAT_IDS = {"auto", "hunyuan-image-alpha", "nes-gf", "space-bunny"}
+
+
+def _parse_v3_models(payload: Any) -> List[str]:
+    """从 /v3/config 响应提取模型 id 集合（data.models + 试用横幅，剔除非 chat）。"""
+    names: set = set()
+    data = (payload or {}).get("data") or {}
+    for item in data.get("models") or []:
+        if isinstance(item, dict) and item.get("id"):
+            names.add(str(item["id"]))
+    # 试用模型横幅：不在 data.models 里，只有 modelId / targetModelId
+    pfc = data.get("ProductFeaturesConfig") or {}
+    banners = ((pfc.get("ModelTrialBanner") or {}).get("banners")) or []
+    for b in banners:
+        if not isinstance(b, dict):
+            continue
+        for k in ("modelId", "targetModelId"):
+            if b.get(k):
+                names.add(str(b[k]))
+    return sorted(x for x in names
+                  if x not in _NON_CHAT_IDS
+                  and not x.startswith(_NON_CHAT_PREFIXES))
+
+
+def _fetch_upstream_models_once() -> List[str]:
+    """单次拉取：用账号池里第一个可用账号的 AT 调 /v3/config。
+
+    失败返回空列表（调用方保留旧文件）。token 只在内存与 https 请求里流转，
+    不落日志。
+    """
+    try:
+        import httpx
+        acc = None
+        for a in _load_accounts():
+            if a.get("access_token"):
+                acc = a
+                break
+        if acc is None:
+            return []
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "X-Requested-With": "XMLHttpRequest",
+            "Authorization": "Bearer " + str(acc["access_token"]),
+            "X-Domain": "copilot.tencent.com",
+            "X-Product": "SaaS",
+            "X-CodeBuddy-Request": "1",
+            "User-Agent": V3_IDE_UA,
+        }
+        with httpx.Client(timeout=20.0, verify=False) as client:
+            r = client.get(V3_CONFIG_URL, headers=headers)
+        if r.status_code != 200:
+            return []
+        return _parse_v3_models(r.json())
+    except Exception:
+        return []
+
+
+def _refresh_upstream_models() -> None:
+    """拉取并落盘 upstream_models.json（mtime + 模型清单，供发现与签名共用）。"""
+    names = _fetch_upstream_models_once()
+    if not names:
+        return
+    try:
+        _atomic = DATA_DIR / "upstream_models.json"
+        _atomic.write_text(json.dumps({
+            "updatedAt": int(time.time() * 1000),
+            "models": names,
+        }, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _discover_from_upstream() -> List[str]:
+    """读 upstream_models.json（后台循环拉取的官方动态目录）。"""
+    try:
+        with open(UPSTREAM_MODELS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [str(x) for x in (data.get("models") or []) if x]
+    except Exception:
+        return []
+
+
+async def upstream_models_loop():
+    """后台循环：启动即拉一次（新模型分钟级可见），之后每 6 小时刷新。"""
+    await asyncio.sleep(5)          # 等网关与账号池就绪
+    while True:
+        try:
+            _refresh_upstream_models()
+        except Exception:
+            pass
+        await asyncio.sleep(_V3_REFRESH_SEC)
+
+
 _MODEL_CACHE: Dict[str, Any] = {"signature": None, "catalog": []}
 
 
@@ -275,7 +396,7 @@ def _catalog_signature() -> tuple:
     但签名仍盯著它（mtime 恒为 0）——即使发现函数修好，缓存也永不失效，
     新模型照样进不了目录。改盯 SQLite 账本（每笔请求都写入，天然变化）。"""
     sig = []
-    for name in ("official_usage_cache.json", "token_stats.db", "token_stats_logs.json"):
+    for name in ("official_usage_cache.json", "token_stats.db", "upstream_models.json", "token_stats_logs.json"):
         try:
             st = (DATA_DIR / name).stat()
             sig.append((name, int(st.st_mtime), st.st_size))
@@ -291,7 +412,8 @@ def get_model_catalog() -> List[Dict[str, Any]]:
         return _MODEL_CACHE["catalog"]
 
     catalog: Dict[str, Dict[str, Any]] = {m["id"]: dict(m) for m in BASE_MODELS}
-    discovered = set(_discover_from_official_usage()) | set(_discover_from_token_stats())
+    discovered = (set(_discover_from_official_usage()) | set(_discover_from_token_stats())
+                  | set(_discover_from_upstream()))
     for name in discovered:
         if name in catalog:
             continue

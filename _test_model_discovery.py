@@ -38,8 +38,8 @@ check("只读连接（mode=ro，不干扰写入）", "mode=ro" in SRC)
 print("\n[2] 缓存签名纳入 SQLite")
 check("_catalog_signature 盯 token_stats.db",
       '"token_stats.db"' in SRC)
-check("签名列表含三个文件",
-      bool(re.search(r'\("official_usage_cache\.json", "token_stats\.db", "token_stats_logs\.json"\)', SRC)))
+check("签名列表含四个文件（含 /v3/config 动态目录）",
+      bool(re.search(r'\("official_usage_cache\.json", "token_stats\.db", "upstream_models\.json", "token_stats_logs\.json"\)', SRC)))
 
 print("\n[3] AST 验证（真实解析，非字符串碰运气）")
 tree = ast.parse(SRC)

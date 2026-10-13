@@ -31,6 +31,30 @@
 
 ---
 
+## [v0.9.45] - 2026-10-13
+
+<!-- summary: 接入 /v3/config 动态模型目录（官方新模型即时可见）+ 补全「手动执行任务」按钮 -->
+
+### 新增
+
+- **上游动态模型目录（/v3/config）**：修复「官方已发布新模型但目录看不到」。
+  既有发现通道全是事后回溯（usage 缓存停更 9-24、SQLite 账本只记调用过的模型），
+  官方新发布的模型没人调过就永远不出现。参照 workbuddy2api-panel 的 FetchModels
+  口径：启动 5s 后拉一次 `copilot.tencent.com/v3/config`（IDE UA，否则 400），
+  之后每 6h 刷新（AB_V3_REFRESH_HOURS 可调）；解析 data.models + 试用横幅，
+  剔除非 chat 模型；落盘 upstream_models.json 并入目录与缓存签名。
+  实测拉到 22 个模型，含新发布的 kimi-k3-1 / kimi-k2.8-preview /
+  step-5-preview / hy4-preview / hy3-x / deepseek-v4-flash/pro / glm-5.3-flash。
+
+- **「全部执行任务」按钮**（每日任务页）：与「全部立即签到」并列。走
+  /api/wb-daily/run 全量模式（签到+成长任务+玩法+领奖），启动后自动轮询进度；
+  已有任务在跑时提示。补齐用户反馈的「有手动签到按钮但没有手动执行任务按钮」。
+
+### 测试
+
+- _test_model_discovery.py 签名契约扩至四文件（含 upstream_models.json）。
+- 全量 27 个测试文件全绿；Python 语法 + 内嵌 JS node --check 通过。
+
 ## [v0.9.44] - 2026-10-13
 
 <!-- summary: 三项急迫修复——模型发现双通道全断、官方消耗图表停更（漏三个顶层字段）、积分感知调度 -->
@@ -3320,7 +3344,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.44...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.45...HEAD
+[v0.9.45]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.44...v0.9.45
 [v0.9.44]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.43...v0.9.44
 [v0.9.43]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.42...v0.9.43
 [v0.9.42]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.41...v0.9.42
