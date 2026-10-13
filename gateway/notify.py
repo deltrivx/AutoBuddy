@@ -1128,8 +1128,8 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
         "  · 昨日签到积分：%s" % _fmt_num(yesterday_credits.get("checkin")),
         "  · 昨日任务积分：%s" % _fmt_num(yesterday_credits.get("task")),
         "  · 昨日消耗合计：%s" % _fmt_num(yesterday_credits.get("total")),
-        "  · 当前总积分：%s" % _fmt_num(yesterday_credits.get("totalCredits")),
-        "  · 账号池剩余：%s" % _fmt_num(yesterday_credits.get("remaining")),
+        "  · 累计任务积分：%s" % _fmt_num(yesterday_credits.get("totalCredits")),
+        "  · 账号池剩余积分：%s" % _fmt_num(yesterday_credits.get("remaining")),
         "",
         "🤖 模型",
         "  · 可用模型总数：%s（自动发现 %s）" % (
@@ -1147,23 +1147,34 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
 
 def build_checkin_done(checkin_credits: float, remaining: float,
                        total: float) -> tuple:
-    """② 签到成功：签到积分 + 剩余积分 + 总积分。"""
+    """② 签到成功：签到积分 + 账号池剩余 + 累计任务积分。
+
+    ⚠️ 口径（2026-10-13 用户反馈「通知里剩余积分大于总积分」）：
+    `remaining` 是账号池**实时余额**（credit_floor 快照合计，约 4 万），
+    `total` 是台账里**累计做任务获得的积分**（约 3 万）——两者量纲不同，
+    并列成「剩余 / 总」必然出现「剩余 > 总」的悖论。
+
+    改为各自带明确归属：余额归账号池，累计归任务台账，不再并排比较。
+    """
     lines = [
         "✅ 签到成功",
         "  · 本次签到积分：%s" % _fmt_num(checkin_credits),
         "  · 账号池剩余积分：%s" % _fmt_num(remaining),
-        "  · 总积分：%s" % _fmt_num(total),
+        "  · 累计任务积分：%s" % _fmt_num(total),
     ]
     return ("✅ 签到完成", lines)
 
 
 def build_task_done(task_credits: float, total: float,
                     summary: Optional[Dict[str, Any]] = None) -> tuple:
-    """③ 每日任务成功：任务积分 + 当前总积分。"""
+    """③ 每日任务成功：任务积分 + 累计任务积分。
+
+    同②：`total` 是台账累计（非账号池余额），故称「累计任务积分」。
+    """
     lines = [
         "🎯 每日任务执行完成",
         "  · 本次任务积分：%s" % _fmt_num(task_credits),
-        "  · 当前总积分：%s" % _fmt_num(total),
+        "  · 累计任务积分：%s" % _fmt_num(total),
     ]
     if isinstance(summary, dict):
         if summary.get("accounts") is not None:

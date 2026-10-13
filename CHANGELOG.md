@@ -31,6 +31,25 @@
 
 ---
 
+## [v0.9.62] - 2026-10-13
+
+<!-- summary: 修复通知「剩余积分>总积分」口径悖论；菜单按钮改为四项积分统计口径 -->
+
+### 修复
+
+- **通知里剩余积分大于总积分**（用户反馈）：实测账号池实时余额 40,661.7
+  与台账累计任务积分 29,900 是两个量纲，却并列成「剩余 / 总」必然出现悖论。
+  改为各自带明确归属：签到/任务通知输出「本次积分 / 账号池剩余积分 /
+  累计任务积分」，不再并排比较。
+- **菜单按钮口径**：`AB_ACCOUNTS`（账号余额）此前返回 23 个账号逐条余额长列表，
+  改为与面板一致的积分统计顶部四项（剩余 / 今日 / 近 7 天 / 本月）。
+
+### 测试
+
+- 全量 35 个测试文件全绿。
+- 菜单注册实测 `{"ok": true, "buttons": 3}`；回调链路用自造加密消息实测
+  解密回复正常，四个菜单键逐一验证口径。
+
 ## [v0.9.61] - 2026-10-13
 
 <!-- summary: 修复「执行无记录」最后一条遗漏路径——进程被 SIGKILL/容器重建时任务不再无痕消失 -->
@@ -3721,7 +3740,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.61...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.62...HEAD
+[v0.9.62]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.61...v0.9.62
 [v0.9.61]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.60...v0.9.61
 [v0.9.60]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.59...v0.9.60
 [v0.9.59]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.58...v0.9.59
