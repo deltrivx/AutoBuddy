@@ -44,9 +44,10 @@ def check(name, cond, extra=""):
 
 print("[1] 框架：渠道注册表")
 check("注册表含企业微信", any(c["key"] == "wecom" for c in notify.CHANNELS))
-check("企微字段含 corpid/secret/agentid/touser",
+check("企微字段含 corpid/secret/agentid/touser + 回调三件",
       {f["key"] for f in notify.CHANNELS[0]["fields"]}
-      == {"corpid", "secret", "agentid", "touser"})
+      == {"corpid", "secret", "agentid", "touser",
+          "cb_token", "cb_aes_key", "cb_url"})
 check("secret 字段有标记", any(f.get("secret") for f in notify.CHANNELS[0]["fields"]))
 
 print("\n[2] 配置读写与脱敏")

@@ -46,6 +46,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     uvicorn \
     httpx \
     requests \
+    pycryptodome \
     \
     && rm -rf /root/.cache/pip
 

@@ -6716,6 +6716,176 @@ async def notify_test(request: Request):
                         status_code=500, media_type="application/json")
 
 
+# ---------------------------------------------------------------------------
+# 企微回调（接收消息服务器）：echo 校验 + 消息接收 + 被动回复。
+#
+# 这个端点**不设登录鉴权** —— 调用方是企微服务器，鉴权靠的是消息体签名
+# （SHA1(token, timestamp, nonce, 密文)，密钥只有双方知道），比 cookie 更强。
+# 路径刻意带随机段（/api/notify/wecom/callback/<path>），供企微后台配置；
+# 经 FRP（VPS 10083 → 本机 18090）公网可达。
+# ---------------------------------------------------------------------------
+@app.get("/api/notify/wecom/callback/{path}")
+async def wecom_callback_echo(path: str, request: Request):
+    """GET：企微保存配置时的 URL 可达性验证（echostr 解密回显）。"""
+    try:
+        cfg = _notify._load()["channels"].get("wecom") or {}
+        token = str(cfg.get("cb_token") or "").strip()
+        aes_key = str(cfg.get("cb_aes_key") or "").strip()
+        corpid = str(cfg.get("corpid") or "").strip()
+        if not (token and aes_key):
+            return Response(content="callback not configured", status_code=404)
+        q = request.query_params
+        echo = _notify.verify_echo(token, aes_key, corpid,
+                                   q.get("echostr") or "",
+                                   q.get("msg_signature") or "",
+                                   q.get("timestamp") or "",
+                                   q.get("nonce") or "")
+        return Response(content=echo, media_type="text/plain")
+    except Exception as e:
+        logging.warning("[notify] wecom echo 校验失败: %s", str(e)[:120])
+        return Response(content="verify fail", status_code=403)
+
+
+@app.post("/api/notify/wecom/callback/{path}")
+async def wecom_callback_msg(path: str, request: Request):
+    """POST：企微推送消息 → 解密 → 自动回复（加密回包）。"""
+    try:
+        cfg = _notify._load()["channels"].get("wecom") or {}
+        token = str(cfg.get("cb_token") or "").strip()
+        aes_key = str(cfg.get("cb_aes_key") or "").strip()
+        corpid = str(cfg.get("corpid") or "").strip()
+        if not (token and aes_key):
+            return Response(content="callback not configured", status_code=404)
+        q = request.query_params
+        body = (await request.body()).decode("utf-8", errors="replace")
+        # 企微 POST 的 body 是 xml，密文在 <Encrypt> 里
+        m = re.search(r"<Encrypt><!\[CDATA\[(.*?)\]\]></Encrypt>", body, re.S)
+        if not m:
+            return Response(content="bad request", status_code=400)
+        xml_text = _notify.decrypt_message(token, aes_key, corpid,
+                                           m.group(1),
+                                           q.get("msg_signature") or "",
+                                           q.get("timestamp") or "",
+                                           q.get("nonce") or "")
+        msg = _notify.parse_message(xml_text)
+        content = (msg.get("Content") or "").strip()
+        from_user = msg.get("FromUserName") or ""
+        to_user = msg.get("ToUserName") or ""
+        # 交互命令：全部内置，无需辅助容器。所有指令都是被动回复（5s 内可完成，
+        # 不会触发企微的重推）。需要长时间运行的（如每日任务）只回“已启动”，
+        # 结果后续主动推送。
+        cmd = content.lower().strip()
+        async def _gw_get(path):
+            async with _internal_client(timeout=8.0) as client:
+                r = await client.get(f"{GATEWAY_BASE_URL}{path}")
+                return r.json() if r.status_code == 200 else {}
+        if cmd in ("help", "帮助", "?", "菜单"):
+            reply = ("AutoBuddy 指令：\n"
+                     "  status - 网关与账号池状态\n"
+                     "  credits - 积分与今日消耗\n"
+                     "  accounts - 账号余额清单\n"
+                     "  models - 模型目录（前 20）\n"
+                     "  daily - 每日任务状态\n"
+                     "  run - 启动一轮每日任务\n"
+                     "  checkin - 全部账号签到\n"
+                     "  notify on/off - 开关通知\n"
+                     "  help - 本帮助")
+        elif cmd == "status":
+            try:
+                h = await _gw_get("/health")
+                reply = ("AutoBuddy v%s\n账号池: %s 个账号\n模型: %s 个\n状态: %s" % (
+                    h.get("version", "?"),
+                    (h.get("accounts") or {}).get("total", "?"),
+                    h.get("models_count", "?"),
+                    h.get("status", "?")))
+            except Exception:
+                reply = "状态获取失败，请稍后再试"
+        elif cmd == "credits":
+            try:
+                d = await _gw_get("/api/credits/stats")
+                s = d.get("summary") or {}
+                reply = ("总积分: %s\n今日消耗: %s\n近7天: %s\n本月: %s" % (
+                    s.get("currentRemaining", "?"), s.get("usageToday", "?"),
+                    s.get("usage7Days", "?"), s.get("usageThisMonth", "?")))
+            except Exception:
+                reply = "积分获取失败，请稍后再试"
+        elif cmd == "accounts":
+            try:
+                d = await _gw_get("/api/credits/stats")
+                accs = d.get("accounts") or []
+                lines = ["账号余额（%d 个）：" % len(accs)]
+                for a in accs[:15]:
+                    lines.append("  %s: %s" % (
+                        str(a.get("accountName") or a.get("accountId") or "?")[:12],
+                        a.get("currentRemaining", "?")))
+                if len(accs) > 15:
+                    lines.append("  …及其余 %d 个" % (len(accs) - 15))
+                reply = "\n".join(lines)
+            except Exception:
+                reply = "账号获取失败，请稍后再试"
+        elif cmd == "models":
+            try:
+                h = await _gw_get("/health")
+                reply = "模型目录共 %s 个，账号卡片可查完整清单" % h.get("models_count", "?")
+            except Exception:
+                reply = "模型获取失败，请稍后再试"
+        elif cmd == "daily":
+            try:
+                async with _internal_client(timeout=8.0) as client:
+                    r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/jobs")
+                    d = r.json() if r.status_code == 200 else {}
+                jobs = (d.get("jobs") or [])
+                if jobs:
+                    j = jobs[0]
+                    reply = "最近任务: %s（%s）" % (j.get("job_id"), j.get("status"))
+                else:
+                    reply = "暂无任务记录，回复 run 启动"
+            except Exception:
+                reply = "任务状态获取失败"
+        elif cmd == "run":
+            try:
+                async with _internal_client(timeout=15.0) as client:
+                    r = await client.post(f"{WB_DAILY_INTERNAL}/api/wb-daily/run")
+                    d = r.json() if r.status_code == 200 else {}
+                if d.get("job_id"):
+                    reply = "每日任务已启动（%s），完成后可回复 daily 查进度" % d["job_id"]
+                else:
+                    reply = "启动失败：%s" % (d.get("detail") or "已有任务在执行")
+            except Exception:
+                reply = "启动失败，请稍后再试"
+        elif cmd == "checkin":
+            try:
+                async with _internal_client(timeout=15.0) as client:
+                    r = await client.post(f"{BACKEND_URL}/api/checkin/all")
+                    d = r.json() if r.status_code == 200 else {}
+                reply = "签到已提交：%s" % (d.get("status") or "已开始")
+            except Exception:
+                reply = "签到提交失败"
+        elif cmd.startswith("notify"):
+            arg = cmd.split()[-1] if " " in cmd else ""
+            if arg in ("on", "开"):
+                _notify.update_config({"enabled": True})
+                reply = "通知已开启"
+            elif arg in ("off", "关"):
+                _notify.update_config({"enabled": False})
+                reply = "通知已关闭"
+            else:
+                v = _notify.public_view()
+                reply = "通知当前：%s" % ("开启" if v.get("enabled") else "关闭")
+        elif content:
+            reply = "收到：%s\n（回复 help 查看可用指令）" % content[:100]
+        else:
+            reply = "（空消息）"
+        plain_xml = _notify.build_reply_text(from_user, to_user, reply)
+        enc_xml = _notify.encrypt_reply(plain_xml, token, aes_key, corpid,
+                                        q.get("timestamp") or str(int(time.time())),
+                                        q.get("nonce") or "")
+        return Response(content=enc_xml, media_type="application/xml")
+    except Exception as e:
+        logging.warning("[notify] wecom 回调处理失败: %s", str(e)[:120])
+        return Response(content="fail", status_code=403)
+
+
 @app.put("/api/model-health")
 async def model_health_put(request: Request):
     """更新巡检配置（开关 / 间隔 / 账号范围 / 自动启用）。"""

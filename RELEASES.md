@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.46](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.46)
+**当前稳定版：** [v0.9.47](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.47)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.47](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.47) | 2026-10-13 | 企业微信完整交互——内置回调端点（echo 校验+消息接收+指令自动回复），零辅助容器 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.47.md) |
 | [v0.9.46](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.46) | 2026-10-13 | 设置页新增「通知管理」——多渠道通知框架（参照 MoviePilot），首渠道企业微信 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.46.md) |
 | [v0.9.45](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.45) | 2026-10-13 | 接入 /v3/config 动态模型目录（官方新模型即时可见）+ 补全「手动执行任务」按钮 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.45.md) |
 | [v0.9.44](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.44) | 2026-10-13 | 三项急迫修复——模型发现双通道全断、官方消耗图表停更（漏三个顶层字段）、积分感知调度 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.44.md) |
@@ -139,7 +140,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.46    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.47    # 锁定版本
 ```
 
 ## 部署产物

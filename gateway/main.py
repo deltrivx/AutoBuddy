@@ -31,6 +31,11 @@ except ImportError:
     import api_keys
 
 try:
+    from gateway import notify as _notify_mod
+except ImportError:
+    import notify as _notify_mod  # type: ignore[no-redef]
+
+try:
     from gateway import cooldown
 except ImportError:  # pragma: no cover - 取决于运行方式
     import cooldown  # type: ignore[no-redef]
@@ -74,7 +79,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.46"
+VERSION_DEFAULT = "0.9.47"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -2133,6 +2138,32 @@ def reqlog_snapshot(limit: int = 50):
         return reqlog.snapshot(limit=limit)
     except Exception as e:
         return {"error": str(e)[:200]}
+
+# ---------------------------------------------------------------------------
+# 企业微信回调（接收消息服务器）：公网入口由 nginx(autobuddy.deltrivx.com) → 本网关。
+# GET = 启用验证（回显解密后的 echostr）；POST = 收消息（加密 XML → 回复加密 XML）。
+# 配置在 notify_config.json 的 wecom.cb_* 字段；未配置时 GET 回 403、POST 回空。
+# ---------------------------------------------------------------------------
+@app.get("/api/notify/wecom/callback")
+def wecom_callback_get(request: Request):
+    try:
+        echo = _notify_mod.wecom_callback_verify(dict(request.query_params))
+        if echo is None:
+            return Response(status_code=403)
+        return Response(content=echo, media_type="text/plain")
+    except Exception:
+        return Response(status_code=403)
+
+
+@app.post("/api/notify/wecom/callback")
+async def wecom_callback_post(request: Request):
+    try:
+        body = (await request.body()).decode("utf-8", "replace")
+        reply = _notify_mod.wecom_callback_message(dict(request.query_params), body)
+        return Response(content=reply or "", media_type="application/xml")
+    except Exception:
+        return Response(content="", media_type="application/xml")
+
 
 @app.get("/v1/models")
 @app.get("/models")

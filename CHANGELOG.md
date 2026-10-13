@@ -31,6 +31,27 @@
 
 ---
 
+## [v0.9.47] - 2026-10-13
+
+<!-- summary: 企业微信完整交互——内置回调端点（echo 校验+消息接收+指令自动回复），零辅助容器 -->
+
+### 新增
+
+- **企微回调协议**（`gateway/notify.py`）：完整实现「接收消息服务器」协议——
+  AES-256-CBC（openssl CLI 实现，容器无 pycryptodome）、PKCS7(32)、SHA1 签名、
+  echo 校验、消息解密、加密回复。
+- **回调端点**：`GET/POST /api/notify/wecom/callback/<path>`。不设登录鉴权——
+  调用方是企微服务器，鉴权靠消息体签名（密钥只有双方知道）。
+- **内置交互指令**（零辅助容器，被动回复均 5s 内完成）：
+  help/status/credits/accounts/models/daily/run/checkin/notify on|off。
+- **渠道注册表扩展**：企业微信新增 cb_token / cb_aes_key 字段，前端自动渲染。
+
+### 测试
+
+- 新增 `_test_wecom_callback_crypto.py`（15 项）：加解密往返、签名、echo 校验、
+  完整回调链、长文本多块、PKCS7 边界。
+- 全量 29 个测试文件全绿。
+
 ## [v0.9.46] - 2026-10-13
 
 <!-- summary: 设置页新增「通知管理」——多渠道通知框架（参照 MoviePilot），首渠道企业微信 -->
@@ -3372,7 +3393,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.46...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.47...HEAD
+[v0.9.47]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.46...v0.9.47
 [v0.9.46]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.45...v0.9.46
 [v0.9.45]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.44...v0.9.45
 [v0.9.44]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.43...v0.9.44
