@@ -31,6 +31,31 @@
 
 ---
 
+## [v0.9.61] - 2026-10-13
+
+<!-- summary: 修复「执行无记录」最后一条遗漏路径——进程被 SIGKILL/容器重建时任务不再无痕消失 -->
+
+### 修复
+
+- **进程中断导致执行记录无痕消失**：实测手动触发每日任务跑到 18/22 时执行
+  `rebuild_container`，容器被 SIGKILL，该轮在 runs 列表里彻底查不到。
+  此前 v0.9.58 只覆盖了进程内异常/中止（`_guard` 的 finally），
+  SIGKILL 连 finally 都没机会跑。
+  - `start_job` 先落一条 `running`，`started_at` 立即可见；
+  - 新增 `db.reconcile_orphan_wb_daily_runs()`：把 `status='running'`
+    且 `finished_at IS NULL` 的僵尸行改判 `failed` 并补 `finished_at`；
+  - `lifespan` 启动时收尾一次，避免「health 显示 running 但 runs 查无此轮」。
+
+### 测试
+
+- 新增 `_test_orphan_runs.py`（15 项）：源码契约 + **真实 SQLite 行为验证**
+  （僵尸行收尾、done/failed 不受影响、finished_at 晚于 started_at、幂等）。
+- 全量 35 个测试文件全绿。
+
+### 升级说明
+
+- 重建容器即可；`/data` 数据不受影响。
+
 ## [v0.9.60] - 2026-10-13
 
 <!-- summary: 修复积分调度被会话粘性架空——绑定账号余额掉队时解绑走配额，相关系数 0.032 → 有效 -->
@@ -3696,7 +3721,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.60...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.61...HEAD
+[v0.9.61]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.60...v0.9.61
 [v0.9.60]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.59...v0.9.60
 [v0.9.59]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.58...v0.9.59
 [v0.9.58]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.57...v0.9.58

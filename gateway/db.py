@@ -629,6 +629,35 @@ def prune_wb_daily_runs(keep: int = WB_DAILY_RETAIN) -> int:
         return 0
 
 
+def reconcile_orphan_wb_daily_runs() -> int:
+    """把「没有 finished_at 的 running 行」标记为 failed（进程中断留下的僵尸）。
+
+    只在进程**启动时**调用一次：正常结束时 `_persist_run` 会用最终 status 覆盖，
+    不会留下 running 行；能留 running 行说明进程是「非正常退出」的 ——
+    SIGKILL / 容器重建 / OOM，连 `_guard` 的 finally 都没机会跑。
+
+    不收尾的后果：面板里挂着一个永不结束的任务，health 的 running 永远 True。
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            UPDATE wb_daily_runs
+               SET status = 'failed',
+                   finished_at = COALESCE(finished_at, ?),
+                   summary = ?
+             WHERE status = 'running' AND finished_at IS NULL
+            """, (time.time(),
+                  json.dumps({"detail": "进程中断（容器重启/被终止），未完成"},
+                             ensure_ascii=False)))
+            n = cursor.rowcount or 0
+            conn.commit()
+            return n
+    except Exception as e:
+        print(f"[wb-daily] 收尾僵尸执行记录出错: {e}")
+        return 0
+
+
 def list_wb_daily_runs(limit: int = 20) -> List[Dict[str, Any]]:
     """取最近几轮执行记录（不含逐账号明细，明细走 get_wb_daily_accounts）。"""
     try:

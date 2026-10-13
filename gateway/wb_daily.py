@@ -950,6 +950,9 @@ async def start_job(mode: str = "manual") -> DailyJob:
         raise HTTPException(status_code=409, detail=f"已有任务在执行（{running[0].id}）")
     job = DailyJob(uuid.uuid4().hex[:12], mode)
     JOBS[job.id] = job
+    # 先落一条 running：进程若在中途被 SIGKILL / 容器重建，DB 里也留得下一具
+    # 「没跑完」的尸体，供启动时的 _reconcile_orphan_runs() 收尾标记。
+    _persist_run(job, [])
     if len(JOBS) > 20:
         for old in sorted(JOBS.values(), key=lambda j: j.created_at)[:-20]:
             JOBS.pop(old.id, None)
@@ -994,9 +997,25 @@ async def _scheduler_loop():
         await asyncio.sleep(300)
 
 
+def _reconcile_orphan_runs() -> None:
+    """启动时收尾上一次进程留下的 running 僵尸记录。
+
+    SIGKILL / 容器重建 / OOM 会让 `_guard` 的 finally 都没机会跑，
+    DB 里那条 running 行就永远停在「执行中」——面板显示一个永不结束的任务，
+    health 的 running 也一直为 True。启动时一次性改判为 failed。
+    """
+    try:
+        n = db.reconcile_orphan_wb_daily_runs()
+        if n:
+            print(f"[wb-daily] 启动收尾：{n} 条中断的执行记录已标记为 failed")
+    except Exception as e:
+        print(f"[wb-daily] 启动收尾失败: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_scheduler_loop())
+    _reconcile_orphan_runs()
     yield
     task.cancel()
 

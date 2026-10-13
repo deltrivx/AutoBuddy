@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.60](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.60)
+**当前稳定版：** [v0.9.61](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.61)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.61](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.61) | 2026-10-13 | 修复「执行无记录」最后一条遗漏路径——进程被 SIGKILL/容器重建时任务不再无痕消失 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.61.md) |
 | [v0.9.60](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.60) | 2026-10-13 | 修复积分调度被会话粘性架空——绑定账号余额掉队时解绑走配额，相关系数 0.032 → 有效 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.60.md) |
 | [v0.9.59](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.59) | 2026-10-13 | 超时判定改为按账号（原为30分钟总时间，账号增多必被强杀） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.59.md) |
 | [v0.9.58](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.58) | 2026-10-13 | 修复点击执行却无记录（超时/中止不落库）；调度算法改配额制按余额比例分摊；通知补齐 5 类场景 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.58.md) |
@@ -153,7 +154,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.60    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.61    # 锁定版本
 ```
 
 ## 部署产物
