@@ -543,132 +543,198 @@ def wecom_callback_message(params: Dict[str, Any], body_xml_encrypted: str) -> O
         return None
 
 
-def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Optional[str]:
-    """把收到的消息翻译成回复文本。
+# ---------------------------------------------------------------------------
+# 交互命令路由 —— **唯一实现**（企微菜单/文本与 Telegram 共用）。
+#
+# 历史坑（2026-10-13 用户二次反馈「交互菜单还是没变」）：
+#   web_proxy 的回调处理器里曾**内联一份** if/elif 命令链，与这里的
+#   `_wecom_interpret` 是两份代码、各改一半 —— 改 notify.py 完全不生效，
+#   因为回调实际走 web_proxy 那份（日志里 POST /callback 由 web_proxy 服务）。
+# 现已收拢：web_proxy 只负责加解密，命令语义全部由本函数提供。
+#
+# 口径（2026-10-13 用户需求）：
+#   · 账号余额 → **完整**列出全部账号积分（此前只给积分统计顶部四项）；
+#   · 模型     → 「当前模型」+ 全量模型清单 + 轮检禁用/手动禁用分类。
+# ---------------------------------------------------------------------------
 
-    支持两种来源：
-      - 文本消息（msg_type=text，命令在 content）；
-      - 菜单点击（msg_type=event，命令在 event_key，如 AB_STATUS）。
+_WEBUI_BASE = "http://127.0.0.1:18090"
+_GW_BASE = "http://127.0.0.1:18091"
+
+
+def _http_json(url: str, timeout: float = 8.0, method: str = "GET",
+               body: Optional[bytes] = None) -> Any:
+    """同步取本地 JSON（本模块跑在容器内，127.0.0.1 直连即可）。"""
+    import urllib.request
+    req = urllib.request.Request(url, data=body, method=method)
+    if body:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _cmd_help() -> str:
+    return ("AutoBuddy 指令：\n"
+            "· 账号余额 —— 全部账号积分明细\n"
+            "· 积分消耗 —— 账号池积分汇总\n"
+            "· 模型 —— 当前模型清单与禁用分类\n"
+            "· 状态 —— 网关与账号池状态\n"
+            "· 签到 —— 全部账号签到\n"
+            "· 任务 —— 每日任务进度 / 启动\n"
+            "· 通知 on/off —— 开关通知推送")
+
+
+def _cmd_accounts() -> str:
+    """账号余额：完整列出（用户要求「不能只显示积分统计顶部四项」）。"""
+    d = _http_json(_WEBUI_BASE + "/api/credits/stats")
+    accs = d.get("accounts") or []
+    if not accs:
+        return "暂无账号余额数据"
+    lines = ["💰 账号余额（%d 个）" % len(accs)]
+    total = 0.0
+    for a in accs:
+        name = str(a.get("accountName") or a.get("accountId") or "?")
+        rem = a.get("currentRemaining")
+        try:
+            total += float(rem)
+        except (TypeError, ValueError):
+            pass
+        lines.append("  %s: %s" % (name[:16], _fmt_num(rem)))
+    lines.append("  合计：%s" % _fmt_num(total))
+    return "\n".join(lines)
+
+
+def _cmd_credits() -> str:
+    d = _http_json(_WEBUI_BASE + "/api/credits/stats")
+    s = d.get("summary") or {}
+    return ("📊 账号池积分\n"
+            "  · 剩余积分：%s\n"
+            "  · 今日消耗：%s\n"
+            "  · 近 7 天消耗：%s\n"
+            "  · 本月消耗：%s" % (
+                _fmt_num(s.get("currentRemaining")), _fmt_num(s.get("usageToday")),
+                _fmt_num(s.get("usage7Days")), _fmt_num(s.get("usageThisMonth"))))
+
+
+def _cmd_models() -> str:
+    """当前模型：全量清单 + 轮检禁用/手动禁用分类。"""
+    g = _http_json(_WEBUI_BASE + "/api/gateway-info")
+    m = g.get("models") or {}
+    src = g.get("disabledBySource") or {}
+    ids: list = []
+    try:
+        am = _http_json(_WEBUI_BASE + "/api/account-models")
+        ids = [str(x) for x in (am.get("catalog") or []) if x]
+    except Exception:
+        pass
+    if not ids:
+        ids = [str(x) for x in (m.get("sample") or []) if x]
+    lines = [
+        "🤖 当前模型（%s 个）" % m.get("count", "?"),
+        "  · 自动发现：%s 个" % m.get("autoDiscovered", "?"),
+        "  · 轮检禁用：%s 个组合" % (src.get("auto") or 0),
+        "  · 手动禁用：%s 个组合" % (src.get("manual") or 0),
+    ]
+    if ids:
+        lines.append("  · 模型清单（%d 个）：" % len(ids))
+        for i in range(0, len(ids), 5):
+            lines.append("    " + ", ".join(ids[i:i + 5]))
+    return "\n".join(lines)
+
+
+def _cmd_status() -> str:
+    h = _http_json(_GW_BASE + "/health")
+    info = _http_json(_WEBUI_BASE + "/api/gateway-info")
+    acc_n = ((info.get("accounts") or {}).get("total") or "?")
+    return ("AutoBuddy v%s\n账号池: %s 个账号\n模型: %s 个\n状态: %s" % (
+        h.get("version", "?"), acc_n,
+        h.get("models_count", "?"), h.get("status", "?")))
+
+
+def _cmd_daily() -> str:
+    d = _http_json(_WEBUI_BASE + "/api/wb-daily/jobs")
+    jobs = d.get("jobs") or []
+    if not jobs:
+        return "暂无任务记录，回复「任务」启动一轮"
+    j = jobs[0]
+    return ("最近任务: %s（%s）\n进度: %s 账号 %s/%s" % (
+        j.get("job_id"), j.get("status"), j.get("progress"),
+        j.get("accounts_done"), j.get("accounts_total")))
+
+
+def _cmd_run() -> str:
+    d = _http_json(_WEBUI_BASE + "/api/wb-daily/run", method="POST", body=b"")
+    if d.get("job_id"):
+        return "每日任务已启动（%s），完成后会推送结果" % d["job_id"]
+    return "启动失败：%s" % (d.get("detail") or "已有任务在执行")
+
+
+def _cmd_checkin() -> str:
+    d = _http_json(_WEBUI_BASE + "/api/checkin/all", method="POST", body=b"{}")
+    return "签到已提交：%s" % (d.get("status") or "已开始")
+
+
+def wecom_command_reply(cmd: str) -> str:
+    """命令 → 回复文本。企微与 Telegram 共用的**唯一**命令语义实现。"""
+    text = (cmd or "").strip()
+    if not text:
+        return "（空消息）"
+    orig = text.lower().lstrip("/").split("@", 1)[0].strip()
+    low = orig
+    _EN = {"start": "help", "notify_on": "notify on", "notify_off": "notify off"}
+    if low in _EN:
+        low = _EN[low]
+    _EN2ZH = {"status": "状态", "credits": "积分", "balance": "积分",
+              "accounts": "账号", "models": "模型",
+              "daily": "任务", "run": "任务", "checkin": "签到", "help": "help"}
+    if low in _EN2ZH:
+        text = low = _EN2ZH[low]
+
+    if low.startswith("notify"):
+        arg = low.split()[-1] if " " in low else ""
+        if arg in ("on", "开"):
+            update_config({"enabled": True})
+            return "通知已开启"
+        if arg in ("off", "关"):
+            update_config({"enabled": False})
+            return "通知已关闭"
+        v = public_view()
+        return "通知当前：%s" % ("开启" if v.get("enabled") else "关闭")
+
+    if low in ("help", "帮助", "?", "？", "菜单"):
+        return _cmd_help()
+    try:
+        if "账号" in text or orig in ("accounts", "balance"):
+            return _cmd_accounts()
+        if "模型" in text or orig in ("models",):
+            return _cmd_models()
+        if "积分" in text or "余额" in text or orig in ("credits",):
+            return _cmd_credits()
+        if "状态" in text or orig in ("status",):
+            return _cmd_status()
+        if "签到" in text or orig in ("checkin",):
+            return _cmd_checkin()
+        if "任务" in text or orig in ("daily", "run"):
+            if orig == "daily":
+                return _cmd_daily()
+            return _cmd_run()
+    except Exception:
+        return "数据读取失败，请稍后再试"
+    return "收到：%s\n（回复「帮助」查看可用指令）" % text[:60]
+
+
+def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Optional[str]:
+    """把收到的消息翻译成回复文本（命令语义统一走 `wecom_command_reply`）。
+
+    支持两种来源：文本消息（命令在 content）与菜单点击（命令在 event_key）。
     """
-    # 菜单点击：EventKey 即命令，统一映射成文本命令后走同一套路由
     if event_key:
         content = MENU_KEY_TO_CMD.get(str(event_key).strip().upper(), "")
         msg_type = "text"
         if not content:
             return "未知菜单操作：%s" % str(event_key)[:40]
-    text = (content or "").strip()
     if msg_type != "text":
         return "我是 AutoBuddy 网关助手。发「帮助」或点下方菜单查看我能做什么～"
-    # 英文命令归一化（Telegram 菜单/命令用的就是英文，如 /status、/credits）
-    # —— 此前只认中文关键词，导致 Telegram 发 /status 被当成普通闲聊
-    #    （回复「收到：status…」），2026-10-13 实测发现。
-    _EN = {
-        "start": "help",
-        "notify_on": "notify on",
-        "notify_off": "notify off",
-    }
-    low = text.lower().lstrip("/").split("@", 1)[0].strip()
-    if low in _EN:
-        low = _EN[low]
-    # 英文命令与中文关键词同义：统一成中文后走下面的同一套分支
-    _EN2ZH = {
-        "status": "状态", "credits": "积分", "balance": "积分",
-        "accounts": "账号", "models": "模型",
-        "daily": "任务", "run": "任务", "checkin": "签到",
-        "help": "help",
-    }
-    if low in _EN2ZH:
-        text = _EN2ZH[low]
-        low = text.lower()
-    if low in ("help", "帮助", "?", "？"):
-        return ("AutoBuddy 指令：\n"
-                "· 积分 / 余额 —— 查看账号池积分汇总\n"
-                "· 签到 —— 立即跑一轮签到（仅签到）\n"
-                "· 任务 —— 跑一轮全量每日任务\n"
-                "· 状态 —— 查看网关与任务状态")
-    if low in ("积分", "余额", "credit"):
-        try:
-            import credit_floor
-            # 快照含全部账号最新余额：直接给总和与账号数
-            snaps = credit_floor._latest_balances()
-            if not snaps:
-                return "暂无积分快照（约 5 小时采集一次），稍后再试。"
-            total = sum(v for v in snaps.values() if isinstance(v, (int, float)))
-            return "账号池 {} 个账号，剩余积分合计约 {:,.0f}。".format(len(snaps), total)
-        except Exception:
-            return "积分汇总读取失败，请稍后再试。"
-    # 签到与「跑任务」是两个不同的端点：checkin 只签到，run 才是全量每日任务。
-    # 此前合并成一个分支，导致 Telegram 的 /checkin 错跑成全量任务（2026-10-13 实测）。
-    if "签到" in text:
-        try:
-            import urllib.request
-            req = urllib.request.Request(
-                "http://127.0.0.1:18090/api/checkin/all", method="POST", data=b"{}",
-                headers={"Content-Type": "application/json"})
-            d = json.loads(urllib.request.urlopen(req, timeout=8).read())
-            return "签到已提交：%s" % (d.get("status") or "已开始")
-        except Exception:
-            return "签到提交失败，请稍后再试"
-    if "任务" in text:
-        try:
-            import urllib.request
-            req = urllib.request.Request(
-                "http://127.0.0.1:18090/api/wb-daily/run", method="POST", data=b"")
-            urllib.request.urlopen(req, timeout=8)
-            return "已启动一轮每日任务（签到+成长任务），完成后会推送结果。"
-        except Exception:
-            return "任务启动失败：可能已有任务在跑，稍后再试。"
-    # 账号余额：改为输出积分统计页**顶部四项数据**（用户 2026-10-13 需求：
-    # 「账号余额只显示积分统计顶部四个数据」）—— 剩余积分 / 今日消耗 /
-    # 近 7 天 / 本月，与面板口径完全一致。逐账号明细改由 models 同级命令承担。
-    if "账号" in text:
-        try:
-            import urllib.request
-            r = urllib.request.urlopen(
-                "http://127.0.0.1:18090/api/credits/stats", timeout=8)
-            s = (json.loads(r.read()).get("summary") or {})
-            lines = [
-                "💰 积分统计（顶部四项）",
-                "  · 剩余积分：%s" % _fmt_num(s.get("currentRemaining")),
-                "  · 今日消耗：%s" % _fmt_num(s.get("usageToday")),
-                "  · 近 7 天消耗：%s" % _fmt_num(s.get("usage7Days")),
-                "  · 本月消耗：%s" % _fmt_num(s.get("usageThisMonth")),
-            ]
-            return "\n".join(lines)
-        except Exception:
-            return "积分获取失败，请稍后再试"
-    # 模型数量：改为「当前模型」全量口径（用户 2026-10-13 需求）——
-    # 总数、自动发现数、轮检禁用、手动禁用，分别列出。
-    if "模型" in text:
-        try:
-            import urllib.request
-            r = urllib.request.urlopen("http://127.0.0.1:18090/api/gateway-info", timeout=8)
-            g = json.loads(r.read())
-            m = g.get("models") or {}
-            src = g.get("disabledBySource") or {}
-            lines = [
-                "🤖 当前模型",
-                "  · 正常调用模型：%s 个（自动发现 %s 个）" % (
-                    m.get("count", "?"), m.get("autoDiscovered", "?")),
-                "  · 轮检禁用：%s 个组合" % (src.get("auto") or 0),
-                "  · 手动禁用：%s 个组合" % (src.get("manual") or 0),
-            ]
-            sample = m.get("sample") or []
-            if sample:
-                lines.append("  · 样例：%s" % ", ".join(str(x) for x in sample[:10]))
-            return "\n".join(lines)
-        except Exception:
-            return "模型获取失败，请稍后再试"
-    if "状态" in text:
-        try:
-            import urllib.request
-            r = urllib.request.urlopen("http://127.0.0.1:18091/health", timeout=8)
-            d = json.loads(r.read())
-            return ("网关状态：{} · 模型 {} 个 · 账号池正常".format(
-                d.get("status"), d.get("models_count")))
-        except Exception:
-            return "状态读取失败，请稍后再试。"
-    return "收到：{}。发「帮助」查看可用指令～".format(text[:60])
+    return wecom_command_reply(content or "")
 
 
 # ---------------------------------------------------------------------------

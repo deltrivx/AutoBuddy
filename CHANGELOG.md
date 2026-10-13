@@ -31,6 +31,31 @@
 
 ---
 
+## [v0.9.63] - 2026-10-13
+
+<!-- summary: 修复「交互菜单还是没变」根因——命令语义收拢为唯一实现，删除 web_proxy 重复内联命令链 -->
+
+### 修复
+
+- **交互菜单改了不生效**（用户二次反馈）：根因是 `web_proxy.py` 的回调处理器里
+  **内联了一份** if/elif 命令链，与 `notify.py` 的 `_wecom_interpret` 是两份代码。
+  回调由 web_proxy（18090）服务，实际走内联那份 —— 只改 notify.py 对回调无效。
+  实测复现：直调 `_wecom_interpret` 返回新口径，走 HTTP 回调返回旧口径。
+  - 命令语义收拢为唯一实现 `notify.wecom_command_reply()`；
+  - web_proxy 回调只做加解密 + `run_in_threadpool` 委托；
+  - 删除 web_proxy 约 5KB 内联命令链。
+
+### 变更
+
+- **账号余额**指令改为完整列出全部账号积分并附合计（此前只给顶部四项）；
+- **模型**指令输出「当前模型」+ 全量清单（分批）+ 轮检禁用/手动禁用分类。
+
+### 测试
+
+- 新增 `_test_command_routing.py`（28 项）：唯一实现、两入口均委托、
+  web_proxy 无残留命令分支、口径函数调用链、真实模块导入与路由分发。
+- 全量 36 个测试文件全绿。
+
 ## [v0.9.62] - 2026-10-13
 
 <!-- summary: 修复通知「剩余积分>总积分」口径悖论；菜单按钮改为四项积分统计口径 -->
@@ -3740,7 +3765,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.62...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.63...HEAD
+[v0.9.63]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.62...v0.9.63
 [v0.9.62]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.61...v0.9.62
 [v0.9.61]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.60...v0.9.61
 [v0.9.60]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.59...v0.9.60
