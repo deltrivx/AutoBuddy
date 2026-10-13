@@ -6814,9 +6814,15 @@ async def wecom_callback_msg(path: str, request: Request):
             if not content:
                 content = "help"
         cmd = content.lower().strip()
+        # ⚠️ 交互指令里 /api/credits/stats 与 /api/gateway-info 是**本代理自己**
+        # （18090）的端点，不是网关（18091）的 —— 此前一律打到 GATEWAY_BASE_URL，
+        # 于是 404 取不到值，指令回「?」（2026-10-13 实测）。
+        # 因此这里区分两个基址：WEBUI 端点走本机，网关能力（/health、/v1/models）走网关。
+        _WEBUI_BASE = "http://127.0.0.1:18090"
         async def _gw_get(path):
+            base = _WEBUI_BASE if path.startswith("/api/") else GATEWAY_BASE_URL
             async with _internal_client(timeout=8.0) as client:
-                r = await client.get(f"{GATEWAY_BASE_URL}{path}")
+                r = await client.get(f"{base}{path}")
                 return r.json() if r.status_code == 200 else {}
         if cmd in ("help", "帮助", "?", "菜单"):
             reply = ("AutoBuddy 指令：\n"
@@ -6832,9 +6838,12 @@ async def wecom_callback_msg(path: str, request: Request):
         elif cmd == "status":
             try:
                 h = await _gw_get("/health")
+                # /health 没有 accounts 字段（实测为 null），账号数另走 gateway-info
+                info = await _gw_get("/api/gateway-info")
+                acc_n = ((info.get("accounts") or {}).get("total") or "?")
                 reply = ("AutoBuddy v%s\n账号池: %s 个账号\n模型: %s 个\n状态: %s" % (
                     h.get("version", "?"),
-                    (h.get("accounts") or {}).get("total", "?"),
+                    acc_n,
                     h.get("models_count", "?"),
                     h.get("status", "?")))
             except Exception:
@@ -6865,7 +6874,8 @@ async def wecom_callback_msg(path: str, request: Request):
         elif cmd == "models":
             try:
                 h = await _gw_get("/health")
-                reply = "模型目录共 %s 个，账号卡片可查完整清单" % h.get("models_count", "?")
+                reply = "模型目录共 %s 个（自动发现 %s 个）" % (
+                    h.get("models_count", "?"), h.get("models_auto_discovered", "?"))
             except Exception:
                 reply = "模型获取失败，请稍后再试"
         elif cmd == "daily":

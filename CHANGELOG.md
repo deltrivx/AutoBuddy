@@ -31,6 +31,23 @@
 
 ---
 
+## [v0.9.51] - 2026-10-13
+
+<!-- summary: 修复交互指令取不到值——/api/* 端点误打到网关(18091)，实际在 web_proxy(18090) -->
+
+### 修复
+
+- **交互指令返回 `?`**：`_gw_get()` 一律打到网关基址（18091），而
+  `/api/credits/stats`、`/api/gateway-info` 是 web_proxy 自己（18090）的端点
+  —— 网关侧实测 404，于是 status/credits/accounts 取不到任何字段。
+  改为按路径区分基址：`/api/*` 走 18090，网关能力（`/health`、`/v1/models`）走网关；
+  status 的账号数改从 `/api/gateway-info` 的 `accounts.total` 取（`/health` 无此字段）；
+  models 同时输出自动发现数量。
+
+### 测试
+
+- 全量 30 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.50] - 2026-10-13
 
 <!-- summary: 补齐 MoviePilot 同款核心交互——自动生成企微应用底部菜单（点按钮即交互），而非让用户手打命令 -->
@@ -3455,7 +3472,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.50...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.51...HEAD
+[v0.9.51]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.50...v0.9.51
 [v0.9.50]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.49...v0.9.50
 [v0.9.49]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.48...v0.9.49
 [v0.9.48]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.47...v0.9.48
