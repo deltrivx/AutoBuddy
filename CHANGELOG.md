@@ -31,6 +31,28 @@
 
 ---
 
+## [v0.9.54] - 2026-10-13
+
+<!-- summary: 修复 Telegram 交互命令路由——英文命令未归一化、accounts/models 缺分支、checkin 错跑全量任务 -->
+
+### 修复
+
+- **Telegram 英文命令未被识别**（v0.9.53 实测 `/status` 回落「收到：xxx」兜底）：
+  `_wecom_interpret` 只认中文关键词，而 Telegram 命令菜单用英文（/status、/credits）。
+  命令开头去 `/` 前缀与 `@bot` 后缀，英文映射中文同义词后走同一套分支
+  （status→状态、credits→积分、accounts→账号、models→模型、daily/run→任务、
+  checkin→签到、start→help）。
+- **accounts / models 缺分支**：命令表已注册但解释器无对应处理、回落兜底。
+  补齐：accounts 读 `/api/credits/stats` 出账号余额清单；models 读 `/health`
+  出模型总数 + 自动发现数。
+- **checkin 错跑全量任务**：此前「签到」与「任务」合并分支、都打
+  `/api/wb-daily/run`。拆开：`/checkin` 走 `/api/checkin/all`（只签到），
+  `/run`、`/daily` 走 `/api/wb-daily/run`（全量任务）。
+
+### 测试
+
+- 全量 32 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.53] - 2026-10-13
 
 <!-- summary: 照 MoviePilot 补齐 Telegram 交互——命令菜单自动注册 + getUpdates 长轮询（不需要公网） -->
@@ -3530,7 +3552,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.53...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.54...HEAD
+[v0.9.54]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.53...v0.9.54
 [v0.9.53]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.52...v0.9.53
 [v0.9.52]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.51...v0.9.52
 [v0.9.51]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.50...v0.9.51

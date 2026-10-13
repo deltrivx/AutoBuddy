@@ -481,7 +481,27 @@ def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Option
     text = (content or "").strip()
     if msg_type != "text":
         return "我是 AutoBuddy 网关助手。发「帮助」或点下方菜单查看我能做什么～"
-    low = text.lower()
+    # 英文命令归一化（Telegram 菜单/命令用的就是英文，如 /status、/credits）
+    # —— 此前只认中文关键词，导致 Telegram 发 /status 被当成普通闲聊
+    #    （回复「收到：status…」），2026-10-13 实测发现。
+    _EN = {
+        "start": "help",
+        "notify_on": "notify on",
+        "notify_off": "notify off",
+    }
+    low = text.lower().lstrip("/").split("@", 1)[0].strip()
+    if low in _EN:
+        low = _EN[low]
+    # 英文命令与中文关键词同义：统一成中文后走下面的同一套分支
+    _EN2ZH = {
+        "status": "状态", "credits": "积分", "balance": "积分",
+        "accounts": "账号", "models": "模型",
+        "daily": "任务", "run": "任务", "checkin": "签到",
+        "help": "help",
+    }
+    if low in _EN2ZH:
+        text = _EN2ZH[low]
+        low = text.lower()
     if low in ("help", "帮助", "?", "？"):
         return ("AutoBuddy 指令：\n"
                 "· 积分 / 余额 —— 查看账号池积分汇总\n"
@@ -499,7 +519,19 @@ def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Option
             return "账号池 {} 个账号，剩余积分合计约 {:,.0f}。".format(len(snaps), total)
         except Exception:
             return "积分汇总读取失败，请稍后再试。"
-    if "签到" in text or "任务" in text:
+    # 签到与「跑任务」是两个不同的端点：checkin 只签到，run 才是全量每日任务。
+    # 此前合并成一个分支，导致 Telegram 的 /checkin 错跑成全量任务（2026-10-13 实测）。
+    if "签到" in text:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                "http://127.0.0.1:18090/api/checkin/all", method="POST", data=b"{}",
+                headers={"Content-Type": "application/json"})
+            d = json.loads(urllib.request.urlopen(req, timeout=8).read())
+            return "签到已提交：%s" % (d.get("status") or "已开始")
+        except Exception:
+            return "签到提交失败，请稍后再试"
+    if "任务" in text:
         try:
             import urllib.request
             req = urllib.request.Request(
@@ -508,6 +540,33 @@ def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Option
             return "已启动一轮每日任务（签到+成长任务），完成后会推送结果。"
         except Exception:
             return "任务启动失败：可能已有任务在跑，稍后再试。"
+    # 账号余额清单：此前没有分支，/accounts 被当成闲聊（2026-10-13 实测）
+    if "账号" in text:
+        try:
+            import urllib.request
+            r = urllib.request.urlopen(
+                "http://127.0.0.1:18090/api/credits/stats", timeout=8)
+            accs = (json.loads(r.read()).get("accounts") or [])
+            lines = ["账号余额（%d 个）：" % len(accs)]
+            for a in accs[:15]:
+                lines.append("  %s: %s" % (
+                    str(a.get("accountName") or a.get("accountId") or "?")[:12],
+                    a.get("currentRemaining", "?")))
+            if len(accs) > 15:
+                lines.append("  …及其余 %d 个" % (len(accs) - 15))
+            return "\n".join(lines)
+        except Exception:
+            return "账号获取失败，请稍后再试"
+    # 模型数量：此前同样缺分支
+    if "模型" in text:
+        try:
+            import urllib.request
+            r = urllib.request.urlopen("http://127.0.0.1:18091/health", timeout=8)
+            d = json.loads(r.read())
+            return "模型目录共 %s 个（自动发现 %s 个）" % (
+                d.get("models_count", "?"), d.get("models_auto_discovered", "?"))
+        except Exception:
+            return "模型获取失败，请稍后再试"
     if "状态" in text:
         try:
             import urllib.request
