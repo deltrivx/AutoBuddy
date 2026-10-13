@@ -86,6 +86,11 @@ reconcile = ns["_reconcile_official_usage"]
 ns["_gateway_models_by_account"] = lambda: {
     "acc1": {time.strftime("%Y-%m-%d"): [
         {"model": "glm-5.2", "requestCount": 2, "credit": 12.03}]}}
+# 图表三件套依赖的请求明细函数也一并注入桩（缺了会 NameError 被生产兜底吞掉）
+ns["_gateway_recent_requests"] = lambda limit=600: [
+    {"accountId": "acc1", "accountName": "n", "client": "gateway",
+     "credit": 1.0, "model": "glm-5.2", "requestId": "r1",
+     "requestTime": time.strftime("%Y-%m-%d %H:%M:%S")}]
 
 
 def build_case(top_today=5280.01, top_7d=19573.14, top_month=21435.49999674,
@@ -221,6 +226,21 @@ check("来源标记 source=gateway-realtime", ou5.get("source") == "gateway-real
 check("rangeEnd 对齐到今天", ou5.get("rangeEnd") == today, f"got={ou5.get('rangeEnd')}")
 check("ok=True / error=None（模板安全值）",
       ou5["accounts"][0].get("ok") is True and ou5["accounts"][0].get("error") is None)
+
+# 顶层图表三件套（2026-10-13 补全：页面「官方积分消耗」图表读的是 ou.daily/models/requests）
+check("ou.daily 顶层日序列滚动到今天",
+      (ou5.get("daily") or [{}])[-1].get("date") == today,
+      f"末条={(ou5.get('daily') or [{}])[-1].get('date')}")
+check("ou.daily 末行含 models 字段",
+      "models" in ((ou5.get("daily") or [{}])[-1] or {}))
+check("ou.models 逐模型聚合已重建",
+      isinstance(ou5.get("models"), list)
+      and any(m.get("model") == "glm-5.2" for m in ou5.get("models") or []),
+      f"got={ou5.get('models')}")
+check("ou.requests 明细已重建",
+      isinstance(ou5.get("requests"), list) and len(ou5.get("requests") or []) > 0)
+check("ou.collectedAt 已刷新（不再停 9-24）",
+      isinstance(ou5.get("collectedAt"), (int, float)) and ou5.get("collectedAt", 0) > 1.7e12)
 
 # 顶层 accounts 为空时不得接管（保留官方原始数据）
 d5b = build_case()

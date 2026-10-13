@@ -31,6 +31,39 @@
 
 ---
 
+## [v0.9.44] - 2026-10-13
+
+<!-- summary: 三项急迫修复——模型发现双通道全断、官方消耗图表停更（漏三个顶层字段）、积分感知调度 -->
+
+### 修复
+
+- **上游模型不能及时更新**（发现通道全断）：`_discover_from_token_stats()` 读的
+  `token_stats_logs.json` 在 v0.9.29 迁 SQLite 时已删除（恒返回空），另一通道
+  `official_usage_cache.json` 9-23 起停更；且缓存签名 `_catalog_signature()` 也盯着
+  已删除的 JSON，即使发现函数修好缓存也永不失效。实测账本 27+ 模型、目录停在 9 月。
+  改读 SQLite `usage_logs`（DISTINCT model），老 JSON 保留回退；签名纳入
+  `token_stats.db`（每笔请求写入，新模型调用一次即进目录）。
+
+- **官方消耗统计图表停更**（CDP 实测）：顶部四项正常，但图表「数据更新于 09/24」、
+  日序列停在 09/14→09/24。图表读的是 `officialUsage.daily / models / requests`
+  三个顶层字段——v0.9.42 只接管了 `ou.accounts[]`，漏了这三个。现全部从重建后的
+  账号明细聚合（与 accounts 同源）；`collectedAt` 刷新到当前；`requests` 由新增
+  `_gateway_recent_requests()` 从网关账本取近 600 条（字段对齐官方模板）。
+
+### 新增
+
+- **积分感知调度（加权最少连接）**：选号从纯「在飞请求数最少」改为
+  `inflight / weight`，weight ∝ 积分余额（池均值归一，下限 0.05）。
+  积分多的账号多承接；积分下降自动让位；未知余额中性不惩罚（防新账号逆底）；
+  并发分摊与轮转均匀保持不变；`AB_CREDIT_WEIGHT=0` 可关闭。
+  余额与 credit_floor 同源快照（mtime 缓存，零额外 IO）。
+
+### 测试
+
+- 新增 `_test_model_discovery.py`（9 项）、`_test_credit_weight_sched.py`
+  （16 项，含等价算法验证）；`_test_credits_usage_monotonic.py` 扩至 29 项。
+- 全量 27 个测试文件全绿。
+
 ## [v0.9.43] - 2026-10-11
 
 <!-- summary: 修复左侧 5 个标签切换时的闪屏与页面漂移 -->
@@ -3287,7 +3320,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.43...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.44...HEAD
+[v0.9.44]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.43...v0.9.44
 [v0.9.43]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.42...v0.9.43
 [v0.9.42]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.41...v0.9.42
 [v0.9.41]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.40...v0.9.41

@@ -10,6 +10,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+# 积分感知调度开关（2026-10-13）：1=按余额加权选号（默认），0=退回纯在飞数轮询。
+# 与 credit_floor 的余额快照同源（credit_usage_snapshots.json，带 mtime 缓存）。
+CREDIT_WEIGHT_SCHED = (os.getenv("AB_CREDIT_WEIGHT", "1") or "1").strip() not in ("0", "false", "no")
+
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import httpx
@@ -70,7 +74,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.43"
+VERSION_DEFAULT = "0.9.44"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -223,27 +227,55 @@ def _discover_from_official_usage() -> List[str]:
 
 
 def _discover_from_token_stats() -> List[str]:
-    """网关自身记录的 token 统计里出现过的模型名。"""
-    log_file = DATA_DIR / "token_stats_logs.json"
-    if not log_file.exists():
-        return []
+    """网关自身记录的 token 统计里出现过的模型名。
+
+    ⚠️ 2026-10-13 修复：这里原先读 ``token_stats_logs.json``，但该文件在
+    v0.9.29 迁 SQLite（token_stats.db）时已删除 —— 函数每次都返回空列表。
+    同时另一通道 ``official_usage_cache.json`` 自 9-24 起停更，
+    于是模型发现双通道全断，新模型永远进不了 /v1/models
+    （实测：账本里已出现 27+ 个模型，发现列表却停在 9 月）。
+    改读 SQLite 的 usage_logs 表，去重取模型名。
+    """
+    db_file = DATA_DIR / "token_stats.db"
+    if not db_file.exists():
+        # 兼容回退：老部署可能仍有 JSON 账本
+        log_file = DATA_DIR / "token_stats_logs.json"
+        if not log_file.exists():
+            return []
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                records = json.load(f)
+            if not isinstance(records, list):
+                return []
+            return sorted({str(r["model"]) for r in records
+                           if isinstance(r, dict) and r.get("model")})
+        except Exception:
+            return []
     try:
-        with open(log_file, "r", encoding="utf-8") as f:
-            records = json.load(f)
+        import sqlite3
+        conn = sqlite3.connect("file:%s?mode=ro" % db_file, uri=True, timeout=3.0)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT model FROM usage_logs WHERE model IS NOT NULL AND model != ''"
+            ).fetchall()
+        finally:
+            conn.close()
+        return sorted({str(r[0]) for r in rows})
     except Exception:
         return []
-    if not isinstance(records, list):
-        return []
-    return sorted({str(r["model"]) for r in records if isinstance(r, dict) and r.get("model")})
 
 
 _MODEL_CACHE: Dict[str, Any] = {"signature": None, "catalog": []}
 
 
 def _catalog_signature() -> tuple:
-    """以相关文件的 mtime + size 作为缓存签名，文件一变即重新发现。"""
+    """以相关文件的 mtime + size 作为缓存签名，文件一变即重新发现。
+
+    ⚠️ 2026-10-13 修复：token_stats_logs.json 已随 v0.9.29 迁移被删除，
+    但签名仍盯著它（mtime 恒为 0）——即使发现函数修好，缓存也永不失效，
+    新模型照样进不了目录。改盯 SQLite 账本（每笔请求都写入，天然变化）。"""
     sig = []
-    for name in ("official_usage_cache.json", "token_stats_logs.json"):
+    for name in ("official_usage_cache.json", "token_stats.db", "token_stats_logs.json"):
         try:
             st = (DATA_DIR / name).stat()
             sig.append((name, int(st.st_mtime), st.st_size))
@@ -736,7 +768,40 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         n = len(candidates)
         # 以固定起点做一次环形遍历，保证同分账号之间仍然是轮转的
         ordered = [candidates[(base + i) % n] for i in range(n)]
-        ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
+        # 积分感知调度（2026-10-13，用户需求）：加权最少连接。
+        #
+        # 此前是纯「在飞请求数最少」：同分账号间轮转，完全不感知余额 —— 积分多的
+        # 账号和快触底的账号被同等对待，前者没用上容量，后者白换挨打。
+        #
+        # 改为 inflight / weight 最小者优先：
+        #   - weight ∝ 积分余额（相对池均值归一，下限 0.05 防除零）——积分多的账号
+        #     天然多承接；
+        #   - 积分下降 → weight 自动衰减 → 该账号让位给积分更高的账号，无需人工干预；
+        #   - 未知余额（快照缺失/新账号）→ weight = 1（均值），中性不惩罚 ——
+        #     否则新账号永远逆底，重蹚「新账号一次都没被调用」的老坑；
+        #   - 同 weight 时沿用轮询起点，保均匀；并发分摊（inflight）语义不变。
+        #
+        # 例：账号 A 余额 3000、账号 B 余额 1000 → A 承接约 3 倍请求；
+        # A 被打到只剩 500 时（B 仍 1000）→ B 反超成为首选。
+        #
+        # AB_CREDIT_WEIGHT=0 可关闭（退回纯 inflight 轮询）。
+        try:
+            _bal = {}
+            if CREDIT_WEIGHT_SCHED:
+                for a in candidates:
+                    _v = credit_floor.balance_of(_account_id(a))
+                    if isinstance(_v, (int, float)) and _v > 0:
+                        _bal[str(_account_id(a))] = float(_v)
+            if _bal:
+                _avg = sum(_bal.values()) / len(_bal)
+                def _weight(a):
+                    aid = str(_account_id(a))
+                    return max(_bal.get(aid, _avg) / _avg, 0.05)
+                ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)) / _weight(a))
+            else:
+                ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
+        except Exception:
+            ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
         acc = ordered[0]
         # 把起点推进到「刚选中的那个账号的下一个」，保持长期均匀
         try:

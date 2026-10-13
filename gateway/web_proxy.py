@@ -5318,6 +5318,51 @@ def _gateway_models_by_account() -> dict:
     return out
 
 
+def _gateway_recent_requests(limit: int = 600) -> list:
+    """从网关账本取最近的请求明细（官方 ou.requests 的等价替代）。
+
+    官方模板字段：accountId / accountName / client / credit / model /
+    requestId / requestTime。官方那套 9-24 起停更，这里用 token_stats.db
+    （逐请求带时间戳）重建，按时间倒序取近 limit 条。
+    带 TTL 缓存；读失败返回空 list —— 只是增强，必须优雅退化。
+    """
+    now = time.time()
+    hit = _REQ_CACHE.get("recent")
+    if isinstance(hit, list) and (now - float(_REQ_CACHE.get("recent_at") or 0.0)) < _REQ_TTL_SEC:
+        return hit
+    out = []
+    db = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "token_stats.db"
+    try:
+        if db.exists():
+            import sqlite3
+            conn = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
+            try:
+                for rid, ts, aid, aname, model, cost in conn.execute(
+                        "SELECT id, ts, account_id, account_name, model, cost "
+                        "FROM usage_logs ORDER BY ts DESC LIMIT ?", (int(limit),)):
+                    try:
+                        _t = time.strftime("%Y-%m-%d %H:%M:%S",
+                                           time.localtime(float(ts) / 1000.0))
+                    except Exception:
+                        _t = ""
+                    out.append({
+                        "accountId": aid or "",
+                        "accountName": aname or "",
+                        "client": "gateway",
+                        "credit": round(float(cost or 0.0), 6),
+                        "model": str(model or "unknown"),
+                        "requestId": str(rid or ""),
+                        "requestTime": _t,
+                    })
+            finally:
+                conn.close()
+    except Exception:
+        return out
+    _REQ_CACHE["recent"] = out
+    _REQ_CACHE["recent_at"] = now
+    return out
+
+
 def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
     """校准 ``officialUsage`` 里失真的「今日消耗」。
 
@@ -5513,6 +5558,65 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
                 ou["source"] = "gateway-realtime"
                 # 范围端点跟着对齐，避免「数据截止 9-24」的误导继续挂着
                 ou["rangeEnd"] = time.strftime("%Y-%m-%d")
+                # ---- 顶层图表三件套同步接管（2026-10-13 实测补全）----
+                # 页面「官方积分消耗」图表读的是 ou.daily（按日序列）/ ou.models
+                # （逐模型聚合）/ ou.requests（请求明细），而不是 ou.accounts ——
+                # v0.9.42 只接管了 accounts，图表仍停在 9-24（实测 08-25→09-24）。
+                # 这三个字段全部从重建后的账号明细聚合而来，与 accounts 天然同源。
+                try:
+                    _g_daily = {}
+                    _g_models = {}
+                    _g_reqs = []
+                    for _ra in rebuilt:
+                        for _row in (_ra.get("daily") or []):
+                            _rd = str(_row.get("date") or "")
+                            if not _rd:
+                                continue
+                            _g_daily.setdefault(_rd, 0.0)
+                            _g_daily[_rd] += float(_row.get("usage") or 0.0)
+                            for _m in (_row.get("models") or []):
+                                _mk = str(_m.get("model") or "unknown")
+                                _g_models.setdefault(
+                                    _mk, {"credit": 0.0, "model": _mk, "requestCount": 0})
+                                _g_models[_mk]["credit"] += float(_m.get("credit") or 0.0)
+                                _g_models[_mk]["requestCount"] += int(_m.get("requestCount") or 0)
+                    # 请求明细：从网关账本取近 600 条（官方 detailLimit 同量级），
+                    # 按时间倒序，字段对齐官方模板
+                    _g_reqs = _gateway_recent_requests()
+                    # 按日序列窗口对齐官方（31 天），从今天往前推 30 天
+                    _today_d = time.strftime("%Y-%m-%d")
+                    _start_d = time.strftime(
+                        "%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
+                    _days = []
+                    _cur = _start_d
+                    while _cur <= _today_d:
+                        _days.append(_cur)
+                        _cur = time.strftime(
+                            "%Y-%m-%d", time.localtime(time.mktime(time.strptime(_cur, "%Y-%m-%d")) + 86400))
+                    # 按日聚合全部账号的模型明细（图表的日粒度分解用）
+                    _g_day_models = {}
+                    for _ra in rebuilt:
+                        for _row in (_ra.get("daily") or []):
+                            _rd = str(_row.get("date") or "")
+                            for _m in (_row.get("models") or []):
+                                _g_day_models.setdefault(_rd, {})
+                                _mk = str(_m.get("model") or "unknown")
+                                _slot = _g_day_models[_rd].setdefault(
+                                    _mk, {"credit": 0.0, "model": _mk, "requestCount": 0})
+                                _slot["credit"] += float(_m.get("credit") or 0.0)
+                                _slot["requestCount"] += int(_m.get("requestCount") or 0)
+                    ou["daily"] = [{"date": _d,
+                                     "models": sorted(_g_day_models.get(_d, {}).values(),
+                                                       key=lambda x: -(x.get("credit") or 0.0)),
+                                     "usage": round(_g_daily.get(_d, 0.0), 4)} for _d in _days]
+                    ou["models"] = sorted(_g_models.values(),
+                                           key=lambda x: -(x.get("credit") or 0.0))
+                    if _g_reqs:
+                        ou["requests"] = _g_reqs
+                    ou["collectedAt"] = int(time.time() * 1000)
+                    ou["errors"] = []
+                except Exception:
+                    pass
     except Exception:
         pass
 
