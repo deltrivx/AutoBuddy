@@ -102,9 +102,10 @@ def _unpad_raises():
     except ValueError:
         return True
 
-print("\n[7] PKCS7 边界（AES 块大小 = 16，此前误写成 32）")
-check("pad 恰好整块时补满一块", len(notify._pkcs7_pad(b"x" * 16)) == 32)
-check("pad 单字节不足时补 15", len(notify._pkcs7_pad(b"a")) == 16)
+print("\n[7] PKCS7 边界（企微官方 block=32，此前误写 16 导致真实回调 padding 失败）")
+check("pad 恰好整块时补满一块", len(notify._pkcs7_pad(b"x" * 32)) == 64)
+check("pad 不足 32 时补到 32 倍数", len(notify._pkcs7_pad(b"a")) == 32)
+check("块大小常量为 32（官方 WXBizMsgCrypt 语义）", notify._AES_BLOCK == 32)
 check("unpad 正确", notify._pkcs7_unpad(notify._pkcs7_pad(b"abc")) == b"abc")
 check("unpad 拒绝非法填充",
       (lambda: [False for _ in [0]] if False else _unpad_raises()))

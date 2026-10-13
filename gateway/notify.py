@@ -601,11 +601,15 @@ def _aes_key_b64(aes_key: str) -> bytes:
     return base64.b64decode((aes_key.strip() + "=").encode())
 
 
-# ⚠️ AES 块大小是 16 字节（此前误写成 32）。企微密文用的是标准 16 字节 PKCS7。
-_AES_BLOCK = 16
+# ⚠️ 企微官方加解密协议的 PKCS7 填充块是 **32 字节**（官方 WXBizMsgCrypt
+# 的 block_size=32），不是 AES 分组本身的 16。此前误写 16，本地往返自洽
+# 测不出来，但真实企微消息按 32 字节块填充，按 16 校验必然
+# 「bad pkcs7 padding」（2026-10-13 真实回调实测报错）。
+_AES_BLOCK = 32
 
 
 def _pkcs7_pad(data: bytes) -> bytes:
+    # 企微：即使 data 已是 32 的倍数也要补一整块（官方实现语义）
     n = _AES_BLOCK - (len(data) % _AES_BLOCK)
     return data + bytes([n]) * n
 

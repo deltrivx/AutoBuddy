@@ -31,6 +31,25 @@
 
 ---
 
+## [v0.9.55] - 2026-10-13
+
+<!-- summary: 修复企微菜单无回复——PKCS7 填充块误写 16，官方协议为 32 字节 -->
+
+### 修复
+
+- **企微菜单点击无回复**：回调有到达、签名通过，但解密报 `bad pkcs7 padding`。
+  根因：企微官方加解密协议（WXBizMsgCrypt）的 PKCS7 填充块是 **32 字节**
+  （block_size=32），本实现误写成 16。本地往返测试用同一个块大小自洽通过，
+  真实企微消息按 32 字节块填充、按 16 校验必然失败。
+- `_AES_BLOCK` 16 → 32；加密侧（回给企微的密文）同样按 32 字节块填充，
+  企微后台可正确解密。
+- 更新 `_test_wecom_callback_crypto.py` 边界断言为官方 32 字节语义（18 项全过）。
+
+### 说明
+
+- 菜单要通还需配置页「回调 EncodingAESKey」与企微后台「接收消息服务器」的
+  EncodingAESKey 一致；两边不一致现象同样是 padding 失败。
+
 ## [v0.9.54] - 2026-10-13
 
 <!-- summary: 修复 Telegram 交互命令路由——英文命令未归一化、accounts/models 缺分支、checkin 错跑全量任务 -->
@@ -3552,7 +3571,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.54...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.55...HEAD
+[v0.9.55]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.54...v0.9.55
 [v0.9.54]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.53...v0.9.54
 [v0.9.53]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.52...v0.9.53
 [v0.9.52]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.51...v0.9.52
