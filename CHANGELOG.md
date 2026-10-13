@@ -31,6 +31,22 @@
 
 ---
 
+## [v0.9.48] - 2026-10-13
+
+<!-- summary: 修复回调字段重复注册——cb_token/cb_aes_key 被当成密钥，GET 回读成字典、前端无法回显 -->
+
+### 修复
+
+- **回调字段重复注册**：企微渠道注册表里 `cb_token` / `cb_aes_key` 注册了两次
+  （一处明文、一处 secret），按 key 覆盖后后者生效，导致这两个字段被当成密钥：
+  GET 回读变成 `{"has_value": true}` 字典，前端无法回显，后端取到的也不是字符串。
+  删除重复项，回调字段统一为明文（Token/AESKey 需能回显供用户核对）。
+
+### 测试
+
+- `_test_notify.py` 新增「注册表字段无重复 key」防回归断言（26 项全过）。
+- 全量 29 个测试文件全绿。
+
 ## [v0.9.47] - 2026-10-13
 
 <!-- summary: 企业微信完整交互——内置回调端点（echo 校验+消息接收+指令自动回复），零辅助容器 -->
@@ -3393,7 +3409,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.47...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.48...HEAD
+[v0.9.48]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.47...v0.9.48
 [v0.9.47]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.46...v0.9.47
 [v0.9.46]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.45...v0.9.46
 [v0.9.45]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.44...v0.9.45

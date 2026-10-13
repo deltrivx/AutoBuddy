@@ -52,18 +52,11 @@ CHANNELS: List[Dict[str, Any]] = [
             # 回调配置（接收消息服务器）：企微后台「接收消息」页的三个值。
             # 配好后不仅能收消息（交互），还解锁「企业可信IP」的前置条件。
             {"key": "cb_token", "label": "回调 Token", "secret": False,
-             "placeholder": "企微后台接收消息页的 Token"},
-            {"key": "cb_aes_key", "label": "回调 EncodingAESKey", "secret": False,
-             "placeholder": "43 位，企微后台生成"},
-            # 回调模式（接收消息服务器）：配齐 cb_token/cb_aes_key/cb_url 后可在
-            # 企微后台启用「API 接收」（这也是解锁「企业可信 IP」前置的两种方式之一）；
-            # 收到成员消息后可回复，实现双向交互。
-            {"key": "cb_token", "label": "回调 Token", "secret": True,
              "placeholder": "接收消息服务器的 Token（企微后台生成/自定义）"},
-            {"key": "cb_aes_key", "label": "回调 EncodingAESKey", "secret": True,
+            {"key": "cb_aes_key", "label": "回调 EncodingAESKey", "secret": False,
              "placeholder": "43 位加密密钥（企微后台生成）"},
             {"key": "cb_url", "label": "回调 URL", "secret": False,
-             "placeholder": "https://autobuddy.deltrivx.com/api/notify/wecom/callback"},
+             "placeholder": "公网可达地址，如 http://<VPS>:10083/api/notify/wecom/callback/<随机段>"},
         ],
     },
     # 后续渠道（Telegram / 钉钉 / Bark…）往这里追加注册即可，

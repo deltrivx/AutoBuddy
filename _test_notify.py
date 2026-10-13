@@ -111,5 +111,22 @@ check("默认域 qyapi.weixin.qq.com", "qyapi.weixin.qq.com" in SRC)
 check("AgentId 非数字友好报错", "AgentId 必须是纯数字" in SRC)
 check("touser 缺省 @all", '"@all"' in SRC)
 
+# ---- 追加：注册表防重复（2026-10-13 修复的真实 bug）----
+# 曾把 cb_token/cb_aes_key 同时注册了明文版和 secret 版，后者覆盖前者，
+# 导致这两个字段被当成密钥、GET 回读变成 {"has_value": ...} 字典，
+# 前端无法回显、后端取到的也不是字符串。
+def _check_no_dup():
+    import collections
+    for c in notify.CHANNELS:
+        keys = [f["key"] for f in c["fields"]]
+        dup = [k for k, n in collections.Counter(keys).items() if n > 1]
+        if dup:
+            return c["key"], dup
+    return None, []
+
+
+_ch, _dup = _check_no_dup()
+check("注册表字段无重复 key", not _dup, f"{_ch} 重复: {_dup}")
+
 print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
 raise SystemExit(1 if _fail else 0)
