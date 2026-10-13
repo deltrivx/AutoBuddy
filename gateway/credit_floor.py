@@ -33,10 +33,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
+
+# ⚠️ 两个目录的职责（2026-10-13 核实 git 历史 + 实证后定论，切勿删错）：
+#   - /data/.wb-switch/  ← **官方引擎（autobuddy-engine，闭源二进制）的数据目录**。
+#     名字里的 wb-switch 是项目改名（v0.5.0 AutoBuddy）前的旧名，但它不是
+#     “旧版残留”——引擎硬编码写这里，删了引擎就写不进去（实测
+#     credit_usage_snapshots.json 只有这份是新鲜的，另一份停在 9-23）。
+#     账号池权威源 accounts.json 也按 main.py:458 的注释写在这里。
+#   - /data/.autobuddy/  ← 网关自己（AB_DATA_DIR）的目录，entrypoint.sh 还做了
+#     双向软链（commit 40c9597）让两边互读。
+# 结论：**两个目录都不能删**；真正该删的是 .autobuddy 里那些引擎已停更的
+# 死副本（如 credit_usage_snapshots.json，2026-10-13 已清理）。
+
 # ⚠️ 2026-10-13 修复：此前只读 DATA_DIR 自己那份快照，但它 9-23 起停更
 # （实测停在 2026-09-23 23:03）；实时数据在 .wb-switch 那份（官方引擎持续写入）。
 # 调度器（积分感知）与保底都因读到 20 天前的旧余额而失真。
-# 现按顺序取**第一个存在且较新**的：优先 .wb-switch（实时），回退 DATA_DIR。
+# 取候选清单中**存在且 mtime 最新**的一份：优先 .wb-switch（实时），
+# DATA_DIR 那份只作回退（防某天引擎改目录时还能跑）。
 def _pick_snapshot_file():
     candidates = [
         Path("/data/.wb-switch/credit_usage_snapshots.json"),
