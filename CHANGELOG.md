@@ -31,6 +31,31 @@
 
 ---
 
+## [v0.9.59] - 2026-10-13
+
+<!-- summary: 超时判定改为按账号（原为30分钟总时间，账号增多必被强杀） -->
+
+### 修复
+
+- **每日任务超时判定设计缺陷**（用户指出「应该单独按照每个账号判定，而不是总时间，
+  账号变多岂不是又炸了」）：原实现写死 `deadline = time.monotonic() + 1800`
+  （30 分钟**总**上限），账号池涨到 22 个后单轮必超时 → 每轮被强杀、永远 failed；
+  调大常量只是延后爆炸。
+- 改为**按账号判定**：单个账号超过 `WB_DAILY_ACCOUNT_TIMEOUT`（默认 180 秒）
+  无日志产出才算卡住并终止；有产出即重置计时。总轮次时长随账号数自然伸缩。
+- 顺带修正 `proc.wait()` 也挂在总 deadline 上的问题（长轮次收尾可能被误杀），
+  改为无限等待子进程自然退出。
+
+### 测试
+
+- 新增 `_test_wb_daily_timeout.py`（16 项）：旧缺陷已除、按账号判定已实现、
+  等价算法验证（22/50 账号长轮次不杀、单账号卡死则杀、阈值可配置）。
+- 全量 33 个测试文件全绿。
+
+### 升级说明
+
+- 新增环境变量 `WB_DAILY_ACCOUNT_TIMEOUT`（默认 180 秒）。
+
 ## [v0.9.58] - 2026-10-13
 
 <!-- summary: 修复点击执行却无记录（超时/中止不落库）；调度算法改配额制按余额比例分摊；通知补齐 5 类场景 -->
@@ -3648,7 +3673,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.58...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.59...HEAD
+[v0.9.59]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.58...v0.9.59
 [v0.9.58]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.57...v0.9.58
 [v0.9.57]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.56...v0.9.57
 [v0.9.56]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.55...v0.9.56

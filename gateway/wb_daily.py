@@ -793,33 +793,39 @@ async def _execute(job: DailyJob):
         return
     job.proc = proc
     all_lines: list[str] = []
-    deadline = time.monotonic() + 1800
+    # ⚠️ 超时判定改为「按账号」而非「总时间」（用户 2026-10-13 指出）：
+    # 此前写死 30 分钟总 deadline —— 账号池涨到 22 个后单轮必然超 30 分钟，
+    # 于是每轮都被强杀、永远 fail。账号越多炸得越狠，这是设计缺陷。
+    #
+    # 现在的语义：**单个账号**超过 PER_ACCOUNT_TIMEOUT 没产出新行才算卡住 → 杀。
+    # 总轮次时长 = 账号数 × 每账号耗时，随账号数自然伸缩，不再有总上限。
+    # 单个账号真的卡死（上游不返回 / 网络黑洞）仍能被切掉，不会拖死整轮。
+    per_account_timeout = float(os.getenv("WB_DAILY_ACCOUNT_TIMEOUT", "180") or 180)
+    last_activity = time.monotonic()
     rc = None
     try:
         while True:
-            remain = deadline - time.monotonic()
-            if remain <= 0:
+            idle = time.monotonic() - last_activity
+            if idle >= per_account_timeout:
                 raise TimeoutError()
             try:
-                line = await asyncio.wait_for(proc.stdout.readline(), timeout=remain)
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=per_account_timeout - idle)
             except asyncio.TimeoutError:
                 raise TimeoutError()
             if not line:
                 break
+            last_activity = time.monotonic()   # 有产出 = 账号在推进，重置计时
             text = line.decode("utf-8", "replace").rstrip()
             if text:
                 all_lines.append(text)
                 job.log_line(text)
-        remain = deadline - time.monotonic()
-        if remain <= 0:
-            raise TimeoutError()
-        rc = await asyncio.wait_for(proc.wait(), timeout=remain)
+        rc = await proc.wait()
     except TimeoutError:
         try:
             proc.kill()
         except Exception:
             pass
-        job.log_line("执行超时（30 分钟），已强制终止")
+        job.log_line("执行超时（单账号 %.0f 秒无产出），已强制终止" % per_account_timeout)
         job.finish("failed", "执行超时")
         # 必须落库：否则被强杀的这轮在面板「执行记录」里完全看不到 ——
         # 用户点了执行、跑了半小时，历史里却一条记录都没有
