@@ -457,21 +457,31 @@ def _aes_key_b64(aes_key: str) -> bytes:
     return base64.b64decode((aes_key.strip() + "=").encode())
 
 
+# ⚠️ AES 块大小是 16 字节（此前误写成 32）。企微密文用的是标准 16 字节 PKCS7。
+_AES_BLOCK = 16
+
+
 def _pkcs7_pad(data: bytes) -> bytes:
-    n = 32 - (len(data) % 32)
+    n = _AES_BLOCK - (len(data) % _AES_BLOCK)
     return data + bytes([n]) * n
 
 
 def _pkcs7_unpad(data: bytes) -> bytes:
     n = data[-1]
-    if n < 1 or n > 32:
+    if n < 1 or n > _AES_BLOCK:
+        raise ValueError("bad pkcs7 padding")
+    # 校验整段填充字节一致，防止误判（企微明文末尾恰好是合法值时不会误剥）
+    if data[-n:] != bytes([n]) * n:
         raise ValueError("bad pkcs7 padding")
     return data[:-n]
 
 
 def _openssl_cbc(data: bytes, key: bytes, iv: bytes, enc: bool) -> bytes:
     """AES-256-CBC 加/解密（openssl 子进程，key/iv 均为 32/16 字节）。"""
-    args = ["openssl", "enc", "-aes-256-cbc",
+    # ⚠️ 必须 -nosalt -nopad：openssl 默认会加/剥自己的 PKCS7 填充并带 salt 头，
+    # 那会与企微的「无 salt + 标准 PKCS7」格式冲突 —— 表现为解密后再剥一次填充
+    # 时报 bad pkcs7 padding（真实故障，2026-10-13）。填充统一由本模块处理。
+    args = ["openssl", "enc", "-aes-256-cbc", "-nosalt", "-nopad",
             "-K", key.hex(), "-iv", iv.hex()]
     if not enc:
         args.append("-d")

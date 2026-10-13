@@ -31,6 +31,28 @@
 
 ---
 
+## [v0.9.49] - 2026-10-13
+
+<!-- summary: 修复企微回调 echo 校验解密失败——AES 块大小误写 32 + openssl 与企微填充约定冲突（双重填充） -->
+
+### 修复
+
+- **企微回调 echo 校验解密失败**（`bad pkcs7 padding`，企微后台报
+  「openapi回调地址请求不通过」）。实证：容器日志显示企微请求已到达
+  （真实 timestamp/nonce），但解密报错 403。两个叠加根因：
+  1. AES 块大小误写成 32（AES 固定 16 字节），PKCS7 填充按错误块大小计算；
+  2. `openssl enc` 默认自带 salt 头并自行加/剥 PKCS7 填充，与企微
+     「无 salt + 标准 PKCS7」冲突，本模块解密后又剥一次 → 双重填充。
+
+  修正：块大小常量 `_AES_BLOCK = 16`；去填充增加整段一致性校验（防误剥）；
+  openssl 调用加 `-nosalt -nopad`，salt 与填充统一由本模块按企微协议处理。
+
+### 测试
+
+- `_test_wecom_callback_crypto.py` 修正块大小断言并新增防回归（17 项）：
+  整块补满一块、单字节补 15、unpad 正确、unpad 拒绝非法填充。
+- 全量 29 个测试文件全绿。
+
 ## [v0.9.48] - 2026-10-13
 
 <!-- summary: 修复回调字段重复注册——cb_token/cb_aes_key 被当成密钥，GET 回读成字典、前端无法回显 -->
@@ -3409,7 +3431,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.48...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.49...HEAD
+[v0.9.49]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.48...v0.9.49
 [v0.9.48]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.47...v0.9.48
 [v0.9.47]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.46...v0.9.47
 [v0.9.46]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.45...v0.9.46

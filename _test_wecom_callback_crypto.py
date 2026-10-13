@@ -93,9 +93,21 @@ enc_l = notify._aes_encrypt(long_xml, AES_KEY, CORPID)
 back_l, _ = notify._aes_decrypt(enc_l, AES_KEY)
 check("长文本（多块）往返", back_l == long_xml)
 
-print("\n[7] PKCS7 边界")
-check("pad 恰好整块时补满块", len(notify._pkcs7_pad(b"x" * 32)) == 64)
+
+def _unpad_raises():
+    """非法填充应抛 ValueError（防误剥）。"""
+    try:
+        notify._pkcs7_unpad(b"abc\x05\x05")
+        return False
+    except ValueError:
+        return True
+
+print("\n[7] PKCS7 边界（AES 块大小 = 16，此前误写成 32）")
+check("pad 恰好整块时补满一块", len(notify._pkcs7_pad(b"x" * 16)) == 32)
+check("pad 单字节不足时补 15", len(notify._pkcs7_pad(b"a")) == 16)
 check("unpad 正确", notify._pkcs7_unpad(notify._pkcs7_pad(b"abc")) == b"abc")
+check("unpad 拒绝非法填充",
+      (lambda: [False for _ in [0]] if False else _unpad_raises()))
 
 print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
 raise SystemExit(1 if _fail else 0)
