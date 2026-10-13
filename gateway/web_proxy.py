@@ -6710,7 +6710,19 @@ async def notify_put(request: Request):
                 menu = _notify.create_wecom_menus(wecom_cfg)
         except Exception as e:
             menu = {"ok": False, "error": str(e)[:120]}
-        return {"ok": True, "menu": menu}
+        # Telegram：配置就绪即自动注册命令菜单（MoviePilot 的 register_commands 同款），
+        # 并启动长轮询收消息 —— Telegram 走 getUpdates，**不需要公网入口**。
+        tg = None
+        try:
+            tg_cfg = _notify._load().get("channels", {}).get("telegram") or {}
+            if str(tg_cfg.get("bot_token") or "").strip():
+                tg = _notify.telegram_register_commands(tg_cfg)
+                started = _notify.start_telegram_polling()
+                if isinstance(tg, dict):
+                    tg["polling"] = bool(started)
+        except Exception as e:
+            tg = {"ok": False, "error": str(e)[:120]}
+        return {"ok": True, "menu": menu, "telegram": tg}
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)[:120]}),
                         status_code=500, media_type="application/json")
@@ -7695,4 +7707,10 @@ def _install_access_filter() -> None:
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 18090))
     _install_access_filter()
+    # Telegram 交互：容器启动即恢复长轮询（配置就绪才真跑）。
+    # 走 getUpdates 拉取，不需要公网入口。
+    try:
+        _notify.start_telegram_polling()
+    except Exception:
+        pass
     uvicorn.run(app, host="0.0.0.0", port=port)

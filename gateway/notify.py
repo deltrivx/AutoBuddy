@@ -767,3 +767,173 @@ def delete_wecom_menus(channel_cfg: Optional[Dict[str, Any]] = None) -> Dict[str
                 "error": None if (d or {}).get("errcode") == 0 else str((d or {}).get("errmsg"))[:120]}
     except Exception as e:
         return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
+
+
+# ---------------------------------------------------------------------------
+# Telegram 交互：命令菜单自动注册 + getUpdates 长轮询（照 MoviePilot 实现）。
+#
+# MoviePilot 的做法（app/modules/telegram/telegram.py）：
+#   - register_commands()：delete_my_commands() 后 set_my_commands()，
+#     配置保存即自动在客户端输入框左侧生成命令菜单（点「/」就能选）；
+#   - 收消息用 **getUpdates 长轮询**（不是 webhook）—— 因此 Telegram 通道
+#     **不需要公网入口**，这点与企微回调不同（我此前错误地把「需公网」
+#     套到了 Telegram 上，这里更正）。
+#
+# 命令表复用企微菜单的 MENU_KEY_TO_CMD（同一套命令，两种通道一致），
+# 命令名取小写（Telegram 命令只能小写字母/数字/下划线）。
+# ---------------------------------------------------------------------------
+
+# Telegram 命令 -> 描述（用于 setMyCommands 菜单展示）
+TELEGRAM_COMMANDS = [
+    ("status",   "网关与账号池状态"),
+    ("credits",  "积分与今日消耗"),
+    ("accounts", "账号余额清单"),
+    ("models",   "模型数量"),
+    ("daily",    "每日任务进度"),
+    ("run",      "启动一轮每日任务"),
+    ("checkin",  "全部账号签到"),
+    ("help",     "可用指令清单"),
+]
+
+_TG_POLL_THREAD = None
+_TG_POLL_STOP = None
+
+
+def _tg_api(token: str, proxy: str = "") -> Any:
+    """构造 Telegram 客户端（渠道级代理，不影响全局）。"""
+    import httpx
+    kwargs = {"timeout": 40.0, "verify": False}
+    if proxy:
+        kwargs["proxy"] = proxy
+    return httpx.Client(**kwargs)
+
+
+def telegram_register_commands(ch_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """注册/刷新 Telegram 命令菜单（幂等）。配置就绪即可调用。"""
+    cfg = ch_cfg or (_load().get("channels", {}).get("telegram") or {})
+    token = str(cfg.get("bot_token") or "").strip()
+    if not token:
+        return {"ok": False, "error": "Bot Token 未配置"}
+    proxy = str(cfg.get("proxy") or "").strip()
+    try:
+        with _tg_api(token, proxy) as client:
+            client.post("https://api.telegram.org/bot%s/deleteMyCommands" % token)
+            r = client.post(
+                "https://api.telegram.org/bot%s/setMyCommands" % token,
+                json={"commands": [{"command": c, "description": d}
+                                   for c, d in TELEGRAM_COMMANDS]})
+            d = r.json() if r.status_code == 200 else {}
+        if (d or {}).get("ok") is True:
+            return {"ok": True, "commands": len(TELEGRAM_COMMANDS)}
+        return {"ok": False, "error": "注册命令失败：%s" % _sanitize_token(
+            str((d or {}).get("description") or r.status_code)[:160])}
+    except Exception as e:
+        return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
+
+
+def telegram_delete_commands(ch_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """清理 Telegram 命令菜单。"""
+    cfg = ch_cfg or (_load().get("channels", {}).get("telegram") or {})
+    token = str(cfg.get("bot_token") or "").strip()
+    if not token:
+        return {"ok": False, "error": "Bot Token 未配置"}
+    proxy = str(cfg.get("proxy") or "").strip()
+    try:
+        with _tg_api(token, proxy) as client:
+            r = client.post("https://api.telegram.org/bot%s/deleteMyCommands" % token)
+            d = r.json() if r.status_code == 200 else {}
+        return {"ok": (d or {}).get("ok") is True}
+    except Exception as e:
+        return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
+
+
+def _tg_reply(token: str, proxy: str, chat_id: str, text: str) -> None:
+    with _tg_api(token, proxy) as client:
+        client.post("https://api.telegram.org/bot%s/sendMessage" % token,
+                    json={"chat_id": chat_id, "text": text[:4000]})
+
+
+def _tg_run_polling(stop_event: Any) -> None:
+    """长轮询主循环：拉 getUpdates → 解释命令 → 回消息。
+
+    照 MoviePilot：串行处理、失败指数退避、handler 抛错也确认 offset（避免同一条
+    坏消息反复投递）。命令路由复用 _wecom_interpret（企微菜单同套命令）。
+    """
+    offset = None
+    failures = 0
+    while not stop_event.is_set():
+        try:
+            cfg = _load().get("channels", {}).get("telegram") or {}
+            token = str(cfg.get("bot_token") or "").strip()
+            proxy = str(cfg.get("proxy") or "").strip()
+            if not token:
+                stop_event.wait(30)
+                continue
+            with _tg_api(token, proxy) as client:
+                r = client.post(
+                    "https://api.telegram.org/bot%s/getUpdates" % token,
+                    json={"offset": offset, "timeout": 30,
+                          "allowed_updates": ["message", "callback_query"]})
+                d = r.json() if r.status_code == 200 else {}
+            updates = (d or {}).get("result") or []
+            failures = 0
+            for up in updates:
+                try:
+                    offset = max(offset or 0, int(up.get("update_id") or 0)) + 1
+                except Exception:
+                    pass
+                try:
+                    msg = up.get("message") or {}
+                    call = up.get("callback_query") or {}
+                    if call:
+                        chat_id = str(((call.get("message") or {}).get("chat") or {}).get("id") or "")
+                        data = str(call.get("data") or "").strip()
+                        if chat_id and data:
+                            reply = _wecom_interpret("text", MENU_KEY_TO_CMD.get(data.upper(), data.lower())) or "未知操作"
+                            _tg_reply(token, proxy, chat_id, reply)
+                        continue
+                    chat_id = str((msg.get("chat") or {}).get("id") or "")
+                    text = str(msg.get("text") or "").strip()
+                    if not chat_id or not text:
+                        continue
+                    # 命令形态：/status 或 /status@bot → 取命令名
+                    cmd_text = text
+                    if text.startswith("/"):
+                        cmd_text = text.split(maxsplit=1)[0][1:].split("@", 1)[0]
+                    reply = _wecom_interpret("text", cmd_text)
+                    if reply:
+                        _tg_reply(token, proxy, chat_id, reply)
+                except Exception:
+                    # handler 抛错只记录，仍确认该更新（照 MoviePilot 语义）
+                    continue
+        except Exception:
+            failures += 1
+            stop_event.wait(min(3 * 2 ** (failures - 1), 60))
+
+
+def start_telegram_polling() -> bool:
+    """启动 Telegram 长轮询（后台守护线程，幂等）。配置就绪才真正开跑。"""
+    global _TG_POLL_THREAD, _TG_POLL_STOP
+    try:
+        if _TG_POLL_THREAD is not None and _TG_POLL_THREAD.is_alive():
+            return True
+        cfg = _load().get("channels", {}).get("telegram") or {}
+        if not str(cfg.get("bot_token") or "").strip():
+            return False
+        _TG_POLL_STOP = threading.Event()
+        _TG_POLL_THREAD = threading.Thread(
+            target=_tg_run_polling, args=(_TG_POLL_STOP,),
+            name="ab-tg-polling", daemon=True)
+        _TG_POLL_THREAD.start()
+        return True
+    except Exception:
+        return False
+
+
+def stop_telegram_polling() -> None:
+    global _TG_POLL_STOP
+    try:
+        if _TG_POLL_STOP is not None:
+            _TG_POLL_STOP.set()
+    except Exception:
+        pass

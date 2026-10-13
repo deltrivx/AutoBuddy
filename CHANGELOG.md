@@ -31,6 +31,37 @@
 
 ---
 
+## [v0.9.53] - 2026-10-13
+
+<!-- summary: 照 MoviePilot 补齐 Telegram 交互——命令菜单自动注册 + getUpdates 长轮询（不需要公网） -->
+
+### 新增
+
+- **Telegram 命令菜单自动注册**（同 MoviePilot 的 register_commands）：
+  deleteMyCommands → setMyCommands，注册 8 条命令（status/credits/accounts/
+  models/daily/run/checkin/help）。配置保存即自动注册，成员按「/」即可选命令。
+- **Telegram 长轮询收消息**（同 _run_polling）：`getUpdates`（timeout=30）串行处理、
+  offset 递进确认；支持 `/status` 与 `/status@bot`；按钮回调走同一套命令路由；
+  失败指数退避重试；后台守护线程，容器启动即自动恢复。
+
+### 更正
+
+- 此前把「交互需要公网入口」套到 Telegram 上——**错误**。
+  MoviePilot 的 Telegram 用 **getUpdates 长轮询**（非 webhook），**不需要公网**；
+  只有企微自建应用回调才需要公网。此版本更正并落实。
+
+### 说明
+
+- 「不是官方发送的请求」日志对应上游 400 `code=11128`（unapproved channel 渠道拦截），
+  v0.9.35 已处理（命中账号冷却 30 分钟）。该日志来自**其他设备**，本环境近 48h 实测 0 条，
+  本地无法复现，需在那台设备上下文排查。
+
+### 测试
+
+- 新增 `_test_telegram_interact.py`（20 项）：命令名合法性、命令路由、注册健壮性、
+  长轮询生命周期、源码契约（setMyCommands + deleteMyCommands + getUpdates，不含 webhook）。
+- 全量 32 个测试文件全绿。
+
 ## [v0.9.52] - 2026-10-13
 
 <!-- summary: 新增 Telegram 通知通道（含渠道级独立代理）+ probe 自检端点；并更正此前「与 MoviePilot 对齐」的不准确表述 -->
@@ -3499,7 +3530,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.52...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.53...HEAD
+[v0.9.53]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.52...v0.9.53
 [v0.9.52]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.51...v0.9.52
 [v0.9.51]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.50...v0.9.51
 [v0.9.50]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.49...v0.9.50
