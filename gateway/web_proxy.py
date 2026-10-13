@@ -17,6 +17,11 @@ except ImportError:
     import account_policy
 
 try:
+    from gateway import notify as _notify
+except ImportError:
+    import notify as _notify  # type: ignore[no-redef]
+
+try:
     from gateway.token_tracker import (get_aggregated_token_stats,
                                        load_tracker_records)
 except ImportError:
@@ -3289,8 +3294,11 @@ COLLAPSE_SCRIPT = r"""
     if (oldHealth) oldHealth.remove();
     var oldAbout = document.getElementById("settings-about");
     if (oldAbout) oldAbout.remove();
+    var oldNotify = document.getElementById("settings-notify");
+    if (oldNotify) oldNotify.remove();
     injectApiAccess();
     injectModelHealth();
+    injectNotify();
     // 关于面板里有一行「当前规模」，禁用项增减后要跟着变，所以一并重取。
     injectAbout();
     return wbApiCache;
@@ -3702,6 +3710,183 @@ COLLAPSE_SCRIPT = r"""
       .then(function (data) {
         if (!data || data.error) return;
         wbApiCache = data;
+        render(data);
+      })
+      .catch(function () {});
+  }
+
+  // ---------------------------------------------------------------------
+  // 设置页：通知管理（参照 MoviePilot 的通知配置模型，首渠道：企业微信）
+  // 渠道表单由后端注册表驱动（registry），后续加 Telegram/钉钉/Bark 时
+  // 后端注册即可，前端自动渲染，不用改这里。
+  // secret 字段：已配置时显示「已配置，留空保持不变」占位，提交空串=清除、
+  // 不提交=保留；GET 接口本就不回明文。
+  // ---------------------------------------------------------------------
+  function wbRenderNotifySection(host, data) {
+    var cfg = data || {};
+    var registry = cfg.registry || [];
+    var channels = cfg.channels || {};
+
+    var section = wbEl("section", "min-w-0 space-y-2.5");
+    section.id = "settings-notify";
+    var head = wbEl("div", "px-1");
+    var h2 = wbEl("h2", "text-[13px] font-medium leading-5", "通知管理");
+    h2.id = "settings-notify-title";
+    head.appendChild(h2);
+    section.appendChild(head);
+    section.setAttribute("aria-labelledby", "settings-notify-title");
+
+    var card = wbEl("div", "wb-api-card");
+
+    // ---- 总开关 ----
+    var swRow = wbEl("div", "wb-api-row");
+    var swMain = wbEl("div", "wb-api-main");
+    swMain.appendChild(wbEl("div", "wb-api-label", "启用通知"));
+    swMain.appendChild(wbEl("div", "wb-api-desc",
+      "开启后，每日任务完成、账号余额异常等事件会推送到已配置的渠道。"
+      + "关闭不影响测试发送（填完配置可直接点「测试」验证连通）。"));
+    swRow.appendChild(swMain);
+    var swBtn = wbEl("button",
+      "wb-api-btn" + (cfg.enabled ? " wb-api-btn-on" : ""),
+      cfg.enabled ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+    swBtn.onclick = function () {
+      swBtn.disabled = true;
+      wbApiAction("/api/notify", "PUT", { enabled: !cfg.enabled },
+        !cfg.enabled ? "已开启通知" : "已关闭通知")
+        .then(function () {
+          var old = document.getElementById("settings-notify");
+          if (old) old.remove();
+          injectNotify();
+        });
+    };
+    swRow.appendChild(swBtn);
+    card.appendChild(swRow);
+
+    // ---- 各渠道（注册表驱动）----
+    registry.forEach(function (ch) {
+      var view = channels[ch.key] || {};
+      var chRow = wbEl("div", "wb-api-row wb-api-row-stack");
+      chRow.style.borderTop = "1px solid var(--border, #e2e8f0)";
+      chRow.style.marginTop = "4px";
+      chRow.style.paddingTop = "12px";
+
+      var chHead = wbEl("div", "wb-api-main");
+      chHead.appendChild(wbEl("div", "wb-api-label",
+        ch.name + (view._ready ? " · 已就绪" : " · 未配置")));
+      chHead.appendChild(wbEl("div", "wb-api-desc", ch.desc || ""));
+      chRow.appendChild(chHead);
+
+      var formWrap = wbEl("div", null);
+      formWrap.style.cssText =
+        "display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:8px;";
+      var inputs = {};
+      (ch.fields || []).forEach(function (f) {
+        var cell = wbEl("div", null);
+        cell.style.cssText = "display:flex;flex-direction:column;gap:4px;min-width:0";
+        cell.appendChild(wbEl("span", "wb-api-badge", f.label));
+        var inp = document.createElement("input");
+        inp.className = "wb-api-input wb-api-mono";
+        inp.type = "text";
+        inp.placeholder = f.placeholder || "";
+        if (f.secret) {
+          var has = (view[f.key] || {}).has_value;
+          inp.placeholder = has ? "已配置，留空保持不变" : (f.placeholder || "");
+          inp.dataset.secret = "1";
+        } else {
+          inp.value = view[f.key] || "";
+        }
+        inputs[f.key] = inp;
+        cell.appendChild(inp);
+        formWrap.appendChild(cell);
+      });
+      chRow.appendChild(formWrap);
+
+      // 操作行：保存 + 测试
+      var opWrap = wbEl("div", null);
+      opWrap.style.cssText = "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap";
+      var saveBtn = wbEl("button", "wb-api-btn", "保存");
+      saveBtn.onclick = function () {
+        var payload = { channels: {} };
+        var chPayload = {};
+        (ch.fields || []).forEach(function (f) {
+          if (f.secret) {
+            var v = inputs[f.key].value.trim();
+            if (v) chPayload[f.key] = v;      // 留空 = 不提交 = 保留原值
+          } else {
+            chPayload[f.key] = inputs[f.key].value.trim();
+          }
+        });
+        payload.channels[ch.key] = chPayload;
+        saveBtn.disabled = true;
+        wbApiAction("/api/notify", "PUT", payload, "已保存 " + ch.name + " 配置")
+          .then(function () {
+            saveBtn.disabled = false;
+            var old = document.getElementById("settings-notify");
+            if (old) old.remove();
+            injectNotify();
+          });
+      };
+      var testBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "测试");
+      testBtn.onclick = function () {
+        testBtn.disabled = true;
+        testBtn.textContent = "发送中…";
+        var config = { channels: {} };
+        var chCfg = {};
+        (ch.fields || []).forEach(function (f) {
+          if (f.secret) {
+            var v = inputs[f.key].value.trim();
+            if (v) chCfg[f.key] = v;
+          } else {
+            chCfg[f.key] = inputs[f.key].value.trim();
+          }
+        });
+        config.channels[ch.key] = chCfg;
+        fetch("/api/notify/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: ch.key, save: true, config: config })
+        })
+          .then(function (r) { return r.json().catch(function () { return {}; }); })
+          .then(function (d) {
+            testBtn.disabled = false;
+            testBtn.textContent = "测试";
+            if (d && d.ok) {
+              wbToast(ch.name + " 测试消息已发送", "ok");
+            } else {
+              wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
+            }
+          })
+          .catch(function () {
+            testBtn.disabled = false;
+            testBtn.textContent = "测试";
+            wbToast("请求失败，请重试", "err");
+          });
+      };
+      opWrap.appendChild(saveBtn);
+      opWrap.appendChild(testBtn);
+      chRow.appendChild(opWrap);
+      card.appendChild(chRow);
+    });
+
+    section.appendChild(card);
+    host.appendChild(section);
+  }
+
+  function injectNotify() {
+    var host = wbFindSettingsHost();
+    if (!host) return;
+    if (document.getElementById("settings-notify")) return;
+
+    function render(data) {
+      var host2 = wbFindSettingsHost();
+      if (!host2 || document.getElementById("settings-notify")) return;
+      wbRenderNotifySection(host2, data);
+    }
+
+    fetch("/api/notify", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || data.error) return;
         render(data);
       })
       .catch(function () {});
@@ -4940,6 +5125,7 @@ COLLAPSE_SCRIPT = r"""
     wbPinAccountBlocks();
     injectApiAccess();
     injectModelHealth();
+    injectNotify();
     injectProfile();
     injectAbout();
     wbPinAboutLast();
@@ -6487,6 +6673,47 @@ async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None)
 async def model_health_get():
     """巡检配置 + 可选账号 + 上次运行状态（设置页面板数据源）。"""
     return await _forward_gateway("GET", "/model-health/config")
+
+
+# ---------------------------------------------------------------------------
+# 通知管理（参照 MoviePilot 的通知配置模型，首渠道：企业微信）。
+# 数据存本地 notify_config.json，不转发网关 —— 设置页直接读写本代理。
+# GET 只回脱敏视图（secret 只回 has_value 布尔，绝不回明文）。
+# ---------------------------------------------------------------------------
+@app.get("/api/notify")
+async def notify_get():
+    try:
+        return _notify.public_view()
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
+
+
+@app.put("/api/notify")
+async def notify_put(request: Request):
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        _notify.update_config(payload)
+        return {"ok": True}
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
+
+
+@app.post("/api/notify/test")
+async def notify_test(request: Request):
+    """测试连通性：可选先保存表单再真发一条。"""
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        if payload.get("save"):
+            _notify.update_config(payload.get("config") or {})
+        channel = str(payload.get("channel") or "")
+        text = str(payload.get("text") or "")
+        r = _notify.send_test(channel, text)
+        return r
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
 
 
 @app.put("/api/model-health")

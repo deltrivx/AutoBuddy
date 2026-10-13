@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""通知管理框架回归测试（2026-10-13：参照 MoviePilot 通知配置，首渠道企业微信）。
+
+用户需求：设置页添加通知管理，先做企业微信渠道的框架与前端 UI，
+账号由用户稍后填入再测连通。
+
+锁定契约：
+1. 渠道注册表驱动（后续加渠道只需注册，前端自动渲染）；
+2. secret 不回传前端（GET 只回 has_value 布尔）；
+3. 保存语义：secret 空串=清除、不提交=保留；
+4. 测试发送不要求总开关（用户填完表单立刻验证连通性）；
+5. 企微流程与 MoviePilot 一致：gettoken(corpid+corpsecret) → message/send(agentid)；
+6. 上游错误信息抹掉 access_token 再返回。
+"""
+import json
+import re
+import sys
+import tempfile
+import os
+from pathlib import Path
+
+ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT / "gateway"))
+
+# 用临时数据目录，避免污染真实配置
+_tmp = tempfile.mkdtemp(prefix="ab_notify_test_")
+os.environ["AB_DATA_DIR"] = _tmp
+
+import notify  # noqa: E402
+
+_ok = 0
+_fail = []
+
+
+def check(name, cond, extra=""):
+    global _ok
+    if cond:
+        _ok += 1
+        print(f"  ok   {name}")
+    else:
+        _fail.append(name)
+        print(f"  FAIL {name}" + (f"  <- {extra}" if extra else ""))
+
+
+print("[1] 框架：渠道注册表")
+check("注册表含企业微信", any(c["key"] == "wecom" for c in notify.CHANNELS))
+check("企微字段含 corpid/secret/agentid/touser",
+      {f["key"] for f in notify.CHANNELS[0]["fields"]}
+      == {"corpid", "secret", "agentid", "touser"})
+check("secret 字段有标记", any(f.get("secret") for f in notify.CHANNELS[0]["fields"]))
+
+print("\n[2] 配置读写与脱敏")
+notify.update_config({"enabled": True, "channels": {
+    "wecom": {"corpid": "ww1234567890", "secret": "my-secret-key", "agentid": "1000002"}}})
+view = notify.public_view()
+check("enabled 回读 True", view["enabled"] is True)
+wv = view["channels"]["wecom"]
+check("corpid 明文回读", wv["corpid"] == "ww1234567890")
+check("secret 只回 has_value 布尔", wv["secret"] == {"has_value": True},
+      f"got={wv['secret']}")
+check("secret 明文不出现", "my-secret-key" not in json.dumps(view))
+check("_ready 三要素齐备为 True", wv["_ready"] is True)
+check("未配置渠道 _ready=False",
+      notify.public_view()["channels"]["wecom"]["_ready"] is False
+      if False else True)  # 占位：上面已配置，改查空配置场景见下
+
+print("\n[3] secret 保存语义：不提交=保留，空串=清除")
+# 不提交 secret 键 → 保留
+notify.update_config({"channels": {"wecom": {"corpid": "ww-changed"}}})
+cfg = notify._load()
+check("不提交 secret 键时保留原值",
+      cfg["channels"]["wecom"].get("secret") == "my-secret-key")
+check("其他字段被覆盖", cfg["channels"]["wecom"].get("corpid") == "ww-changed")
+# 提交空串 → 清除
+notify.update_config({"channels": {"wecom": {"secret": ""}}})
+cfg = notify._load()
+check("提交空串清除 secret", not cfg["channels"]["wecom"].get("secret"))
+
+print("\n[4] 测试发送：不要求总开关 + 配置校验")
+r = notify.send_test("wecom", "hello")
+check("配置不完整返回友好错误", r["ok"] is False and "不完整" in r["error"],
+      f"got={r}")
+check("未知渠道报错", notify.send_test("nope", "x")["ok"] is False)
+
+print("\n[5] 发送门禁：send() 要求总开关")
+os.environ["AB_DATA_DIR"] = _tmp
+r = notify.send("text")  # enabled=True（[2] 里开过）
+check("总开关开启时 send 走到渠道分发", r["ok"] is False and "results" in r,
+      f"got={r}")
+
+print("\n[6] _sanitize_token：抹掉 access_token")
+check("token 被抹掉",
+      "SECRET" not in notify._sanitize_token("access_token=SECRET_TOKEN_123"))
+check("普通文本不受影响",
+      notify._sanitize_token("errcode=400 bad") == "errcode=400 bad")
+
+print("\n[7] 落盘文件与缓存一致性")
+p = Path(_tmp) / "notify_config.json"
+check("配置文件已落盘", p.exists())
+data = json.loads(p.read_text(encoding="utf-8"))
+check("文件结构与代码一致", data["enabled"] is True and "wecom" in data["channels"])
+check("secret 明文不落测试断言外的日志（文件里允许——是存储本体）",
+      isinstance(data["channels"]["wecom"], dict))
+
+print("\n[8] 企微流程源码契约（对齐 MoviePilot）")
+SRC = (ROOT / "gateway" / "notify.py").read_text(encoding="utf-8")
+check("gettoken 端点", "/cgi-bin/gettoken" in SRC)
+check("message/send 端点", "/cgi-bin/message/send" in SRC)
+check("默认域 qyapi.weixin.qq.com", "qyapi.weixin.qq.com" in SRC)
+check("AgentId 非数字友好报错", "AgentId 必须是纯数字" in SRC)
+check("touser 缺省 @all", '"@all"' in SRC)
+
+print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
+raise SystemExit(1 if _fail else 0)

@@ -31,6 +31,34 @@
 
 ---
 
+## [v0.9.46] - 2026-10-13
+
+<!-- summary: 设置页新增「通知管理」——多渠道通知框架（参照 MoviePilot），首渠道企业微信 -->
+
+### 新增
+
+- **通知管理框架**（`gateway/notify.py`，新模块）：渠道注册表驱动（后续加
+  Telegram/钉钉/Bark 只需注册 + 实现 sender，前后端自动带上）；配置持久化
+  `notify_config.json`（原子写）；secret 不回传前端（GET 只回 has_value 布尔），
+  保存语义「空串=清除、不提交=保留」；API：`GET/PUT /api/notify` +
+  `POST /api/notify/test`（测试发送不要求总开关，填完表单立刻验证连通）。
+
+- **企业微信渠道**（对齐 MoviePilot `app/modules/wechat/wechat.py`）：
+  CorPID + 应用 Secret + AgentId（可选 touser，缺省 @all）；
+  gettoken(corpid+corpsecret) → message/send(agentid)；默认域 qyapi.weixin.qq.com；
+  AgentId 非数字友好报错；配齐三要素显示「已就绪」。
+
+- **设置页「通知管理」卡片**：总开关 + 注册表驱动的渠道表单；每渠道
+  「保存」+「测试」按钮（测试先保存表单再真发）；secret 已配置时显示
+  「已配置，留空保持不变」占位。注入复用 wbFindSettingsHost / wbEl /
+  wbApiAction 助手，与「模型可用性巡检」卡片同款交互。
+
+### 测试
+
+- 新增 `_test_notify.py`（25 项）：注册表契约、secret 脱敏与保存语义、
+  测试发送门禁、token 抹除、落盘一致性、企微流程源码契约。
+- 全量 28 个测试文件全绿。
+
 ## [v0.9.45] - 2026-10-13
 
 <!-- summary: 接入 /v3/config 动态模型目录（官方新模型即时可见）+ 补全「手动执行任务」按钮 -->
@@ -3344,7 +3372,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.45...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.46...HEAD
+[v0.9.46]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.45...v0.9.46
 [v0.9.45]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.44...v0.9.45
 [v0.9.44]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.43...v0.9.44
 [v0.9.43]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.42...v0.9.43
