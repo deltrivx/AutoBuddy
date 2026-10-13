@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.59"
+VERSION_DEFAULT = "0.9.60"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -953,6 +953,42 @@ def selection_stats(limit: int = 20) -> Dict[str, Any]:
     }
 
 
+# 会话粘性 vs 积分调度的折衷（2026-10-13 实测修正）。
+#
+# 实测：selection_logs.json 里 97%（194/200）的选号走 sticky，配额制只服务
+# 3% 的新会话 —— 等于被粘性彻底架空，余额-承接相关系数只有 0.032。
+# 根因：session_sticky.get_bound 命中就在配额排序**之前** return。
+#
+# 但粘性本身有价值（同一对话复用账号，上下文/计费不混乱），不能简单去掉。
+# 折衷：绑定账号的余额**明显掉队**（低于池内均值的一半）且池内存在更健康
+# 的候选时，解绑改走配额 —— 让「积分多的多承接」真正生效，同时日常对话
+# 仍保持粘性。
+STICKY_YIELD_RATIO = float(os.getenv("AB_STICKY_YIELD_RATIO", "0.5") or 0.5)
+
+
+def _sticky_should_yield(bound_id: Optional[str], candidates: List[Dict[str, Any]]) -> bool:
+    """绑定账号是否已「积分掉队」到应该让位（True = 解绑走配额）。"""
+    if not bound_id or not candidates or len(candidates) < 2:
+        return False
+    if not CREDIT_WEIGHT_SCHED:
+        return False
+    try:
+        bals = []
+        for a in candidates:
+            v = credit_floor.balance_of(_account_id(a))
+            if isinstance(v, (int, float)) and v > 0:
+                bals.append(float(v))
+        if len(bals) < 2:
+            return False
+        mine = credit_floor.balance_of(str(bound_id))
+        if not isinstance(mine, (int, float)) or mine <= 0:
+            return False
+        avg = sum(bals) / len(bals)
+        return float(mine) < avg * STICKY_YIELD_RATIO
+    except Exception:
+        return False
+
+
 def select_account(requested_id: Optional[str] = None, model: Optional[str] = None,
                    session_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """为每一个 API 请求选择账号。
@@ -1056,7 +1092,16 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
                 by_bound = {str(_account_id(a)): a for a in candidates if _account_id(a)}
                 acc = by_bound.get(str(bound))
                 if acc is not None:
-                    return _remember_selection(acc, "sticky")
+                    # 粘性让位于积分：绑定账号余额明显掉队时解绑，
+                    # 让本轮落入下面的配额排序（否则 97% 请求走粘性，
+                    # 积分调度被架空 —— 2026-10-13 实测相关性仅 0.032）。
+                    if _sticky_should_yield(str(bound), candidates):
+                        # 解绑后直接落进下面的配额排序；记账由配额那行的
+                        # _remember_selection(acc, "auto") 统一负责 ——
+                        # 不在这里额外记一条，避免一次选号出现两条流水。
+                        session_sticky.unbind(session_key)
+                    else:
+                        return _remember_selection(acc, "sticky")
         except Exception:
             pass
 

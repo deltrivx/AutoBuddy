@@ -31,6 +31,29 @@
 
 ---
 
+## [v0.9.60] - 2026-10-13
+
+<!-- summary: 修复积分调度被会话粘性架空——绑定账号余额掉队时解绑走配额，相关系数 0.032 → 有效 -->
+
+### 修复
+
+- **积分调度被会话粘性架空**（用户要求复检）：实测 `selection_logs.json` 里
+  **97%（194/200）选号走 sticky**，配额制只服务 3%，余额-承接相关系数仅 **0.032**。
+  根因：`session_sticky.get_bound()` 命中即在配额排序**之前** return。
+- 改为**粘性让位于积分**：绑定账号余额低于池内均值 × `AB_STICKY_YIELD_RATIO`
+  （默认 0.5）且池内有更健康候选时解绑，落进配额排序。日常对话仍保持粘性；
+  候选不足 2 个、余额未知、或 `AB_CREDIT_WEIGHT=0` 时不让位（避免误伤）。
+
+### 测试
+
+- 新增 `_test_sticky_yield.py`（15 项）：源码契约 + 等价算法验证
+  （掉队让位 / 健康不让位 / 余额不未知 / 候选不足 / 边界等于阈值不让位）。
+- 全量 34 个测试文件全绿。
+
+### 升级说明
+
+- 新增环境变量 `AB_STICKY_YIELD_RATIO`（默认 0.5）。
+
 ## [v0.9.59] - 2026-10-13
 
 <!-- summary: 超时判定改为按账号（原为30分钟总时间，账号增多必被强杀） -->
@@ -3673,7 +3696,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.59...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.60...HEAD
+[v0.9.60]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.59...v0.9.60
 [v0.9.59]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.58...v0.9.59
 [v0.9.58]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.57...v0.9.58
 [v0.9.57]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.56...v0.9.57
