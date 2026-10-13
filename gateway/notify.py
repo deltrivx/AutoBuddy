@@ -82,11 +82,29 @@ CHANNELS: List[Dict[str, Any]] = [
 
 # 消息场景（MoviePilot 的 notificationTypes 对应物）：
 # 渠道可按场景订阅，空 = 全部场景（默认）。
+#
+# 2026-10-13 按用户需求补齐 5 类场景（每类都有独立标题/说明/启用开关）：
+#   daily_report   —— 每日凌晨 0 点的余额与调用日报（今日消耗改用「昨日消耗」）
+#   checkin_done   —— 签到成功后推送签到积分/剩余积分/总积分
+#   task_done      —— 每日任务成功后推送任务积分与当前总积分
+#   health_done    —— 巡检结束后推送结果与当前可用模型
+#   model_change   —— 上游模型目录变化时推送变化与当前可用模型
 SCENES: List[Dict[str, str]] = [
-    {"key": "daily_done", "name": "每日任务完成"},
-    {"key": "account_low", "name": "账号余额不足"},
-    {"key": "health", "name": "巡检结果"},
-    {"key": "system", "name": "系统异常"},
+    {"key": "daily_report", "name": "每日凌晨报告",
+     "desc": "每天 00:05 推送昨日消耗、可用模型、通知链路状态、各 API 当天与累计调用次数"},
+    {"key": "checkin_done", "name": "签到成功通知",
+     "desc": "签到成功后推送本次签到积分、剩余积分与总积分"},
+    {"key": "task_done", "name": "每日任务完成",
+     "desc": "每日任务执行成功后推送任务积分与当前总积分"},
+    {"key": "health_done", "name": "巡检结果通知",
+     "desc": "模型可用性巡检结束后推送结果摘要与当前可用模型"},
+    {"key": "model_change", "name": "模型目录变化",
+     "desc": "上游模型目录新增或下线时推送变化明细与当前可用模型"},
+    # 保留的通用场景
+    {"key": "account_low", "name": "账号余额不足",
+     "desc": "账号余额低于阈值时提醒"},
+    {"key": "system", "name": "系统异常",
+     "desc": "网关或任务执行出现异常时提醒"},
 ]
 
 _DEFAULT_CFG: Dict[str, Any] = {
@@ -332,6 +350,39 @@ def send_test(channel: str, text: str) -> Dict[str, Any]:
                              text or "AutoBuddy 通知测试 · %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
+def send_scene(scene: str, title: str, lines: List[str]) -> Dict[str, Any]:
+    """按场景推送通知（渠道订阅过滤 + 总开关）。
+
+    与 send() 的区别：send() 是「发给所有渠道」的通用推送；本函数按
+    **场景订阅**过滤——渠道只收它订阅的场景（`_scenes` 空 = 全部场景）。
+    返回 {ok, scene, results:{channel: result}, sent_to:[...]}。
+    """
+    cfg = _load()
+    if not cfg.get("enabled"):
+        return {"ok": False, "error": "通知总开关未开启", "scene": scene}
+    body = title + "\n" + "\n".join(lines) if lines else title
+    results: Dict[str, Any] = {}
+    sent_to: List[str] = []
+    for c in CHANNELS:
+        key = c["key"]
+        if key not in _SENDERS:
+            continue
+        ch_cfg = cfg["channels"].get(key) or {}
+        # 渠道级停用（MoviePilot 的 NotificationConf.enabled 语义）
+        if not ch_cfg.get("_enabled", True):
+            continue
+        # 场景订阅：_scenes 非空且不含本场景 → 跳过
+        scenes = ch_cfg.get("_scenes") or []
+        if scenes and scene not in scenes:
+            continue
+        r = _SENDERS[key](ch_cfg, body)
+        results[key] = r
+        if r.get("ok"):
+            sent_to.append(key)
+    return {"ok": bool(sent_to), "scene": scene, "results": results,
+            "sent_to": sent_to}
+
+
 # ---------------------------------------------------------------------------
 # 企业微信回调（接收消息服务器）：GET 验证 + POST 收消息 → 可回复。
 #
@@ -567,31 +618,45 @@ def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Option
             return "已启动一轮每日任务（签到+成长任务），完成后会推送结果。"
         except Exception:
             return "任务启动失败：可能已有任务在跑，稍后再试。"
-    # 账号余额清单：此前没有分支，/accounts 被当成闲聊（2026-10-13 实测）
+    # 账号余额：改为输出积分统计页**顶部四项数据**（用户 2026-10-13 需求：
+    # 「账号余额只显示积分统计顶部四个数据」）—— 剩余积分 / 今日消耗 /
+    # 近 7 天 / 本月，与面板口径完全一致。逐账号明细改由 models 同级命令承担。
     if "账号" in text:
         try:
             import urllib.request
             r = urllib.request.urlopen(
                 "http://127.0.0.1:18090/api/credits/stats", timeout=8)
-            accs = (json.loads(r.read()).get("accounts") or [])
-            lines = ["账号余额（%d 个）：" % len(accs)]
-            for a in accs[:15]:
-                lines.append("  %s: %s" % (
-                    str(a.get("accountName") or a.get("accountId") or "?")[:12],
-                    a.get("currentRemaining", "?")))
-            if len(accs) > 15:
-                lines.append("  …及其余 %d 个" % (len(accs) - 15))
+            s = (json.loads(r.read()).get("summary") or {})
+            lines = [
+                "💰 积分统计（顶部四项）",
+                "  · 剩余积分：%s" % _fmt_num(s.get("currentRemaining")),
+                "  · 今日消耗：%s" % _fmt_num(s.get("usageToday")),
+                "  · 近 7 天消耗：%s" % _fmt_num(s.get("usage7Days")),
+                "  · 本月消耗：%s" % _fmt_num(s.get("usageThisMonth")),
+            ]
             return "\n".join(lines)
         except Exception:
-            return "账号获取失败，请稍后再试"
-    # 模型数量：此前同样缺分支
+            return "积分获取失败，请稍后再试"
+    # 模型数量：改为「当前模型」全量口径（用户 2026-10-13 需求）——
+    # 总数、自动发现数、轮检禁用、手动禁用，分别列出。
     if "模型" in text:
         try:
             import urllib.request
-            r = urllib.request.urlopen("http://127.0.0.1:18091/health", timeout=8)
-            d = json.loads(r.read())
-            return "模型目录共 %s 个（自动发现 %s 个）" % (
-                d.get("models_count", "?"), d.get("models_auto_discovered", "?"))
+            r = urllib.request.urlopen("http://127.0.0.1:18090/api/gateway-info", timeout=8)
+            g = json.loads(r.read())
+            m = g.get("models") or {}
+            src = g.get("disabledBySource") or {}
+            lines = [
+                "🤖 当前模型",
+                "  · 正常调用模型：%s 个（自动发现 %s 个）" % (
+                    m.get("count", "?"), m.get("autoDiscovered", "?")),
+                "  · 轮检禁用：%s 个组合" % (src.get("auto") or 0),
+                "  · 手动禁用：%s 个组合" % (src.get("manual") or 0),
+            ]
+            sample = m.get("sample") or []
+            if sample:
+                lines.append("  · 样例：%s" % ", ".join(str(x) for x in sample[:10]))
+            return "\n".join(lines)
         except Exception:
             return "模型获取失败，请稍后再试"
     if "状态" in text:
@@ -1027,3 +1092,120 @@ def stop_telegram_polling() -> None:
             _TG_POLL_STOP.set()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# 场景内容组装器（2026-10-13 按用户需求实现 5 类通知）。
+#
+# 每个 builder 返回 (title, [lines...])，由调用方经 send_scene() 推送。
+# 设计取舍：组装器只读本地数据（DB / 账本 / 配置），不做网络调用 ——
+# 慢路径交给调用方异步执行，避免阻塞签到/巡检主流程。
+# ---------------------------------------------------------------------------
+
+def _fmt_num(v) -> str:
+    try:
+        f = float(v or 0)
+        return ("{:,.2f}".format(f)).rstrip("0").rstrip(".") if f != int(f) else "{:,.0f}".format(f)
+    except Exception:
+        return str(v)
+
+
+def build_daily_report(yesterday_credits: Dict[str, Any],
+                       api_keys_stats: Dict[str, Any],
+                       models_info: Dict[str, Any]) -> tuple:
+    """① 每日凌晨 0 点报告（用户明确：今日消耗改为**昨日消耗**）。
+
+    yesterday_credits: {"date": "2026-10-12", "checkin": x, "task": y, "total": z,
+                        "totalCredits": 总积分, "remaining": 剩余积分}
+    api_keys_stats:    {"keyCount": n, "totalCalls": 累计, "todayCalls": 当天}
+    models_info:       {"total": n, "autoDiscovered": m, "disabled": k, "manual": j}
+    """
+    d = str(yesterday_credits.get("date") or "昨日")
+    lines = [
+        "📅 报告日期：%s（凌晨 0 点推送）" % d,
+        "",
+        "💰 积分四项",
+        "  · 昨日签到积分：%s" % _fmt_num(yesterday_credits.get("checkin")),
+        "  · 昨日任务积分：%s" % _fmt_num(yesterday_credits.get("task")),
+        "  · 昨日消耗合计：%s" % _fmt_num(yesterday_credits.get("total")),
+        "  · 当前总积分：%s" % _fmt_num(yesterday_credits.get("totalCredits")),
+        "  · 账号池剩余：%s" % _fmt_num(yesterday_credits.get("remaining")),
+        "",
+        "🤖 模型",
+        "  · 可用模型总数：%s（自动发现 %s）" % (
+            models_info.get("total", "?"), models_info.get("autoDiscovered", "?")),
+        "  · 轮检禁用：%s · 手动禁用：%s" % (
+            models_info.get("disabled", "?"), models_info.get("manual", "?")),
+        "",
+        "🔌 API 调用",
+        "  · 密钥数：%s" % api_keys_stats.get("keyCount", "?"),
+        "  · 当天调用：%s 次" % api_keys_stats.get("todayCalls", "?"),
+        "  · 累计调用：%s 次" % api_keys_stats.get("totalCalls", "?"),
+    ]
+    return ("🌅 AutoBuddy 每日报告（%s）" % d, lines)
+
+
+def build_checkin_done(checkin_credits: float, remaining: float,
+                       total: float) -> tuple:
+    """② 签到成功：签到积分 + 剩余积分 + 总积分。"""
+    lines = [
+        "✅ 签到成功",
+        "  · 本次签到积分：%s" % _fmt_num(checkin_credits),
+        "  · 账号池剩余积分：%s" % _fmt_num(remaining),
+        "  · 总积分：%s" % _fmt_num(total),
+    ]
+    return ("✅ 签到完成", lines)
+
+
+def build_task_done(task_credits: float, total: float,
+                    summary: Optional[Dict[str, Any]] = None) -> tuple:
+    """③ 每日任务成功：任务积分 + 当前总积分。"""
+    lines = [
+        "🎯 每日任务执行完成",
+        "  · 本次任务积分：%s" % _fmt_num(task_credits),
+        "  · 当前总积分：%s" % _fmt_num(total),
+    ]
+    if isinstance(summary, dict):
+        if summary.get("accounts") is not None:
+            lines.append("  · 参与账号：%s" % summary.get("accounts"))
+        if summary.get("done") is not None:
+            lines.append("  · 已完成：%s" % summary.get("done"))
+    return ("🎯 每日任务完成", lines)
+
+
+def build_health_done(result: Dict[str, Any], models_info: Dict[str, Any]) -> tuple:
+    """④ 巡检结束：结果摘要 + 当前可用模型。"""
+    checked = (result or {}).get("checked")
+    disabled = (result or {}).get("disabled") or []
+    enabled = (result or {}).get("enabled") or []
+    lines = [
+        "🔍 模型可用性巡检完成",
+        "  · 本轮检测：%s 个组合" % (checked if checked is not None else "?"),
+        "  · 新禁用：%s · 恢复启用：%s" % (len(disabled), len(enabled)),
+        "",
+        "🤖 当前模型",
+        "  · 可用总数：%s（自动发现 %s）" % (
+            models_info.get("total", "?"), models_info.get("autoDiscovered", "?")),
+        "  · 轮检禁用：%s · 手动禁用：%s" % (
+            models_info.get("disabled", "?"), models_info.get("manual", "?")),
+    ]
+    return ("🔍 巡检结果", lines)
+
+
+def build_model_change(added: List[str], removed: List[str],
+                       models_info: Dict[str, Any]) -> tuple:
+    """⑤ 上游模型变化：变化明细 + 当前可用模型。"""
+    lines = ["📦 上游模型目录变化"]
+    if added:
+        lines.append("  · ➕ 新增 %d 个：%s" % (len(added), ", ".join(added[:12])))
+    if removed:
+        lines.append("  · ➖ 下线 %d 个：%s" % (len(removed), ", ".join(removed[:12])))
+    if not added and not removed:
+        lines.append("  · 无变化")
+    lines += [
+        "",
+        "🤖 当前可用",
+        "  · 总数：%s（自动发现 %s）" % (
+            models_info.get("total", "?"), models_info.get("autoDiscovered", "?")),
+    ]
+    return ("📦 模型目录变化", lines)

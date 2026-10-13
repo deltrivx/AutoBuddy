@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""积分感知调度回归测试（2026-10-13：加权最少连接）。
+"""积分感知调度回归测试（2026-10-13：配额制 · 按余额比例分摊）。
 
 用户需求：「哪个账号积分多一些优先多调用这个账号，如果这个账号积分下来了，
 另一个积分高了，那么可以调用另一个账号，多账号并发调用，然后动态轮询。」
@@ -35,83 +35,96 @@ check("CREDIT_WEIGHT_SCHED 常量存在",
           for n in tree.body))
 check("默认开启（env 未设时为 True）",
       'os.getenv("AB_CREDIT_WEIGHT", "1")' in SRC)
-check("排序使用 inflight / weight",
-      "/ _weight(a))" in SRC)
+check("排序使用配额制（已选次数/配额比例）",
+      "_picked.get(aid, 0) / quota" in SRC)
 check("余额读取走 credit_floor.balance_of（同源快照）",
       "credit_floor.balance_of(_account_id(a))" in SRC)
 check("未知余额取池均值（不惩罚新账号）",
       "_bal.get(aid, _avg)" in SRC)
 check("权重下限 0.05 防除零", "0.05" in SRC)
 check("异常兜底退回纯 inflight 排序",
-      SRC.count("ordered.sort(key=lambda a: int(inflight.get(") >= 3)
+      SRC.count("ordered.sort(key=lambda a: int(inflight.get(") >= 2)
 check("只统计正余额（None/0 不进权重表）",
       "_v > 0" in SRC)
+check("权重差封顶 CAP 存在", "_WEIGHT_CAP" in SRC)
 
 print("\n[2] 等价算法验证（复刻排序语义）")
 
 
-def pick(candidates, inflight, balances):
-    """复刻实现的选号：inflight / weight 最小者胜，同分按列表序。"""
-    known = {a: v for a, v in balances.items() if v > 0}
-    if known:
+CAP = 8.0
+
+
+def make_pick(balances):
+    """复刻配额制选号（2026-10-13 二次修正后的实现）。"""
+    picked = {}
+
+    def pick(candidates, inflight):
+        known = {a: v for a, v in balances.items() if v > 0}
+        if not known:
+            return sorted(candidates, key=lambda a: inflight.get(a, 0))[0]
         avg = sum(known.values()) / len(known)
+
         def w(a):
             return max(known.get(a, avg) / avg, 0.05)
-        return sorted(candidates, key=lambda a: inflight.get(a, 0) / w(a))[0]
-    return sorted(candidates, key=lambda a: inflight.get(a, 0))[0]
+
+        def k(a):
+            q = min(w(a), CAP)
+            return (picked.get(a, 0) / q, inflight.get(a, 0))
+
+        c = sorted(candidates, key=k)[0]
+        picked[c] = picked.get(c, 0) + 1
+        return c
+
+    return pick
 
 
-# 场景 1：A 余额 3000、B 1000 → 3:1 承接比例
+# 通用模拟器：带在飞衰减（更接近真实并发场景）
+import random
+
+
+def simulate(balances, cands, rounds=400, decay=0.35, seed=7):
+    random.seed(seed)
+    pick = make_pick(balances)
+    inf = {c: 0 for c in cands}
+    cnt = {c: 0 for c in cands}
+    for _ in range(rounds):
+        p = pick(cands, inf)
+        cnt[p] += 1
+        inf[p] += 1
+        for k2 in inf:
+            while inf[k2] > 0 and random.random() < decay:
+                inf[k2] -= 1
+    return cnt
+
+
 cands = ["A", "B"]
-bal = {"A": 3000.0, "B": 1000.0}
-inflight = {"A": 0, "B": 0}
-picks = []
-for _ in range(4):  # 模拟连续 4 个请求（选中后 inflight+1 模拟在飞）
-    p = pick(cands, inflight, bal)
-    picks.append(p)
-    inflight[p] += 1
-n_a = picks.count("A")
-check("A(3000) 承接多于 B(1000)", n_a >= 3, f"picks={picks}")
 
-# 场景 2：A 打到只剩 500、B 仍 1000 → B 反超
-# 注：两账号都 0 在飞时 0/x 恒为 0，是真平局（稳定排序取先者）；
-# 「反超」的语义是带负载后的性价比：同样 1 个在飞，B 的分更低。
-bal2 = {"A": 500.0, "B": 1000.0}
-inflight2 = {"A": 1, "B": 1}
-first = pick(cands, inflight2, bal2)
-check("A(500) 衰减后 B(1000) 反超（同在飞）", first == "B", f"got={first}")
-# 串行压力下：A 已接 1 个在飞，B 空闲 → B 必胜
-inflight2b = {"A": 1, "B": 0}
-check("A 在飞时 B 空闲则 B 胜", pick(cands, inflight2b, bal2) == "B")
+# 场景 1：A 余额 3000、B 1000 → 配额 3:1 → 稳态约 75% : 25%
+c1 = simulate({"A": 3000.0, "B": 1000.0}, cands)
+check("A(3000) 承接显著多于 B(1000)", c1["A"] > c1["B"] * 2, f"A={c1['A']} B={c1['B']}")
+check("低余额号仍被选中（非零）", c1["B"] > 20, f"B={c1['B']}")
 
-# 场景 3：并发分摊仍生效——同余额时在飞少者优先
-bal3 = {"A": 1000.0, "B": 1000.0}
-inflight3 = {"A": 3, "B": 0}
-check("同余额时在飞少的 B 胜出", pick(cands, inflight3, bal3) == "B")
+# 场景 2：A 衰减到 500、B 仍 1000 → B 反超（用户核心诉求）
+c2 = simulate({"A": 500.0, "B": 1000.0}, cands)
+check("A(500) 衰减后 B(1000) 反超", c2["B"] > c2["A"], f"A={c2['A']} B={c2['B']}")
 
-# 场景 4：未知余额（新账号 C）→ 中性权重，不被惩罚
-bal4 = {"A": 4000.0, "B": 2000.0}  # C 未知
-cands4 = ["A", "B", "C"]
-inflight4 = {"A": 0, "B": 0, "C": 0}
-p = pick(cands4, inflight4, bal4)
-check("未知余额的新账号可被选中（不逆底）", p in ("A", "B", "C"), f"got={p}")
-# 中性 C(权重1) vs A(权重2)：A 应优先于 C
-inflight4b = {"A": 0, "B": 9, "C": 0}
-p2 = pick(cands4, inflight4b, bal4)
-check("中性权重参与竞争（B 在飞9时被跳过）", p2 in ("A", "C"), f"got={p2}")
+# 场景 3：同余额 → 约 1:1（轮询均匀）
+c3 = simulate({"A": 1000.0, "B": 1000.0}, cands)
+check("同余额约 1:1（轮询均匀）", abs(c3["A"] - c3["B"]) < 80, f"A={c3['A']} B={c3['B']}")
 
-# 场景 5：权重下限——余额极低的账号不会被除零
-bal5 = {"A": 0.01, "B": 2000.0}
-inflight5 = {"A": 0, "B": 0}
-try:
-    p5 = pick(["A", "B"], inflight5, bal5)
-    check("极低余额不除零", p5 in ("A", "B"), f"got={p5}")
-except ZeroDivisionError:
-    check("极低余额不除零", False, "ZeroDivisionError")
+# 场景 4：未知余额（C 不在快照）→ 中性权重，仍可被选中
+c4 = simulate({"A": 4000.0}, ["A", "B", "C"])
+check("未知余额号不被饿死（B/C 均被选中）",
+      c4["B"] > 20 and c4["C"] > 20, f"A={c4['A']} B={c4['B']} C={c4['C']}")
 
-# 场景 6：全部余额未知 → 退回纯 inflight（旧行为）
-check("全未知退回纯 inflight",
-      pick(cands, {"A": 2, "B": 1}, {}) == "B")
+# 场景 5：无余额数据 → 退回纯 inflight
+p5 = make_pick({})
+check("无余额数据退回 inflight 最少", p5(cands, {"A": 3, "B": 1}) == "B")
+
+# 场景 6：权重差封顶（CAP）——差 40 倍也不至于 100:0
+c6 = simulate({"A": 20000.0, "B": 500.0}, cands)
+check("极端差额下低余额号仍有份额（CAP 封顶后约 2%）", c6["B"] > 3,
+      f"A={c6['A']} B={c6['B']}")
 
 print(f"\n{'='*52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
 raise SystemExit(1 if _fail else 0)

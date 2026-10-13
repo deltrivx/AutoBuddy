@@ -13,6 +13,9 @@ from typing import Optional, List, Dict, Any
 # 积分感知调度开关（2026-10-13）：1=按余额加权选号（默认），0=退回纯在飞数轮询。
 # 与 credit_floor 的余额快照同源（credit_usage_snapshots.json，带 mtime 缓存）。
 CREDIT_WEIGHT_SCHED = (os.getenv("AB_CREDIT_WEIGHT", "1") or "1").strip() not in ("0", "false", "no")
+# 权重差封顶：高余额号与低余额号的权重比上限，防止单号被连续打爆、
+# 低余额号彻底闲置（实测无封顶时 3:1 会让 A 吃满 30/30）。
+_WEIGHT_CAP = float(os.getenv("AB_CREDIT_WEIGHT_CAP", "8") or 8)
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -79,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.57"
+VERSION_DEFAULT = "0.9.58"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -95,6 +98,7 @@ async def lifespan(_app: FastAPI):
     task = asyncio.create_task(account_rotate_loop())
     health_task = asyncio.create_task(model_health_loop())
     upstream_task = asyncio.create_task(upstream_models_loop())
+    report_task = asyncio.create_task(daily_report_loop())
     try:
         yield
     finally:
@@ -356,10 +360,22 @@ def _fetch_upstream_models_once() -> List[str]:
 
 
 def _refresh_upstream_models() -> None:
-    """拉取并落盘 upstream_models.json（mtime + 模型清单，供发现与签名共用）。"""
+    """拉取并落盘 upstream_models.json（mtime + 模型清单，供发现与签名共用）。
+
+    同时做**模型目录变化检测**（用户 2026-10-13 需求）：与上一轮清单比对，
+    新增/下线时推送 model_change 场景通知。
+    首轮拉取（无旧清单）不算变化 —— 否则每次重启都会误报一次全量新增。
+    """
     names = _fetch_upstream_models_once()
     if not names:
         return
+    # 变化检测：先读旧清单（首次为 None，不算变化）
+    old = None
+    try:
+        if UPSTREAM_MODELS_FILE.exists():
+            old = _discover_from_upstream()
+    except Exception:
+        old = None
     try:
         _atomic = DATA_DIR / "upstream_models.json"
         _atomic.write_text(json.dumps({
@@ -368,6 +384,20 @@ def _refresh_upstream_models() -> None:
         }, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+    # 落盘后再比对（旧清单已在上方读取，不受本次写入影响）
+    if old is None:
+        return
+    try:
+        added = [m for m in names if m not in set(old)]
+        removed = [m for m in old if m not in set(names)]
+        if added or removed:
+            _mi = _collect_models_info()
+            _t, _lines = _notify_mod.build_model_change(added, removed, _mi)
+            _r = _notify_mod.send_scene("model_change", _t, _lines)
+            if _r.get("ok"):
+                print("[models] 目录变化通知已发送: +%d -%d" % (len(added), len(removed)))
+    except Exception as _e:
+        lprint("models", f"change notice failed: {_e}")
 
 
 def _discover_from_upstream() -> List[str]:
@@ -389,6 +419,160 @@ async def upstream_models_loop():
         except Exception:
             pass
         await asyncio.sleep(_V3_REFRESH_SEC)
+
+
+# ---------------------------------------------------------------------------
+# 每日凌晨报告（用户 2026-10-13 需求）：每天 00:05 推送昨日消耗、可用模型、
+# 通知链路、各 API 当天/累计调用次数。
+#
+# 为何用「昨日」而非「今日」：凌晨 0 点推送时今天才刚开始，今日数据是 0，
+# 报「昨日消耗」才有信息量（用户原话：「因为是凌晨所以报告前一天的」）。
+# 幂等：同一天只发一次（进程重启不重发），记录在内存 + 落盘一个 sentinel。
+# ---------------------------------------------------------------------------
+_DAILY_REPORT_SENTINEL = DATA_DIR / "daily_report_last.json"
+
+
+def _report_already_sent(today: str) -> bool:
+    try:
+        if _DAILY_REPORT_SENTINEL.exists():
+            d = json.loads(_DAILY_REPORT_SENTINEL.read_text(encoding="utf-8"))
+            return str(d.get("date") or "") == today
+    except Exception:
+        pass
+    return False
+
+
+def _mark_report_sent(today: str) -> None:
+    try:
+        _DAILY_REPORT_SENTINEL.write_text(
+            json.dumps({"date": today, "at": int(time.time() * 1000)}), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _collect_models_info() -> Dict[str, Any]:
+    """收集模型口径数据（日报 / 巡检通知 / 模型变化通知共用）。
+
+    返回 {total, autoDiscovered, disabled, manual}：
+      - total / autoDiscovered：当前目录总数与自动发现数；
+      - disabled：轮检 + 手动禁用的「账号×模型」组合数；
+      - manual：其中手动禁用的组合数。
+    任何一步失败都返回零值结构 —— 通知内容降级，绝不影响调用方。
+    """
+    info = {"total": 0, "autoDiscovered": 0, "disabled": 0, "manual": 0}
+    try:
+        cat = get_model_catalog()
+        info["total"] = len(cat)
+        info["autoDiscovered"] = len(cat) - len(BASE_MODELS)
+        pol = model_policy.load_policy()
+        accs = _enabled_accounts(_load_accounts(), _load_pool_config())
+        d_cnt = m_cnt = 0
+        for a in accs:
+            aid = str(_account_id(a))
+            for m in cat:
+                mid = str(m["id"])
+                if _model_is_disabled(aid, mid, pol):
+                    d_cnt += 1
+                    if (pol.get(aid) or {}).get(mid) == "manual":
+                        m_cnt += 1
+        info["disabled"] = d_cnt
+        info["manual"] = m_cnt
+    except Exception:
+        pass
+    return info
+
+
+def _collect_daily_report() -> tuple:
+    """组装日报内容（只读本地数据，不做网络调用）。失败时返回占位内容。"""
+    # 昨日积分（wb-daily 的 credit 汇总按天给）
+    y_checkin = y_task = y_total = 0.0
+    y_date = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+    try:
+        import db as _db
+        summ = _db.summarize_wb_daily_credits() or {}
+        for row in (summ.get("days") or []):
+            if str(row.get("date")) == y_date:
+                y_checkin = float(row.get("checkin") or 0)
+                y_task = float(row.get("task") or 0)
+                y_total = float(row.get("total") or 0)
+                break
+        total_credits = float(summ.get("totalCredits") or 0)
+    except Exception:
+        total_credits = 0.0
+    # 账号池剩余（实时快照）
+    remaining = 0.0
+    try:
+        bals = credit_floor._latest_balances() or {}
+        remaining = sum(v for v in bals.values() if isinstance(v, (int, float)))
+    except Exception:
+        pass
+    # API 调用（密钥计数 + 今日请求数）
+    key_count = 0
+    total_calls = 0
+    try:
+        keys = api_keys_status().get("keys") or []
+        key_count = len(keys)
+        total_calls = sum(int(k.get("callCount") or 0) for k in keys)
+    except Exception:
+        pass
+    today_calls = 0
+    try:
+        from gateway import token_tracker as _tt
+        agg = _tt.get_aggregated_token_stats() or {}
+        # 实测结构：sources[].daily[]（{key, records, ...}），records 才是请求数
+        _today = time.strftime("%Y-%m-%d")
+        for _s in (agg.get("sources") or []):
+            for _row in (_s.get("daily") or []):
+                if str(_row.get("key")) == _today:
+                    today_calls += int(_row.get("records") or 0)
+    except Exception:
+        pass
+    # 模型信息（日报 / 巡检通知 / 模型变化通知共用一份口径）
+    models_info = _collect_models_info()
+    # 通知链路状态（哪些渠道就绪）
+    link_state = "未配置"
+    try:
+        v = _notify_mod.public_view()
+        ready = [c["name"] for c in (_notify_mod.CHANNELS or [])
+                 if (v.get("channels", {}).get(c["key"], {}) or {}).get("_ready")]
+        link_state = "、".join(ready) if ready else "未配置"
+    except Exception:
+        pass
+    title, lines = _notify_mod.build_daily_report(
+        {"date": y_date, "checkin": y_checkin, "task": y_task, "total": y_total,
+         "totalCredits": total_credits, "remaining": remaining},
+        {"keyCount": key_count, "todayCalls": today_calls, "totalCalls": total_calls},
+        models_info)
+    lines.append("")
+    lines.append("🔔 通知链路：%s" % link_state)
+    return title, lines
+
+
+async def daily_report_loop() -> None:
+    """每天 00:05 推送一次日报（幂等，重启不重发）。"""
+    print("[report] daily report loop started")
+    while True:
+        try:
+            now = time.localtime()
+            today = time.strftime("%Y-%m-%d", now)
+            # 00:05 之后且今天没发过 → 发
+            if (now.tm_hour, now.tm_min) >= (0, 5) and not _report_already_sent(today):
+                title, lines = await asyncio.to_thread(_collect_daily_report)
+                r = await asyncio.to_thread(_notify_mod.send_scene, "daily_report", title, lines)
+                if r.get("ok"):
+                    _mark_report_sent(today)
+                    print("[report] 日报已发送: %s" % ",".join(r.get("sent_to") or []))
+                elif "总开关未开启" not in str(r.get("error") or ""):
+                    print("[report] 日报发送失败: %s" % r.get("error"))
+                else:
+                    # 总开关没开：不标记 sent，等开启后下次循环补发
+                    pass
+            await asyncio.sleep(300)   # 5 分钟粒度足够（只用于跨过 00:05）
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            lprint("report", f"loop error: {e}")
+            await asyncio.sleep(300)
 
 
 _MODEL_CACHE: Dict[str, Any] = {"signature": None, "catalog": []}
@@ -895,20 +1079,24 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         n = len(candidates)
         # 以固定起点做一次环形遍历，保证同分账号之间仍然是轮转的
         ordered = [candidates[(base + i) % n] for i in range(n)]
-        # 积分感知调度（2026-10-13，用户需求）：加权最少连接。
+        # 积分感知调度（2026-10-13 用户需求）：**积分权重为主排序键**。
         #
-        # 此前是纯「在飞请求数最少」：同分账号间轮转，完全不感知余额 —— 积分多的
-        # 账号和快触底的账号被同等对待，前者没用上容量，后者白换挨打。
+        # 版本演进（实测数据说话）：
+        #   - 初版：纯 inflight 最少连接，完全不感知余额；
+        #   - v0.9.44：inflight / weight，实测相关性仅 0.077 —— 因为 inflight 是
+        #     主导项、权重只在同 inflight 时起作用，且 session_sticky 在更早处
+        #     已 return，多数请求走不到这里；
+        #   - 本版：weight 降序为主键、inflight 升序为次级键。同分才看在飞数，
+        #     「积分多的多承接」才真正成为主语义。
         #
-        # 改为 inflight / weight 最小者优先：
-        #   - weight ∝ 积分余额（相对池均值归一，下限 0.05 防除零）——积分多的账号
-        #     天然多承接；
-        #   - 积分下降 → weight 自动衰减 → 该账号让位给积分更高的账号，无需人工干预；
+        # 语义：
+        #   - weight ∝ 余额（相对池均值归一，下限 0.05 防除零）；
+        #   - 积分下降 → weight 自动衰减 → 让位给积分更高的账号，无需人工干预；
         #   - 未知余额（快照缺失/新账号）→ weight = 1（均值），中性不惩罚 ——
         #     否则新账号永远逆底，重蹚「新账号一次都没被调用」的老坑；
-        #   - 同 weight 时沿用轮询起点，保均匀；并发分摊（inflight）语义不变。
+        #   - 并发兜底：同 weight 时选在飞数最少的，避免把高余额单号打爆。
         #
-        # 例：账号 A 余额 3000、账号 B 余额 1000 → A 承接约 3 倍请求；
+        # 例：账号 A 余额 3000、账号 B 余额 1000 → 稳态下 A 承接约 3 倍请求；
         # A 被打到只剩 500 时（B 仍 1000）→ B 反超成为首选。
         #
         # AB_CREDIT_WEIGHT=0 可关闭（退回纯 inflight 轮询）。
@@ -924,7 +1112,23 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
                 def _weight(a):
                     aid = str(_account_id(a))
                     return max(_bal.get(aid, _avg) / _avg, 0.05)
-                ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)) / _weight(a))
+                # 配额制（2026-10-13 二次修正）：纯权重排序在实测/模拟里会让
+                # 高余额号吃满 100%（封顶也救不了 —— 主键相同时 inflight 都在
+                # 0~1，稳定排序让同一个号一直赢）。改用「已选次数 / 配额比例」
+                # 最小者优先：配额 ∝ 权重，天然按余额比例分摊，且**自纠**——
+                # 某号选多了它的比值就升高、自动让位。
+                #   例：A 余额 3000、B 1000 → 配额 3:1 → 稳态 A≈75%、B≈25%。
+                _picked = _ACCOUNT_POOL_RUNTIME.setdefault("credit_picks", {})
+                def _quota_key(a):
+                    aid = str(_account_id(a))
+                    quota = min(_weight(a), _WEIGHT_CAP)
+                    return (_picked.get(aid, 0) / quota,
+                            int(inflight.get(aid, 0)))
+                ordered.sort(key=_quota_key)
+                # 记账：选中即累加（比值随之升高，下次自动让位 —— 自纠的核心）。
+                # 与 _quota_key 同在调度锁内，避免并发下漏计导致比例失真。
+                _picked[str(_account_id(ordered[0]))] = \
+                    _picked.get(str(_account_id(ordered[0])), 0) + 1
             else:
                 ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
         except Exception:
@@ -3008,6 +3212,22 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
                   f"probeDefect={summary['counts'].get('probe_defect')} "
                   f"authFailed={len(summary.get('authFailed') or [])} "
                   f"aborted={summary.get('aborted')}")
+            # 场景通知：巡检结束（用户 2026-10-13 需求）。异步发送，不阻塞巡检返回。
+            # 失败只记日志 —— 通知是附属能力，绝不能影响巡检主流程。
+            try:
+                _summary_snapshot = dict(summary)
+
+                async def _send_health_notice(s=_summary_snapshot):
+                    try:
+                        _mi = _collect_models_info()
+                        _t, _lines = _notify_mod.build_health_done(s, _mi)
+                        _notify_mod.send_scene("health_done", _t, _lines)
+                    except Exception as _e:
+                        lprint("health", f"notice failed: {_e}")
+
+                asyncio.get_running_loop().create_task(_send_health_notice())
+            except Exception as _e:
+                lprint("health", f"notice schedule failed: {_e}")
             return summary
         except Exception as e:
             _HEALTH_RUNTIME["lastError"] = f"{type(e).__name__}: {e}"

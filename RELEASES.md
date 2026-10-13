@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.57](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.57)
+**当前稳定版：** [v0.9.58](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.58)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.58](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.58) | 2026-10-13 | 修复点击执行却无记录（超时/中止不落库）；调度算法改配额制按余额比例分摊；通知补齐 5 类场景 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.58.md) |
 | [v0.9.57](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.57) | 2026-10-13 | 修复积分感知调度失效——调度器读的余额快照 9-23 起停更，改用实时快照 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.57.md) |
 | [v0.9.56](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.56) | 2026-10-13 | 通知管理前端对齐 MoviePilot——渠道卡片网格 + 配置弹窗（每渠道独立启用/消息场景） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.56.md) |
 | [v0.9.55](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.55) | 2026-10-13 | 修复企微菜单无回复——PKCS7 填充块误写 16，官方协议为 32 字节 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.55.md) |
@@ -150,7 +151,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.57    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.58    # 锁定版本
 ```
 
 ## 部署产物

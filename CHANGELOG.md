@@ -31,6 +31,42 @@
 
 ---
 
+## [v0.9.58] - 2026-10-13
+
+<!-- summary: 修复点击执行却无记录（超时/中止不落库）；调度算法改配额制按余额比例分摊；通知补齐 5 类场景 -->
+
+### 修复
+
+- **点击执行却没有记录**：实测 job 29302d1e93a8 跑满 30 分钟被强杀，状态 failed，
+  但 wb_daily_runs 无记录、tasks 落库 0 条。根因：`_execute` 的**超时分支**与
+  **手动中止分支**在 return/raise 前都没调 `_persist_run()`，只有 rc 三条正常路径落库。
+  现已补齐，四种终态全部留痕。
+- **调度算法未按预期工作**：初版 `inflight / weight` 实测余额-承接相关性仅 0.077
+  （inflight 主导、权重形同虚设）。改为**配额制**：已选次数/配额比例最小者优先，
+  配额 ∝ 余额（封顶 8 倍）。实测 3:1 余额 → 75%:25% 承接；积分衰减后自动让位；
+  未知余额中性不惩罚；AB_CREDIT_WEIGHT=0 可关闭。
+
+### 新增
+
+- **通知 5 类场景**（默认全部开启，每类有标题/说明/独立开关）：
+  daily_report（凌晨 00:05 推送**昨日**消耗、可用模型、通知链路、API 当天/累计调用）、
+  checkin_done（签到积分/剩余/总积分，一轮只推一次）、task_done（任务积分/总积分）、
+  health_done（巡检结果 + 可用模型）、model_change（模型新增/下线 + 可用模型）。
+- `send_scene()`：按渠道**场景订阅**过滤（_scenes 空 = 全部场景）；日报幂等
+  （sentinel 落盘，重启不重发；总开关未开不标记，开启后补发）。
+- 交互菜单口径修正：`/accounts` 改为积分统计**顶部四项**；`/models` 改为当前模型
+  全量口径（正常调用数/自动发现数/轮检禁用/手动禁用 + 样例）。
+
+### 变更
+
+- 通知管理 UI 间距修正：渠道卡片网格不再贴 `.wb-api-card` 边框（补 `padding:14px 16px 16px`）；
+  场景标签带说明 tooltip。
+
+### 测试
+
+- `_test_credit_weight_sched.py` 重写为配额制契约（16 项，含六组场景模拟）。
+- 全量 32 个测试文件全绿。
+
 ## [v0.9.57] - 2026-10-13
 
 <!-- summary: 修复积分感知调度失效——调度器读的余额快照 9-23 起停更，改用实时快照 -->
@@ -3612,7 +3648,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.57...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.58...HEAD
+[v0.9.58]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.57...v0.9.58
 [v0.9.57]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.56...v0.9.57
 [v0.9.56]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.55...v0.9.56
 [v0.9.55]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.54...v0.9.55

@@ -25,6 +25,7 @@ accounts.json，无烧号风险。
 """
 
 import asyncio
+import threading
 import json
 import os
 import re
@@ -294,6 +295,51 @@ class DailyJob:
         self.accounts_summary: list[dict] = []   # 逐账号汇总（落库用）
         self.tasks_summary: list[dict] = []      # 任务台账（任务维度，落库用）
         self._cur_account: dict | None = None    # 当前正在跑的账号
+        self._checkin_notified = False           # 本轮签到通知是否已发（幂等）
+
+    def _notify_checkin_once(self) -> None:
+        """本轮首个账号完成时推送一次「签到成功」通知（用户 2026-10-13 需求）。
+
+        为何是**同步 + 守护线程**：调用点 `log_line()` 是同步函数（被
+        _execute 的读行循环高频调用），不能在这里 await 协程 —— 那样协程
+        永远不会执行（还会抛 RuntimeWarning）。通知要发网络请求，也不能
+        同步阻塞读行循环，故丢守护线程。
+
+        为何只发一次：一轮有 20+ 账号，逐个推会刷屏；且此刻该账号的签到
+        结果已确定、积分汇总已落库，数据是准的。
+        """
+        if self._checkin_notified:
+            return
+        self._checkin_notified = True   # 先置位：即使发送失败也不重试（防刷屏）
+
+        def _worker():
+            try:
+                try:
+                    import notify
+                except ImportError:
+                    from gateway import notify  # type: ignore
+                import db as _db
+                summ = _db.summarize_wb_daily_credits() or {}
+                checkin = float(summ.get("todayCheckinCredits") or 0)
+                total = float(summ.get("totalCredits") or 0)
+                remaining = 0.0
+                try:
+                    import credit_floor
+                    bals = credit_floor._latest_balances() or {}
+                    remaining = sum(v for v in bals.values() if isinstance(v, (int, float)))
+                except Exception:
+                    pass
+                title, lines = notify.build_checkin_done(checkin, remaining, total)
+                r = notify.send_scene("checkin_done", title, lines)
+                if r.get("ok"):
+                    self.log_line("签到通知已发送：%s" % ",".join(r.get("sent_to") or []))
+            except Exception as e:
+                try:
+                    self.log_line(f"签到通知异常（不影响主流程）: {str(e)[:80]}")
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, name="ab-checkin-notice", daemon=True).start()
 
     def log_line(self, text: str):
         if len(self.log) > 800:
@@ -322,6 +368,10 @@ class DailyJob:
             if m3:
                 self._cur_account["rest"] = [s.strip() for s in m3.group(1).split(",") if s.strip()]
             self.accounts_done += 1
+            # 场景通知：签到成功（用户 2026-10-13 需求）。
+            # 挂在**账号完成处**而非每个签到动作 —— 一轮有 20+ 账号，逐个推会刷屏；
+            # 且此刻该账号的签到结果已确定，积分汇总也已落库，数据是准的。
+            self._notify_checkin_once()
             self._cur_account = None
         elif self._cur_account is not None:
             # 记录具体的执行动作（签到、领奖、抽奖、完成等）
@@ -771,6 +821,10 @@ async def _execute(job: DailyJob):
             pass
         job.log_line("执行超时（30 分钟），已强制终止")
         job.finish("failed", "执行超时")
+        # 必须落库：否则被强杀的这轮在面板「执行记录」里完全看不到 ——
+        # 用户点了执行、跑了半小时，历史里却一条记录都没有
+        # （2026-10-13 实测 job 29302d1e93a8 正是因此 runs/tasks 双 0）。
+        _persist_run(job, all_lines)
         return
     except asyncio.CancelledError:
         try:
@@ -779,6 +833,8 @@ async def _execute(job: DailyJob):
             pass
         job.log_line("任务已手动中止")
         job.finish("aborted", "手动中止")
+        # 同超时分支：中止也要留痕，否则「我中止了但记录里没有」。
+        _persist_run(job, all_lines)
         raise
     finally:
         job.proc = None
@@ -807,10 +863,55 @@ async def _execute(job: DailyJob):
         except Exception as e:
             job.log_line(f"补领异常（不影响主流程）: {str(e)[:80]}")
         job.finish("done", {"rc": 0, "summary": _tail_summary(all_lines)})
+        # ③ 场景通知：每日任务完成（用户 2026-10-13 需求）。
+        #    失败只记日志，绝不影响任务主流程。
+        try:
+            await _notify_task_done(job, store)
+        except Exception as e:
+            job.log_line(f"任务完成通知异常（不影响主流程）: {str(e)[:80]}")
     else:
         job.log_line(f"脚本退出码 {rc}，请查看日志定位失败账号")
         job.finish("failed", {"rc": rc, "summary": _tail_summary(all_lines)})
     _persist_run(job, all_lines)
+
+
+async def _notify_task_done(job: DailyJob, store: dict) -> None:
+    """推送「每日任务完成」场景通知：任务积分 + 当前总积分。
+
+    数据来源：wb-daily 自己的 credit 汇总（todayTaskCredits / totalCredits）
+    与账号池余额快照（remaining）。通知模块按渠道订阅过滤后发送。
+    """
+    try:
+        import notify
+    except ImportError:
+        try:
+            from gateway import notify  # type: ignore
+        except ImportError:
+            return
+    # 今日任务积分 / 总积分：从 DB 汇总读（与面板 credit-summary 同源）
+    task_credits, total_credits = 0.0, 0.0
+    try:
+        import db as _db
+        summ = _db.summarize_wb_daily_credits() or {}
+        task_credits = float(summ.get("todayTaskCredits") or 0)
+        total_credits = float(summ.get("totalCredits") or 0)
+    except Exception:
+        pass
+    # 账号池剩余：读实时余额快照
+    remaining = 0.0
+    try:
+        import credit_floor
+        bals = credit_floor._latest_balances() or {}
+        remaining = sum(v for v in bals.values() if isinstance(v, (int, float)))
+    except Exception:
+        pass
+    accounts_total = len(store or {})
+    title, lines = notify.build_task_done(
+        task_credits, total_credits,
+        {"accounts": accounts_total, "done": "%s/%s" % (job.accounts_done, job.accounts_total)})
+    r = notify.send_scene("task_done", title, lines)
+    if r.get("ok"):
+        job.log_line("任务完成通知已发送：%s" % ",".join(r.get("sent_to") or []))
 
 
 def _persist_run(job: DailyJob, all_lines: list[str]) -> None:

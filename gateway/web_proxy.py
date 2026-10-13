@@ -3768,9 +3768,14 @@ COLLAPSE_SCRIPT = r"""
     card.appendChild(swRow);
 
     // ---- 渠道卡片网格（MoviePilot NotificationChannelCard 同款）----
+    // ⚠️ 间距修正（2026-10-13 用户反馈「配置框太靠近边框」）：
+    // grid 直接做在 .wb-api-card 里，而该 card 是 border-radius:16px + overflow:hidden
+    // 的容器，子元素不留内边距就会贴边（视觉上顶到边框）。
+    // 参照同页其它区块的做法，网格自带四周内边距 + 与上方的间隔。
     var grid = wbEl("div", null);
     grid.style.cssText =
-      "display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px;";
+      "display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));" +
+      "gap:10px;padding:14px 16px 16px;";
     registry.forEach(function (ch) {
       var view = channels[ch.key] || {};
       var on = view._enabled !== false;
@@ -3887,6 +3892,10 @@ COLLAPSE_SCRIPT = r"""
       var tag = wbEl("button",
         "wb-am-tag wb-am-tag-click" + (checked ? " wb-am-tag-used" : ""), sc.name);
       tag.type = "button";
+      // 场景说明：标题+说明+开关三件套（用户 2026-10-13 要求「做好标题，说明和启用开关」）。
+      // 标签上只放名称（保持紧凑），说明用 tooltip 承载 —— 鼠标悬停即可看到，
+      // 不撑大弹窗。
+      if (sc.desc) tag.title = sc.name + "：" + sc.desc;
       tag.onclick = function () {
         sceneState[sc.key] = !sceneState[sc.key];
         tag.className = "wb-am-tag wb-am-tag-click" +
