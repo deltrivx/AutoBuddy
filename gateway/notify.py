@@ -302,13 +302,17 @@ def _wecom_encrypt(plain_xml: str, aes_key43: str, corpid: str) -> str:
     return base64.b64encode(cipher.encrypt(body)).decode("ascii")
 
 
-def _xml_text_content(xml: str) -> tuple:
-    """从明文 XML 提取 (MsgType, Content, FromUserName)。"""
+def _xml_pick(xml: str, tag: str) -> str:
+    """从明文 XML 取某个标签的文本（兼容 CDATA）。"""
     import re
-    def _pick(tag):
-        m = re.search(r"<%s>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</%s>" % (tag, tag), xml, re.S)
-        return m.group(1) if m else ""
-    return _pick("MsgType"), _pick("Content"), _pick("FromUserName")
+    m = re.search(r"<%s>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</%s>" % (tag, tag), xml, re.S)
+    return m.group(1) if m else ""
+
+
+def _xml_text_content(xml: str) -> tuple:
+    """从明文 XML 提取 (MsgType, Content, FromUserName, EventKey)。"""
+    return (_xml_pick(xml, "MsgType"), _xml_pick(xml, "Content"),
+            _xml_pick(xml, "FromUserName"), _xml_pick(xml, "EventKey"))
 
 
 def wecom_callback_verify(params: Dict[str, Any]) -> Optional[str]:
@@ -363,8 +367,9 @@ def wecom_callback_message(params: Dict[str, Any], body_xml_encrypted: str) -> O
         plain = _wecom_decrypt(encrypt, aes_key, corpid)
         if not plain:
             return None
-        msg_type, content, from_user = _xml_text_content(plain)
-        reply_text = _wecom_interpret(msg_type, content)
+        # 四元组：菜单点击是 event 消息，命令在 EventKey 里（无 Content）
+        msg_type, content, from_user, event_key = _xml_text_content(plain)
+        reply_text = _wecom_interpret(msg_type, content, event_key)
         if not reply_text:
             return None
         # 组回复 XML → 加密 → 包外层
@@ -391,11 +396,22 @@ def wecom_callback_message(params: Dict[str, Any], body_xml_encrypted: str) -> O
         return None
 
 
-def _wecom_interpret(msg_type: str, content: str) -> Optional[str]:
-    """把收到的消息翻译成回复文本。仅文本消息；其余类型回引导。"""
+def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Optional[str]:
+    """把收到的消息翻译成回复文本。
+
+    支持两种来源：
+      - 文本消息（msg_type=text，命令在 content）；
+      - 菜单点击（msg_type=event，命令在 event_key，如 AB_STATUS）。
+    """
+    # 菜单点击：EventKey 即命令，统一映射成文本命令后走同一套路由
+    if event_key:
+        content = MENU_KEY_TO_CMD.get(str(event_key).strip().upper(), "")
+        msg_type = "text"
+        if not content:
+            return "未知菜单操作：%s" % str(event_key)[:40]
     text = (content or "").strip()
     if msg_type != "text":
-        return "我是 AutoBuddy 网关助手。发「帮助」查看我能做什么～"
+        return "我是 AutoBuddy 网关助手。发「帮助」或点下方菜单查看我能做什么～"
     low = text.lower()
     if low in ("help", "帮助", "?", "？"):
         return ("AutoBuddy 指令：\n"
@@ -561,3 +577,124 @@ def build_reply_text(to_user: str, from_user: str, content: str) -> str:
             '<MsgType><![CDATA[text]]></MsgType>'
             '<Content><![CDATA[%s]]></Content>'
             '</xml>') % (to_user, from_user, int(_t.time()), content)
+
+
+# ---------------------------------------------------------------------------
+# 企微自定义菜单（应用底部按钮）—— MoviePilot 的 create_menus 同款能力。
+#
+# 为什么必须有它：只靠「用户手打命令」不算交互 —— 用户根本不知道能打什么。
+# MoviePilot 的做法是配置保存后**自动调 menu/create 注册菜单**，成员点按钮
+# 即触发（企微把按钮 key 作为 EventKey 回调过来）。本模块照做：
+#   - 限企微协议上限：一级菜单最多 3 个，每个一级下二级最多 5 个；
+#   - 按钮 type=click，key 即命令（AB_STATUS 等），点击后走同一套命令路由；
+#   - create_wecom_menus() 幂等：重复调用是覆盖式更新，不会堆积。
+# ---------------------------------------------------------------------------
+
+# 命令 -> (显示名, 分组)。分组即一级菜单（<=3 组，每组 <=5 项）。
+WECOM_MENU_COMMANDS = [
+    ("AB_STATUS",   "网关状态",   "常用"),
+    ("AB_CREDITS",  "积分消耗",   "常用"),
+    ("AB_ACCOUNTS", "账号余额",   "常用"),
+    ("AB_MODELS",   "模型数量",   "常用"),
+    ("AB_DAILY",    "任务进度",   "任务"),
+    ("AB_RUN",      "启动任务",   "任务"),
+    ("AB_CHECKIN",  "全部签到",   "任务"),
+    ("AB_NOTIFY_ON", "开启通知",  "通知"),
+    ("AB_NOTIFY_OFF", "关闭通知", "通知"),
+    ("AB_HELP",     "帮助",       "通知"),
+]
+
+# 菜单按钮 key -> 交互命令（与文本命令同一套路由，点按钮等价于手打该命令）
+MENU_KEY_TO_CMD = {
+    "AB_STATUS": "status",
+    "AB_CREDITS": "credits",
+    "AB_ACCOUNTS": "accounts",
+    "AB_MODELS": "models",
+    "AB_DAILY": "daily",
+    "AB_RUN": "run",
+    "AB_CHECKIN": "checkin",
+    "AB_NOTIFY_ON": "notify on",
+    "AB_NOTIFY_OFF": "notify off",
+    "AB_HELP": "help",
+}
+
+
+def wecom_menu_spec() -> Dict[str, Any]:
+    """按分组构造企微菜单报文（自动受 3 个一级 / 5 个二级限制）。"""
+    groups: Dict[str, list] = {}
+    for key, name, cat in WECOM_MENU_COMMANDS:
+        groups.setdefault(cat, []).append({"type": "click", "name": name, "key": key})
+    buttons = []
+    for cat, items in groups.items():
+        if len(items) == 1:
+            buttons.append(items[0])          # 只有一项时直接做一级按钮
+        else:
+            buttons.append({"name": cat, "sub_button": items[:5]})
+    return {"button": buttons[:3]}
+
+
+def _wecom_token(ch_cfg: Dict[str, Any]) -> tuple:
+    """取 (access_token, agentid_num)；失败返回 (None, err)。"""
+    corpid = str(ch_cfg.get("corpid") or "").strip()
+    secret = str(ch_cfg.get("secret") or "").strip()
+    agentid = str(ch_cfg.get("agentid") or "").strip()
+    if not (corpid and secret and agentid):
+        return None, "企业微信配置不完整（CorPID/Secret/AgentId）"
+    try:
+        agentid_num = int(agentid)
+    except ValueError:
+        return None, "AgentId 必须是纯数字"
+    try:
+        import httpx
+        with httpx.Client(timeout=20.0, verify=False) as client:
+            r = client.get("https://qyapi.weixin.qq.com/cgi-bin/gettoken",
+                           params={"corpid": corpid, "corpsecret": secret})
+            d = r.json() if r.status_code == 200 else {}
+        token = (d or {}).get("access_token")
+        if not token:
+            return None, "获取 access_token 失败：errcode=%s %s" % (
+                (d or {}).get("errcode"), _sanitize_token(str((d or {}).get("errmsg") or ""))[:120])
+        return (token, agentid_num), None
+    except Exception as e:
+        return None, "请求异常：%s" % str(e)[:120]
+
+
+def create_wecom_menus(channel_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """注册/更新企微自定义菜单（幂等）。配置就绪即可调用。"""
+    cfg = channel_cfg or (_load().get("channels", {}).get("wecom") or {})
+    got, err = _wecom_token(cfg)
+    if err:
+        return {"ok": False, "error": err}
+    token, agentid = got
+    try:
+        import httpx
+        r = httpx.post(
+            "https://qyapi.weixin.qq.com/cgi-bin/menu/create",
+            params={"access_token": token, "agentid": agentid},
+            json=wecom_menu_spec(), timeout=20.0, verify=False)
+        d = r.json() if r.status_code == 200 else {}
+        if (d or {}).get("errcode") == 0:
+            return {"ok": True, "buttons": len(wecom_menu_spec()["button"])}
+        return {"ok": False, "error": "创建菜单失败：errcode=%s %s" % (
+            (d or {}).get("errcode"), _sanitize_token(str((d or {}).get("errmsg") or ""))[:160])}
+    except Exception as e:
+        return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
+
+
+def delete_wecom_menus(channel_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """删除企微自定义菜单。"""
+    cfg = channel_cfg or (_load().get("channels", {}).get("wecom") or {})
+    got, err = _wecom_token(cfg)
+    if err:
+        return {"ok": False, "error": err}
+    token, agentid = got
+    try:
+        import httpx
+        r = httpx.get(
+            "https://qyapi.weixin.qq.com/cgi-bin/menu/delete",
+            params={"access_token": token, "agentid": agentid}, timeout=20.0, verify=False)
+        d = r.json() if r.status_code == 200 else {}
+        return {"ok": (d or {}).get("errcode") == 0,
+                "error": None if (d or {}).get("errcode") == 0 else str((d or {}).get("errmsg"))[:120]}
+    except Exception as e:
+        return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}

@@ -31,6 +31,30 @@
 
 ---
 
+## [v0.9.50] - 2026-10-13
+
+<!-- summary: 补齐 MoviePilot 同款核心交互——自动生成企微应用底部菜单（点按钮即交互），而非让用户手打命令 -->
+
+### 新增
+
+- **企微自定义菜单（自动生成）**：此前只做「被动文字回复」，用户不知道能打什么，
+  不算交互。参照 MoviePilot 的 `create_menus` 实现：配置保存后**自动调企微
+  menu/create 注册应用底部菜单**，成员点按钮即触发。
+  - `WECOM_MENU_COMMANDS`：10 个按钮分「常用/任务/通知」三组；
+  - `wecom_menu_spec()` 自动受协议上限约束（一级 ≤ 3、二级 ≤ 5）；
+  - `MENU_KEY_TO_CMD`：按钮 key → 命令（点「网关状态」= 手打 status）。
+- **菜单管理**：`create_wecom_menus()` / `delete_wecom_menus()`（幂等，覆盖式更新）；
+  新增 `POST /api/notify/menu`（create/delete）支持手动重建。
+- **保存即建菜单**：`PUT /api/notify` 在三要素就绪后自动注册菜单，返回值带 menu 字段。
+- **菜单点击路由**：回调端点支持 event 消息（命令在 EventKey，无 Content），
+  否则点按钮毫无反应。
+
+### 测试
+
+- 新增 `_test_wecom_menu.py`（18 项）：命令表完整性、报文受 3/5 上限约束、
+  按钮 key 可映射、点击→命令路由、空配置健壮性、源码契约。
+- 全量 30 个测试文件全绿。
+
 ## [v0.9.49] - 2026-10-13
 
 <!-- summary: 修复企微回调 echo 校验解密失败——AES 块大小误写 32 + openssl 与企微填充约定冲突（双重填充） -->
@@ -3431,7 +3455,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.49...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.50...HEAD
+[v0.9.50]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.49...v0.9.50
 [v0.9.49]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.48...v0.9.49
 [v0.9.48]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.47...v0.9.48
 [v0.9.47]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.46...v0.9.47

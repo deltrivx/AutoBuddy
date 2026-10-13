@@ -6691,12 +6691,42 @@ async def notify_get():
 
 @app.put("/api/notify")
 async def notify_put(request: Request):
+    """保存通知配置。
+
+    MoviePilot 同款行为：配置就绪后**自动注册企微菜单**（幂等覆盖式更新），
+    成员在应用底部点按钮即可交互，不必手打命令。菜单创建失败不影响配置保存
+    （菜单需要可信 IP / 应用可用等额外条件，失败只记录、返回 menu 字段供前端提示）。
+    """
     try:
         payload = json.loads(await request.body() or b"{}")
         _notify.update_config(payload)
-        return {"ok": True}
+        menu = None
+        try:
+            wecom_cfg = _notify._load().get("channels", {}).get("wecom") or {}
+            ready = bool(str(wecom_cfg.get("corpid") or "").strip()
+                         and str(wecom_cfg.get("secret") or "").strip()
+                         and str(wecom_cfg.get("agentid") or "").strip())
+            if ready:
+                menu = _notify.create_wecom_menus(wecom_cfg)
+        except Exception as e:
+            menu = {"ok": False, "error": str(e)[:120]}
+        return {"ok": True, "menu": menu}
     except Exception as e:
         return Response(content=json.dumps({"error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
+
+
+@app.post("/api/notify/menu")
+async def notify_menu(request: Request):
+    """手动注册/更新企微自定义菜单（幂等）。body: {"action": "create"|"delete"}"""
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        action = str(payload.get("action") or "create").strip().lower()
+        if action == "delete":
+            return _notify.delete_wecom_menus()
+        return _notify.create_wecom_menus()
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)[:120]}),
                         status_code=500, media_type="application/json")
 
 
@@ -6774,6 +6804,15 @@ async def wecom_callback_msg(path: str, request: Request):
         # 交互命令：全部内置，无需辅助容器。所有指令都是被动回复（5s 内可完成，
         # 不会触发企微的重推）。需要长时间运行的（如每日任务）只回“已启动”，
         # 结果后续主动推送。
+        #
+        # 菜单点击走 event 消息：命令在 EventKey（如 AB_STATUS），没有 Content。
+        # 必须在这里映射成文本命令，否则点按钮毫无反应 —— 只靠「用户手打命令」
+        # 不算交互（MoviePilot 是自动注册菜单，点按钮即触发）。
+        event_key = (msg.get("EventKey") or "").strip()
+        if event_key:
+            content = _notify.MENU_KEY_TO_CMD.get(event_key.upper(), "")
+            if not content:
+                content = "help"
         cmd = content.lower().strip()
         async def _gw_get(path):
             async with _internal_client(timeout=8.0) as client:

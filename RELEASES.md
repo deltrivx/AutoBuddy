@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.49](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.49)
+**当前稳定版：** [v0.9.50](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.50)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.50](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.50) | 2026-10-13 | 补齐 MoviePilot 同款核心交互——自动生成企微应用底部菜单（点按钮即交互），而非让用户手打命令 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.50.md) |
 | [v0.9.49](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.49) | 2026-10-13 | 修复企微回调 echo 校验解密失败——AES 块大小误写 32 + openssl 与企微填充约定冲突（双重填充） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.49.md) |
 | [v0.9.48](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.48) | 2026-10-13 | 修复回调字段重复注册——cb_token/cb_aes_key 被当成密钥，GET 回读成字典、前端无法回显 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.48.md) |
 | [v0.9.47](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.47) | 2026-10-13 | 企业微信完整交互——内置回调端点（echo 校验+消息接收+指令自动回复），零辅助容器 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.47.md) |
@@ -142,7 +143,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.49    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.50    # 锁定版本
 ```
 
 ## 部署产物
