@@ -3723,9 +3723,14 @@ COLLAPSE_SCRIPT = r"""
   // 不提交=保留；GET 接口本就不回明文。
   // ---------------------------------------------------------------------
   function wbRenderNotifySection(host, data) {
+    // MoviePilot 通知 UI 同款模型（AccountSettingNotification.vue +
+    // NotificationChannelCard.vue）：渠道以**卡片网格**呈现（启用徽标 +
+    // 就绪状态），点击卡片弹出**配置弹窗**（启用开关 / 消息场景 / 渠道字段 /
+    // 底部「测试 + 确认」）。不再是一张长表单平铺所有字段。
     var cfg = data || {};
     var registry = cfg.registry || [];
     var channels = cfg.channels || {};
+    var scenes = cfg.scenes || [];
 
     var section = wbEl("section", "min-w-0 space-y-2.5");
     section.id = "settings-notify";
@@ -3743,8 +3748,8 @@ COLLAPSE_SCRIPT = r"""
     var swMain = wbEl("div", "wb-api-main");
     swMain.appendChild(wbEl("div", "wb-api-label", "启用通知"));
     swMain.appendChild(wbEl("div", "wb-api-desc",
-      "开启后，每日任务完成、账号余额异常等事件会推送到已配置的渠道。"
-      + "关闭不影响测试发送（填完配置可直接点「测试」验证连通）。"));
+      "开启后，每日任务完成、账号余额异常等事件会推送到已启用的渠道。"
+      + "各渠道可单独启停与选择消息场景；关闭总开关不影响「测试」发送。"));
     swRow.appendChild(swMain);
     var swBtn = wbEl("button",
       "wb-api-btn" + (cfg.enabled ? " wb-api-btn-on" : ""),
@@ -3762,114 +3767,225 @@ COLLAPSE_SCRIPT = r"""
     swRow.appendChild(swBtn);
     card.appendChild(swRow);
 
-    // ---- 各渠道（注册表驱动）----
+    // ---- 渠道卡片网格（MoviePilot NotificationChannelCard 同款）----
+    var grid = wbEl("div", null);
+    grid.style.cssText =
+      "display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px;";
     registry.forEach(function (ch) {
       var view = channels[ch.key] || {};
-      var chRow = wbEl("div", "wb-api-row wb-api-row-stack");
-      chRow.style.borderTop = "1px solid var(--border, #e2e8f0)";
-      chRow.style.marginTop = "4px";
-      chRow.style.paddingTop = "12px";
+      var on = view._enabled !== false;
+      var chCard = wbEl("div", null);
+      chCard.style.cssText =
+        "cursor:pointer;border:1px solid var(--border,#e2e8f0);border-radius:10px;" +
+        "padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0;" +
+        "background:var(--card,#fff);transition:box-shadow .15s;";
+      chCard.onmouseenter = function () { chCard.style.boxShadow = "0 2px 10px rgba(0,0,0,.12)"; };
+      chCard.onmouseleave = function () { chCard.style.boxShadow = ""; };
 
-      var chHead = wbEl("div", "wb-api-main");
-      chHead.appendChild(wbEl("div", "wb-api-label",
-        ch.name + (view._ready ? " · 已就绪" : " · 未配置")));
-      chHead.appendChild(wbEl("div", "wb-api-desc", ch.desc || ""));
-      chRow.appendChild(chHead);
+      var titleRow = wbEl("div", null);
+      titleRow.style.cssText = "display:flex;align-items:center;gap:7px;min-width:0";
+      // 启用徽标（MP 的 VBadge dot）
+      var dot = wbEl("span", null);
+      dot.style.cssText = "width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:" +
+        (on ? "#16a34a" : "#94a3b8");
+      titleRow.appendChild(dot);
+      titleRow.appendChild(wbEl("span", "wb-api-label", ch.name));
+      // 就绪徽标
+      var ready = wbEl("span", "wb-api-badge",
+        view._ready ? "已就绪" : "未配置");
+      ready.style.cssText += ";color:" + (view._ready ? "#047857" : "#b45309") +
+        ";border:1px solid currentColor;background:transparent;flex:0 0 auto;";
+      titleRow.appendChild(ready);
+      chCard.appendChild(titleRow);
 
-      var formWrap = wbEl("div", null);
-      formWrap.style.cssText =
-        "display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:8px;";
-      var inputs = {};
-      (ch.fields || []).forEach(function (f) {
-        var cell = wbEl("div", null);
-        cell.style.cssText = "display:flex;flex-direction:column;gap:4px;min-width:0";
-        cell.appendChild(wbEl("span", "wb-api-badge", f.label));
-        var inp = document.createElement("input");
-        inp.className = "wb-api-input wb-api-mono";
-        inp.type = "text";
-        inp.placeholder = f.placeholder || "";
-        if (f.secret) {
-          var has = (view[f.key] || {}).has_value;
-          inp.placeholder = has ? "已配置，留空保持不变" : (f.placeholder || "");
-          inp.dataset.secret = "1";
-        } else {
-          inp.value = view[f.key] || "";
-        }
-        inputs[f.key] = inp;
-        cell.appendChild(inp);
-        formWrap.appendChild(cell);
-      });
-      chRow.appendChild(formWrap);
+      var desc = wbEl("div", "wb-api-desc", (view._scenes && view._scenes.length)
+        ? "消息场景：" + view._scenes.length + " 项"
+        : "消息场景：全部");
+      desc.style.cssText = ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+      chCard.appendChild(desc);
+      chCard.appendChild(wbEl("div", "wb-api-desc",
+        "点击配置（启用 / 场景 / 凭据 / 测试）"));
 
-      // 操作行：保存 + 测试
-      var opWrap = wbEl("div", null);
-      opWrap.style.cssText = "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap";
-      var saveBtn = wbEl("button", "wb-api-btn", "保存");
-      saveBtn.onclick = function () {
-        var payload = { channels: {} };
-        var chPayload = {};
-        (ch.fields || []).forEach(function (f) {
-          if (f.secret) {
-            var v = inputs[f.key].value.trim();
-            if (v) chPayload[f.key] = v;      // 留空 = 不提交 = 保留原值
-          } else {
-            chPayload[f.key] = inputs[f.key].value.trim();
-          }
-        });
-        payload.channels[ch.key] = chPayload;
-        saveBtn.disabled = true;
-        wbApiAction("/api/notify", "PUT", payload, "已保存 " + ch.name + " 配置")
-          .then(function () {
-            saveBtn.disabled = false;
-            var old = document.getElementById("settings-notify");
-            if (old) old.remove();
-            injectNotify();
-          });
-      };
-      var testBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "测试");
-      testBtn.onclick = function () {
-        testBtn.disabled = true;
-        testBtn.textContent = "发送中…";
-        var config = { channels: {} };
-        var chCfg = {};
-        (ch.fields || []).forEach(function (f) {
-          if (f.secret) {
-            var v = inputs[f.key].value.trim();
-            if (v) chCfg[f.key] = v;
-          } else {
-            chCfg[f.key] = inputs[f.key].value.trim();
-          }
-        });
-        config.channels[ch.key] = chCfg;
-        fetch("/api/notify/test", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: ch.key, save: true, config: config })
-        })
-          .then(function (r) { return r.json().catch(function () { return {}; }); })
-          .then(function (d) {
-            testBtn.disabled = false;
-            testBtn.textContent = "测试";
-            if (d && d.ok) {
-              wbToast(ch.name + " 测试消息已发送", "ok");
-            } else {
-              wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
-            }
-          })
-          .catch(function () {
-            testBtn.disabled = false;
-            testBtn.textContent = "测试";
-            wbToast("请求失败，请重试", "err");
-          });
-      };
-      opWrap.appendChild(saveBtn);
-      opWrap.appendChild(testBtn);
-      chRow.appendChild(opWrap);
-      card.appendChild(chRow);
+      chCard.onclick = function () { wbOpenNotifyDialog(ch, view, scenes); };
+      grid.appendChild(chCard);
     });
+    card.appendChild(grid);
 
     section.appendChild(card);
     host.appendChild(section);
+  }
+
+  function wbOpenNotifyDialog(ch, view, scenes) {
+    // MoviePilot NotificationChannelInfoDialog 的精简等价物：
+    // 弹窗内含 启用开关 / 消息场景多选 / 渠道字段 / 底部「测试 + 确认」。
+    var old = document.getElementById("wb-notify-dialog");
+    if (old) old.remove();
+
+    var overlay = wbEl("div", null);
+    overlay.id = "wb-notify-dialog";
+    overlay.style.cssText =
+      "position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1200;" +
+      "display:flex;align-items:center;justify-content:center;padding:16px;";
+    // 点背板关闭（MP 的 VDialogCloseBtn 同效）
+    overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
+
+    var dlg = wbEl("div", null);
+    dlg.style.cssText =
+      "background:var(--card,#fff);border-radius:14px;max-width:640px;width:100%;" +
+      "max-height:86vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);" +
+      "color:var(--foreground,#0f172a);padding:16px 18px;";
+    overlay.appendChild(dlg);
+
+    // ---- 头部：配置 + 渠道名 + 关闭 ----
+    var head = wbEl("div", null);
+    head.style.cssText = "display:flex;align-items:flex-start;justify-content:space-between;gap:8px;";
+    var headTxt = wbEl("div", null);
+    headTxt.appendChild(wbEl("div", "wb-api-label", "配置"));
+    headTxt.appendChild(wbEl("div", "wb-api-desc", ch.name + "（" + (view._ready ? "已就绪" : "未配置") + "）"));
+    head.appendChild(headTxt);
+    var closeBtn = wbEl("button", "wb-api-btn", "关闭");
+    closeBtn.onclick = function () { overlay.remove(); };
+    head.appendChild(closeBtn);
+    dlg.appendChild(head);
+
+    // ---- 启用开关（每渠道独立，MP 的 NotificationConf.enabled）----
+    var on = view._enabled !== false;
+    var enRow = wbEl("div", "wb-api-row");
+    enRow.style.marginTop = "8px";
+    enRow.appendChild(wbEl("div", "wb-api-main",
+      (function () { var m = wbEl("div", "wb-api-main");
+        m.appendChild(wbEl("div", "wb-api-label", "启用该渠道"));
+        m.appendChild(wbEl("div", "wb-api-desc",
+          "关闭后事件推送跳过此渠道；「测试」发送不受影响。"));
+        return m; })()));
+    var enBtn = wbEl("button",
+      "wb-api-btn" + (on ? " wb-api-btn-on" : ""),
+      on ? "已启用 · 点击停用" : "已停用 · 点击启用");
+    var enState = { on: on };
+    enBtn.onclick = function () {
+      enState.on = !enState.on;
+      enBtn.className = "wb-api-btn" + (enState.on ? " wb-api-btn-on" : "");
+      enBtn.textContent = enState.on ? "已启用 · 点击停用" : "已停用 · 点击启用";
+    };
+    enRow.appendChild(enBtn);
+    dlg.appendChild(enRow);
+
+    // ---- 消息场景（MP 的 switchs；全不勾 = 全部场景）----
+    var sceneState = {};
+    var scCard = wbEl("div", "wb-api-card");
+    scCard.style.cssText = ";margin-top:10px;padding:10px 12px;border:1px solid var(--border,#e2e8f0);";
+    var scMain = wbEl("div", "wb-api-main");
+    scMain.appendChild(wbEl("div", "wb-api-label", "消息场景"));
+    scMain.appendChild(wbEl("div", "wb-api-desc",
+      "选择该渠道接收哪些事件（MoviePilot 的消息类型同款语义）；全不勾 = 接收全部。"));
+    scCard.appendChild(scMain);
+    var scWrap = wbEl("div", null);
+    scWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;";
+    scenes.forEach(function (sc) {
+      var checked = (view._scenes || []).indexOf(sc.key) >= 0;
+      sceneState[sc.key] = checked;
+      var tag = wbEl("button",
+        "wb-am-tag wb-am-tag-click" + (checked ? " wb-am-tag-used" : ""), sc.name);
+      tag.type = "button";
+      tag.onclick = function () {
+        sceneState[sc.key] = !sceneState[sc.key];
+        tag.className = "wb-am-tag wb-am-tag-click" +
+          (sceneState[sc.key] ? " wb-am-tag-used" : "");
+      };
+      scWrap.appendChild(tag);
+    });
+    scCard.appendChild(scWrap);
+    dlg.appendChild(scCard);
+
+    // ---- 渠道字段（注册表驱动）----
+    var inputs = {};
+    var formWrap = wbEl("div", null);
+    formWrap.style.cssText =
+      "display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px;";
+    (ch.fields || []).forEach(function (f) {
+      var cell = wbEl("div", null);
+      cell.style.cssText = "display:flex;flex-direction:column;gap:4px;min-width:0";
+      cell.appendChild(wbEl("span", "wb-api-badge", f.label));
+      var inp = document.createElement("input");
+      inp.className = "wb-api-input wb-api-mono";
+      inp.type = "text";
+      inp.placeholder = f.placeholder || "";
+      if (f.secret) {
+        var has = (view[f.key] || {}).has_value;
+        inp.placeholder = has ? "已配置，留空保持不变" : (f.placeholder || "");
+        inp.dataset.secret = "1";
+      } else {
+        inp.value = view[f.key] || "";
+      }
+      inputs[f.key] = inp;
+      cell.appendChild(inp);
+      formWrap.appendChild(cell);
+    });
+    dlg.appendChild(formWrap);
+
+    function collectPayload() {
+      var chPayload = {
+        _enabled: enState.on,
+        _scenes: Object.keys(sceneState).filter(function (k) { return sceneState[k]; })
+      };
+      (ch.fields || []).forEach(function (f) {
+        if (f.secret) {
+          var v = inputs[f.key].value.trim();
+          if (v) chPayload[f.key] = v;      // 留空 = 不提交 = 保留原值
+        } else {
+          chPayload[f.key] = inputs[f.key].value.trim();
+        }
+      });
+      return { channels: {} } && (function () {
+        var p = { channels: {} }; p.channels[ch.key] = chPayload; return p;
+      })();
+    }
+
+    // ---- 底部操作：测试 + 确认（MP 的 VCardActions 同位）----
+    var actions = wbEl("div", null);
+    actions.style.cssText =
+      "display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap;";
+    var testBtn = wbEl("button", "wb-api-btn", "测试");
+    testBtn.onclick = function () {
+      testBtn.disabled = true;
+      testBtn.textContent = "发送中…";
+      fetch("/api/notify/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: ch.key, save: true, config: collectPayload() })
+      })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (d) {
+          testBtn.disabled = false;
+          testBtn.textContent = "测试";
+          if (d && d.ok) {
+            wbToast(ch.name + " 测试消息已发送", "ok");
+          } else {
+            wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
+          }
+        })
+        .catch(function () {
+          testBtn.disabled = false;
+          testBtn.textContent = "测试";
+          wbToast("请求失败，请重试", "err");
+        });
+    };
+    var okBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "确认");
+    okBtn.onclick = function () {
+      okBtn.disabled = true;
+      wbApiAction("/api/notify", "PUT", collectPayload(), "已保存 " + ch.name + " 配置")
+        .then(function () {
+          overlay.remove();
+          var oldSec = document.getElementById("settings-notify");
+          if (oldSec) oldSec.remove();
+          injectNotify();
+        });
+    };
+    actions.appendChild(testBtn);
+    actions.appendChild(okBtn);
+    dlg.appendChild(actions);
+
+    document.body.appendChild(overlay);
   }
 
   function injectNotify() {

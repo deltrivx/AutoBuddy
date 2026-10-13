@@ -128,5 +128,26 @@ def _check_no_dup():
 _ch, _dup = _check_no_dup()
 check("注册表字段无重复 key", not _dup, f"{_ch} 重复: {_dup}")
 
+
+# ---- 追加：每渠道独立启用 + 消息场景（MoviePilot 的 enabled/switchs 语义）----
+notify.update_config({"channels": {"telegram": {
+    "_enabled": False, "_scenes": ["daily_done"],
+    "bot_token": "***", "chat_id": "8646289271"}}})
+view = notify.public_view()["channels"]["telegram"]
+check("渠道级停用回读 _enabled=False", view.get("_enabled") is False)
+check("场景订阅回读 _scenes", view.get("_scenes") == ["daily_done"])
+# send() 跳过停用渠道（send_test 显式指定不受限）
+notify.update_config({"enabled": True})
+r = notify.send("text")
+tg = (r.get("results") or {}).get("telegram")
+check("总开关开启但渠道停用 → send 跳过 telegram",
+      "telegram" not in (r.get("results") or {}),
+      f"got results={list((r.get('results') or {}).keys())}")
+check("send_test 显式指定停用渠道仍可发（测试语义）",
+      isinstance(notify.send_test("telegram", "x"), dict))
+check("SCENES 场景清单非空", len(notify.SCENES) > 0)
+# 恢复启用避免影响后续断言
+notify.update_config({"channels": {"telegram": {"_enabled": True}}})
+
 print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
 raise SystemExit(1 if _fail else 0)

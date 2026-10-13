@@ -80,6 +80,15 @@ CHANNELS: List[Dict[str, Any]] = [
     # 前端表单与后端分发都会自动带上。
 ]
 
+# 消息场景（MoviePilot 的 notificationTypes 对应物）：
+# 渠道可按场景订阅，空 = 全部场景（默认）。
+SCENES: List[Dict[str, str]] = [
+    {"key": "daily_done", "name": "每日任务完成"},
+    {"key": "account_low", "name": "账号余额不足"},
+    {"key": "health", "name": "巡检结果"},
+    {"key": "system", "name": "系统异常"},
+]
+
 _DEFAULT_CFG: Dict[str, Any] = {
     "enabled": False,
     "channels": {c["key"]: {} for c in CHANNELS},
@@ -146,10 +155,18 @@ def public_view() -> Dict[str, Any]:
         ready = bool(view.get("corpid")
                      and (view.get("secret") or {}).get("has_value")
                      and view.get("agentid"))
+        if c["key"] == "telegram":
+            ready = bool((view.get("bot_token") or {}).get("has_value")
+                         and view.get("chat_id"))
         view["_ready"] = ready
+        # 每渠道独立启用（MoviePilot 的 NotificationConf.enabled 语义）
+        raw_ch = cfg["channels"].get(c["key"]) or {}
+        view["_enabled"] = bool(raw_ch.get("_enabled", True))
+        # 消息场景开关（MoviePilot 的 switchs 语义；空 = 全部场景）
+        view["_scenes"] = raw_ch.get("_scenes") or []
         chans[c["key"]] = view
     return {"enabled": bool(cfg.get("enabled")), "channels": chans,
-            "registry": CHANNELS}
+            "registry": CHANNELS, "scenes": SCENES}
 
 
 def update_config(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -169,6 +186,11 @@ def update_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(newv, dict):
                 continue
             slot = cfg["channels"].setdefault(c["key"], {})
+            # 每渠道启用与场景（MoviePilot 的 enabled / switchs 语义）
+            if isinstance(newv.get("_enabled"), bool):
+                slot["_enabled"] = newv["_enabled"]
+            if isinstance(newv.get("_scenes"), list):
+                slot["_scenes"] = [str(x) for x in newv["_scenes"]]
             for f in c["fields"]:
                 if f["key"] not in newv:
                     continue
@@ -290,7 +312,12 @@ def send(text: str, channel: Optional[str] = None) -> Dict[str, Any]:
     for key in targets:
         if key not in _SENDERS:
             continue
-        r = _SENDERS[key](cfg["channels"].get(key) or {}, text)
+        ch_cfg = cfg["channels"].get(key) or {}
+        # 每渠道独立启用（MP 的 NotificationConf.enabled 语义）：
+        # 渠道关闭则跳过（send_test 显式指定渠道不受此限）
+        if not channel and not ch_cfg.get("_enabled", True):
+            continue
+        r = _SENDERS[key](ch_cfg, text)
         results[key] = r
         any_ok = any_ok or bool(r.get("ok"))
     return {"ok": any_ok, "results": results}

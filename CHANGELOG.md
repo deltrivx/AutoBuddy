@@ -31,6 +31,25 @@
 
 ---
 
+## [v0.9.56] - 2026-10-13
+
+<!-- summary: 通知管理前端对齐 MoviePilot——渠道卡片网格 + 配置弹窗（每渠道独立启用/消息场景） -->
+
+### 变更
+
+- **通知管理 UI 重构为 MoviePilot 同款模型**（此前是一张长表单平铺所有字段，
+  不是 MP 的做法；核实其 NotificationChannelCard / NotificationChannelInfoDialog
+  源码后对齐）：
+  - 渠道以**卡片网格**呈现：启用徽标（绿点）+ 就绪状态 + 场景摘要，点击弹配置；
+  - **配置弹窗**：每渠道独立启用开关 / 消息场景标签多选 / 注册表驱动字段 /
+    底部「测试 + 确认」。
+- 后端配套：`NotificationConf.enabled` → `_enabled`（send 跳过停用渠道）；
+  `switchs` → `_scenes`（SCENES 场景清单，空=全部）。
+
+### 测试
+
+- `_test_notify.py` 扩至 31 项；全量 32 文件全绿。
+
 ## [v0.9.55] - 2026-10-13
 
 <!-- summary: 修复企微菜单无回复——PKCS7 填充块误写 16，官方协议为 32 字节 -->
@@ -3571,7 +3590,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.55...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.56...HEAD
+[v0.9.56]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.55...v0.9.56
 [v0.9.55]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.54...v0.9.55
 [v0.9.54]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.53...v0.9.54
 [v0.9.53]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.52...v0.9.53
