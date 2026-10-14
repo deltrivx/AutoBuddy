@@ -164,7 +164,8 @@ sys.path.insert(0, str(ROOT))
 from gateway import assistant as A  # noqa: E402
 
 check("模块可导入", A is not None)
-check("15 个工具已注册（阶段4 查询全覆盖）", len(A._TOOLS) == 15, f"got {len(A._TOOLS)}")
+check("17 个工具已注册（阶段4 全覆盖 + 阶段6 主动智能）",
+      len(A._TOOLS) == 17, f"got {len(A._TOOLS)}")
 
 # 阶段 4 新增的 9 个只读工具
 STAGE4_TOOLS = (
@@ -174,6 +175,13 @@ STAGE4_TOOLS = (
 )
 for _t in STAGE4_TOOLS:
     check(f"阶段4 工具 {_t} 已注册", _t in A._TOOLS)
+
+# 阶段 6 新增的 2 个主动智能工具
+STAGE6_TOOLS = ("get_credit_trend", "diagnose_task_failure")
+for _t in STAGE6_TOOLS:
+    check(f"阶段6 工具 {_t} 已注册", _t in A._TOOLS)
+check("阶段6 归因工具不把 running 误判为失败（线上实测误报已修）",
+      '_OK_OR_RUNNING = ("done", "running", "pending")' in SRC_AS)
 check("阶段4 工具全部只读（工具区无写端点）",
       '"/api/wb-daily/run"' not in _TOOLS_SRC
       and "checkin/all" not in _TOOLS_SRC

@@ -730,6 +730,136 @@ def _tool_notify_status(_args: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 阶段 6 新增工具：主动智能（2026-10-14）
+#
+# 用户确认的三阶段路线最后一段：「异常归因、趋势判断、主动播报」。
+# 本阶段先落地前两个**只读**能力（主动播报接通知场景，需另行设计去重）。
+#
+# 与阶段 4 工具的区别：这两个不只是「取数」，而是**基于数据做判断并给建议** ——
+# 这才是 LLM 之外、代码层就该完成的「智能」。
+# ---------------------------------------------------------------------------
+
+def _tool_credit_trend(_args: Dict[str, Any]) -> str:
+    """积分趋势：按近期消耗速度估算还能撑几天，并给建议。
+
+    口径说明：
+      - 日均消耗取「近 7 天 / 7」（比今日单日更稳，避免某天没用量造成误判）；
+      - 同时给「本月日均」作对照，两个口径差异大时提醒用户留意节奏变化；
+      - 余额低于 7 天用量时明确预警。
+    """
+    d = _http_json(WEBUI_BASE + "/api/credits/stats") or {}
+    s = d.get("summary") or {}
+    if not s:
+        return "积分数据获取失败"
+    remaining = s.get("currentRemaining") or 0
+    cap = s.get("currentCapacity") or 0
+    u7 = s.get("usage7Days") or 0
+    um = s.get("usageThisMonth") or 0
+    ut = s.get("usageToday") or 0
+
+    try:
+        remaining = float(remaining); u7 = float(u7)
+        um = float(um); ut = float(ut); cap = float(cap)
+    except (TypeError, ValueError):
+        return "积分数据格式异常"
+
+    lines = ["积分趋势："]
+    lines.append("  · 当前剩余：%s（总额度 %s，已用 %.1f%%）" % (
+        _fmt_num(remaining), _fmt_num(cap),
+        (cap - remaining) * 100.0 / cap if cap else 0.0))
+
+    # 近 7 天日均（主口径）
+    d7 = u7 / 7.0
+    # 本月日均（对照口径）
+    import datetime as _dt2
+    day_now = _dt2.date.today().day
+    dm = um / float(day_now) if day_now else 0.0
+
+    lines.append("  · 近 7 天日均消耗：%s" % _fmt_num(d7))
+    if day_now > 1 and dm > 0:
+        lines.append("  · 本月日均消耗：%s（已过 %d 天）" % (_fmt_num(dm), day_now))
+
+    if d7 <= 0:
+        lines.append("  · 近 7 天无消耗，暂无法估算可用天数。")
+    else:
+        days = remaining / d7
+        # 预期耗尽日期
+        try:
+            eta = _dt2.date.today() + _dt2.timedelta(days=int(days))
+            eta_txt = eta.isoformat()
+        except Exception:
+            eta_txt = "?"
+        lines.append("  · 按近 7 天速度，约可支撑 **%.1f 天**（预计 %s 前后见底）"
+                     % (days, eta_txt))
+        if days < 7:
+            lines.append("  ⚠️ 不足 7 天！建议减少调用或补充账号额度。")
+        elif days < 15:
+            lines.append("  · 余量偏紧，建议关注。")
+
+    # 节奏对比：今日 vs 近 7 天日均
+    if d7 > 0 and ut > d7 * 1.5:
+        lines.append("  · 今日消耗 %s 明显高于近期日均，注意是否有异常调用。"
+                     % _fmt_num(ut))
+    return "\n".join(lines)
+
+
+def _tool_diagnose_task(args: Dict[str, Any]) -> str:
+    """异常归因：分析最近的失败任务，给出原因与建议。
+
+    数据来源：`/api/wb-daily/runs` 的 `summary.detail`（v0.9.61 起落库的
+    真实失败原因）+ 逐账号明细（账号级失败）。
+    """
+    limit = int(args.get("limit") or 5)
+    runs = []
+    try:
+        d = _http_json(WEBUI_BASE + "/api/wb-daily/runs?limit=30") or {}
+        runs = d if isinstance(d, list) else (d.get("runs") or d.get("items") or [])
+    except Exception:
+        runs = []
+    # ⚠️ 2026-10-14 修正：原判据 `status != "done"` 把 **running** 也算成失败，
+    # 导致「正在跑的任务」被报成异常（线上实测误报 9789ee6e3782）。
+    # 只有**终态且非成功**才算失败：failed / aborted。
+    _OK_OR_RUNNING = ("done", "running", "pending")
+    failed = [r for r in runs
+              if str(r.get("status") or "") not in _OK_OR_RUNNING]
+    if not failed:
+        return "最近 %d 轮任务全部成功，无需归因。" % min(limit, len(runs) or 1)
+
+    lines = ["任务异常归因（最近 %d 轮中有 %d 轮未成功）："
+             % (min(len(runs), 30), len(failed))]
+    for r in failed[:max(1, min(limit, 5))]:
+        jid = str(r.get("job_id") or "?")[:12]
+        mode = r.get("mode") or "?"
+        started = r.get("started_at")
+        try:
+            import datetime as _dt3
+            hm = _dt3.datetime.fromtimestamp(float(started)).strftime("%m-%d %H:%M")
+        except Exception:
+            hm = "?"
+        s = r.get("summary") or {}
+        detail = ""
+        if isinstance(s, dict):
+            detail = str(s.get("detail") or "")
+        # 已知原因的归类与建议（确定性映射，不猜）
+        reason, advice = "原因未记录", "可查看容器日志进一步定位"
+        if "进程中断" in detail or "容器重启" in detail:
+            reason = "进程被中断（容器重启/被终止）"
+            advice = "多为发版重建容器所致，非系统缺陷；避免在执行中重建容器"
+        elif "无可用账号" in detail:
+            reason = "账号池无可用账号"
+            advice = "检查账号凭据是否过期、账号是否被全部停用"
+        elif "超时" in detail:
+            reason = "执行超时"
+            advice = "账号数多时属正常现象（按账号判定），可适当提高单账号超时"
+        elif detail:
+            reason = detail[:80]
+        lines.append("  · %s（%s，%s）" % (jid, hm, mode))
+        lines.append("    - 原因：%s" % reason)
+        lines.append("    - 建议：%s" % advice)
+    return "\n".join(lines)
+
+
 # 注册表：name -> (函数, 描述, 参数说明)
 _TOOLS: Dict[str, tuple] = {
     # ---- 原有 6 个 ----
@@ -749,6 +879,9 @@ _TOOLS: Dict[str, tuple] = {
     "get_credit_breakdown": (_tool_credit_breakdown, "积分明细：今日签到/任务/累计，近 7 天按天趋势", "无参数"),
     "get_api_keys": (_tool_api_keys, "API Key 状态：数量、启停、调用次数", "无参数"),
     "get_notify_status": (_tool_notify_status, "通知渠道与消息场景状态", "无参数"),
+    # ---- 阶段 6 新增（主动智能）----
+    "get_credit_trend": (_tool_credit_trend, "积分趋势：按近期消耗估算可支撑天数、预警见底风险", "无参数"),
+    "diagnose_task_failure": (_tool_diagnose_task, "异常归因：分析最近的失败任务，给出原因与建议", "limit: 分析几轮，默认 5"),
 }
 
 
@@ -773,6 +906,9 @@ def _tool_registry() -> List[Dict[str, Any]]:
         "get_credit_breakdown": {"type": "object", "properties": {}},
         "get_api_keys": {"type": "object", "properties": {}},
         "get_notify_status": {"type": "object", "properties": {}},
+        "get_credit_trend": {"type": "object", "properties": {}},
+        "diagnose_task_failure": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "分析几轮失败任务，默认 5"}}},
     }
     return [{"type": "function", "function": {
         "name": name, "description": desc,

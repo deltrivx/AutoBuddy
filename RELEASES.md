@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.73](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.73)
+**当前稳定版：** [v0.9.74](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.74)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.74](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.74) | 2026-10-14 | 阶段6——助手主动智能（积分趋势预测+任务失败归因）；修掉运行中任务被误报为失败 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.74.md) |
 | [v0.9.73](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.73) | 2026-10-14 | 阶段5——写操作两段式确认，写操作永不被自然语言直接触发 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.73.md) |
 | [v0.9.72](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.72) | 2026-10-14 | 阶段4——助手只读工具 6→15，查询能力覆盖 AutoBuddy 五大功能域 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.72.md) |
 | [v0.9.71](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.71) | 2026-10-14 | 修复「问一句就跑一轮任务」——疑问句被交互菜单的子串匹配拦截并触发写操作 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.71.md) |
@@ -166,7 +167,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.73    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.74    # 锁定版本
 ```
 
 ## 部署产物
