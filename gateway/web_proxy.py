@@ -5729,6 +5729,20 @@ def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
         (b"/icon-transparent.png", b"/icon.png"),
         (b"\xe5\x9c\xa8 Finder \xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba", b"\xe5\x9c\xa8\xe6\x96\x87\xe4\xbb\xb6\xe7\xae\xa1\xe7\x90\x86\xe5\x99\xa8\xe4\xb8\xad\xe6\x98\xbe\xe7\xa4\xba"),
         (b"workbuddy-switch.app", b"autobuddy"),
+        # 用户可见的旧品牌名（2026-10-15 用户反馈：项目已改名 AutoBuddy）。
+        # JS 里 `workbuddy-switch` 共 3 处：前两处是 fetch 失败的报错文案
+        #   「无法连接 workbuddy-switch 服务（${zb}），请先运行 \`workbuddy-switch\`」
+        # 第三处是 `jye="workbuddy-switch"` 拼成的 GitHub 仓库地址
+        #   （github.com/changexbc/workbuddy-switch）—— 真实上游，改了会 404，必须保留。
+        # 所以只替换报错文案，绝不做全局裸串替换。
+        # 响应体是文本不是二进制，不要求等长（见本函数顶部说明）。
+        (b"\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5 workbuddy-switch "
+         b"\xe6\x9c\x8d\xe5\x8a\xa1",
+         b"\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5 AutoBuddy "
+         b"\xe6\x9c\x8d\xe5\x8a\xa1"),
+        (b"\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c \\`workbuddy-switch\\`",
+         b"\xe8\xaf\xb7\xe6\xa3\x80\xe6\x9f\xa5 AutoBuddy \xe5\xae\xb9\xe5\x99\xa8"
+         b"\xe6\x98\xaf\xe5\x90\xa6\xe6\xad\xa3\xe5\xb8\xb8\xe8\xbf\x90\xe8\xa1\x8c"),
         # JSX 文本节点：`>WorkBuddy Switch<` 与带引号的字符串字面量 {\"WorkBuddy Switch\"} 都要覆盖，
         # 否则侧边栏标题会留下半截旧名。
         (b'"WorkBuddy Switch"', b'"AutoBuddy"'),
@@ -6432,12 +6446,37 @@ def _official_usage_freshness(data: dict) -> Dict[str, Any]:
 # 修法之一：签到状态本来就是「今天签没签」，分钟级陈旧度完全可接受，
 # 缓存 60 秒即可挡掉刷新页面的重复查询，把 2.34s 降到毫秒级。
 # ---------------------------------------------------------------------------
+# 签到状态结果缓存（积分统计页/每日任务页共用的「今日签到」徽章）
+#
+# 需求来源（用户 2026-09-26）：刷新页面后账号的飞机旅行图标很快显示，
+# 但签到图标要很久才出来。
+#
+# 根因演进（实测数据说话）：
+#   - 2026-09-26：上游 1.46s、经反代 2.34s → 加 60s 缓存；
+#   - 2026-10-15：上游劣化到 **4.9~8.9s**（官方后端逐个账号实时查，账号从
+#     17 涨到 22+）。用户反馈「统计加载失败 / 卡死 / 重启报错」——
+#     前端 Promise.all 被它拖死，fetch 中断后抛
+#     「无法连接 workbuddy-switch 服务」（服务其实活着，只是慢）。
+#
+# 修法（stale-while-revalidate）：
+#   用户请求**永远不等上游**。有数据（哪怕陈旧）就立即返回，
+#   同时后台线程去刷新；没有数据时才同步等一次（首启 unavoidable）。
+#   ⇒ 页面秒开，签到徽章最多陈旧 FRESH_TTL，之后由后台保持。
+# ---------------------------------------------------------------------------
 _CHECKIN_STATUS_CACHE: Dict[str, Any] = {"at": 0.0, "payload": None}
-_CHECKIN_STATUS_TTL_SEC = 60.0
+_CHECKIN_STATUS_TTL_SEC = 60.0          # 兼容旧字段名（fresh 阈值）
+_CHECKIN_FRESH_SEC = 120.0              # 超过它认为「不新鲜」，触发后台刷新
+_CHECKIN_STALE_SEC = 1800.0             # 超过它认为「太旧」，仍先用但提高优先级
+_CHECKIN_BG_LOCK = threading.Lock()
+_CHECKIN_BG_RUNNING = False
 
 
 def _checkin_status_cached() -> Optional[Any]:
-    """命中未过期缓存则返回，否则 None（让调用方去取真值）。"""
+    """命中未过期缓存则返回，否则 None（让调用方去取真值）。
+
+    保留旧语义给「同步兜底」用；用户请求路径改用
+    `_checkin_status_serve()`（stale-while-revalidate）。
+    """
     hit = _CHECKIN_STATUS_CACHE.get("payload")
     if hit is not None and (time.time() - float(_CHECKIN_STATUS_CACHE.get("at") or 0.0)) < _CHECKIN_STATUS_TTL_SEC:
         return hit
@@ -6447,6 +6486,67 @@ def _checkin_status_cached() -> Optional[Any]:
 def _checkin_status_store(payload: Any) -> None:
     _CHECKIN_STATUS_CACHE["payload"] = payload
     _CHECKIN_STATUS_CACHE["at"] = time.time()
+
+
+def _checkin_age() -> float:
+    """缓存年龄（秒）；无数据时返回 inf。"""
+    if _CHECKIN_STATUS_CACHE.get("payload") is None:
+        return float("inf")
+    return time.time() - float(_CHECKIN_STATUS_CACHE.get("at") or 0.0)
+
+
+def _checkin_bg_refresh(force: bool = False) -> None:
+    """后台刷新签到状态（单工：已有一次在跑就跳过）。
+
+    单工而非并发：上游要 5~9s，多个请求同时触发会把它打爆；
+    且签到状态分钟级陈旧完全可接受，没必要追着刷。
+    """
+    global _CHECKIN_BG_RUNNING
+    with _CHECKIN_BG_LOCK:
+        if _CHECKIN_BG_RUNNING:
+            return
+        _CHECKIN_BG_RUNNING = True
+
+    def _worker():
+        global _CHECKIN_BG_RUNNING
+        try:
+            with httpx.Client(timeout=90.0, verify=False) as c:
+                r = c.get(f"{BACKEND_URL}/api/checkin/status")
+            if r.status_code == 200:
+                _checkin_status_store(r.json())
+                logging.info("[checkin] 后台刷新完成（force=%s）", force)
+            else:
+                logging.warning("[checkin] 后台刷新失败: HTTP %s", r.status_code)
+        except Exception as e:
+            logging.warning("[checkin] 后台刷新异常: %s", str(e)[:120])
+        finally:
+            with _CHECKIN_BG_LOCK:
+                _CHECKIN_BG_RUNNING = False
+
+    threading.Thread(target=_worker, name="ab-checkin-refresh", daemon=True).start()
+
+
+def _checkin_status_serve() -> Any:
+    """stale-while-revalidate：立即返回可用数据，必要时后台刷新。
+
+    返回 ``(payload, age_sec)``；payload 为 None 表示从未拿到过数据
+    （调用方需同步等一次）。
+    """
+    payload = _CHECKIN_STATUS_CACHE.get("payload")
+    age = _checkin_age()
+    if payload is not None:
+        if age > _CHECKIN_FRESH_SEC:
+            _checkin_bg_refresh(force=(age > _CHECKIN_STALE_SEC))
+        return payload, age
+    return None, age
+
+
+# 容器启动即后台预热一次：让第一个用户请求就能命中缓存，
+# 而不是首启那个人干等 5~9 秒。
+try:
+    _checkin_bg_refresh(force=True)
+except Exception:
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -8056,15 +8156,37 @@ async def wb_daily_health():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_all(request: Request, path: str):
-    # 签到状态缓存：这是全站最慢的只读接口（上游 1.46s / 经反代 2.34s），
-    # 而它的语义是「今天签没签」——分钟级陈旧完全可接受。
-    # 命中缓存直接返回，刷新页面不再等 2 秒。
+    # 签到状态：stale-while-revalidate。
+    # 上游实测 4.9~8.9s（官方后端逐个账号实时查），前端 Promise.all 等它会把
+    # 整页拖死 → fetch 中断 → 抛「无法连接 workbuddy-switch 服务」
+    # （2026-10-15 用户反馈「统计加载失败/卡死/重启报错」）。
+    # 因此用户请求**永远不等上游**：有数据（哪怕陈旧）立即返回并触发后台刷新；
+    # 只有从未拿到过数据（首启）才同步等一次。
     if request.method == "GET" and path == "api/checkin/status":
-        cached = _checkin_status_cached()
-        if cached is not None:
-            return Response(content=json.dumps(cached, ensure_ascii=False),
+        payload, age = _checkin_status_serve()
+        if payload is not None:
+            hdr = {"x-autobuddy-cache": "stale" if age > _CHECKIN_FRESH_SEC else "hit",
+                   "x-autobuddy-cache-age": str(int(age))}
+            return Response(content=json.dumps(payload, ensure_ascii=False),
                             media_type="application/json",
-                            headers={"x-autobuddy-cache": "hit"})
+                            headers=hdr)
+        # 无数据：同步取一次（首启 unavoidable），失败返回空结构而非 5xx
+        try:
+            async with _internal_client(timeout=90.0) as client:
+                r = await client.get(f"{BACKEND_URL}/api/checkin/status")
+            if r.status_code == 200:
+                _checkin_status_store(r.json())
+                return Response(content=r.content, status_code=200,
+                                media_type="application/json",
+                                headers={"x-autobuddy-cache": "miss"})
+            return Response(content=json.dumps({"accounts": []}),
+                            status_code=200, media_type="application/json",
+                            headers={"x-autobuddy-cache": "error"})
+        except Exception as e:
+            logging.warning("[checkin] 同步获取失败: %s", str(e)[:120])
+            return Response(content=json.dumps({"accounts": []}),
+                            status_code=200, media_type="application/json",
+                            headers={"x-autobuddy-cache": "error"})
 
     url = f"{BACKEND_URL}/{path}"
     query = str(request.query_params)

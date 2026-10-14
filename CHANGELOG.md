@@ -31,6 +31,42 @@
 
 ---
 
+## [v0.9.79] - 2026-10-15
+
+<!-- summary: 修复统计页加载失败/卡死——签到接口上游劣化到5~9秒拖垮整页，改stale-while-revalidate；旧品牌名workbuddy-switch改AutoBuddy -->
+
+### 修复
+
+- **统计页加载失败 / 卡死 / 重启报错**（用户反馈）：实测官方后端
+  `/api/checkin/status` 本身要 **4.9~8.9 秒**（逐账号实时查，账号从 17 涨到
+  22+ 后从早期 1.46s 劣化）。原缓存 TTL 60 秒挡不住；前端 `Promise.all` 等它
+  → 整页卡死 → fetch 中断 → 抛「无法连接 workbuddy-switch 服务」。
+  并发实测证明后端可并发（慢接口 7.72s 时快接口 0.00s），**是前端被单个慢接口
+  阻塞**，报错文案具有误导性。
+  - 改为 **stale-while-revalidate**：有数据（哪怕陈旧）立即返回 + 后台单工刷新；
+    只有从未拿到过数据（首启）才同步等一次，且失败返回空结构而非 5xx；
+  - 容器启动即后台预热；响应头带 `x-autobuddy-cache: hit|stale|miss|error`
+    与 `x-autobuddy-cache-age` 便于排查。
+
+### 变更
+
+- **旧品牌名 `workbuddy-switch` → AutoBuddy**（用户询问「是硬编码还是可以修改」）：
+  该文案是官方前端 JS 的硬编码模板字符串，`zb` 是动态 origin 而非硬编码 IP。
+  此前响应改写层只覆盖了 `workbuddy-switch.app` 与 `WorkBuddy Switch`（带空格），
+  **漏了裸的 `workbuddy-switch`**。现补两条：
+  - 「无法连接 workbuddy-switch 服务」→「无法连接 AutoBuddy 服务」
+  - 「请先运行 \`workbuddy-switch\`」→「请检查 AutoBuddy 容器是否正常运行」
+  - **不动** `jye="workbuddy-switch"` 拼成的 GitHub 仓库地址（真实上游，改了会 404）；
+    项目地址本身早已可配（`AB_PROJECT_URL`，默认 deltrivx/AutoBuddy）。
+
+### 测试
+
+- 新增 `_test_stats_page_fix.py`（**29** 项）：stale-while-revalidate 契约、
+  请求路径永不等待、品牌名替换两条规则、**对线上真实 JS 的替换验证**
+  （命中数 + 替换后 `node --check` 通过 + 仓库名未动 + 旧文案消失）、
+  `AB_PROJECT_URL` 可配。
+- 全量 45 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.78] - 2026-10-15
 
 <!-- summary: 修正助手provider切换语义——切换=选编辑目标（不落盘），只有保存才提交 -->
@@ -4214,7 +4250,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.78...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.79...HEAD
+[v0.9.79]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.78...v0.9.79
 [v0.9.78]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.77...v0.9.78
 [v0.9.77]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.76...v0.9.77
 [v0.9.76]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.75...v0.9.76
