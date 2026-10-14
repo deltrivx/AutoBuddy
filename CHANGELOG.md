@@ -31,6 +31,28 @@
 
 ---
 
+## [v0.9.68] - 2026-10-14
+
+<!-- summary: 修复智能助手 tool_echo 缺陷——hy3 第二轮把工具调用原文当正文回吐，用户看到乱码 -->
+
+### 修复
+
+- **智能助手回吐工具调用原文**（v0.9.67 线上自查发现）：实测两类提问表现不同 ——
+  「现在积分多少」正常，但「网关状态怎么样」返回
+  `<tool_calls:6124c78e> / <tool_call:6124c78e>get_status`。
+  - 取证：容器内探针直连网关，确认 hy3 对 `tools` 的响应格式完全标准
+    （`tool_calls` + `finish_reason=tool_calls`），问题在**第二轮** ——
+    原实现喂回工具结果时直接删掉 `tools`，hy3 于是把工具调用原文当正文输出。
+  - 修复：第二轮改用 `tool_choice="none"`（保留声明、强制出正文）并校验
+    「再次发起工具调用则不采纳正文」；不被支持时降级为「不带 tools」重试；
+    新增 `_is_tool_echo()` 识别回吐原文；仍无正文则回落为直接给工具结果。
+
+### 测试
+
+- `_test_assistant.py` 新增 8 项源码契约 + 7 项 `_is_tool_echo` 行为用例
+  （总数 64 → 77）。
+- 全量 39 个测试文件全绿。
+
 ## [v0.9.67] - 2026-10-14
 
 <!-- summary: 交互加入智能助手——自然语言提问实时数据回答（参考 MoviePilot agent/llm 设计） -->
@@ -3883,7 +3905,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.67...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.68...HEAD
+[v0.9.68]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.67...v0.9.68
 [v0.9.67]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.66...v0.9.67
 [v0.9.66]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.65...v0.9.66
 [v0.9.65]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.64...v0.9.65

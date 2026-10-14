@@ -86,6 +86,16 @@ for tool in ("get_credits", "get_accounts", "get_models", "get_status",
 check("_dispatch_tool 异常隔离", "def _dispatch_tool(" in SRC_AS)
 check("工具调用上限 3 个（防刷）", "tool_calls[:3]" in SRC_AS)
 check("工具结果长度封顶", "[:MAX_OUTPUT_CHARS]" in SRC_AS)
+check("tool_echo 识别（hy3 实测回吐 tool_calls 原文）", "_is_tool_echo" in SRC_AS)
+check("tool_echo 正则匹配 <tool_calls / <tool_call",
+      'r"^\\s*<\\s*tool_call[s]?\\b"' in SRC_AS)
+check("tool_echo 判为无效输出（回落到工具结果）",
+      "if _is_tool_echo(final):" in SRC_AS and "final = \"\"" in SRC_AS)
+check("第二轮用 tool_choice=none 强制出正文", 'payload2["tool_choice"] = "none"' in SRC_AS)
+check("tool_choice=none 不被支持时退回无 tools 重试",
+      'payload2.pop("tools", None)' in SRC_AS)
+check("第二轮模型又发起工具调用时不采纳正文",
+      "if not (msg2.get(\"tool_calls\") or []):" in SRC_AS)
 # 只读保证：工具函数里不得出现 POST/PUT/DELETE 语义的调用
 check("工具全部只读（无 POST/PUT 调用）",
       "_tool_credits" in SRC_AS
@@ -176,6 +186,20 @@ _old = A.ASSISTANT_ENABLED
 A.ASSISTANT_ENABLED = False
 check("关闭开关后 assistant_reply 返回空串", A.assistant_reply("s", "你好") == "")
 A.ASSISTANT_ENABLED = _old
+
+# tool_echo 识别（v0.9.67 线上实测：hy3 第二轮把工具调用原文当正文回吐）
+echo_cases = [
+    ("<tool_calls:6124c78e>", True),
+    ("<tool_call:6124c78e>get_status", True),
+    ("  <tool_calls:abc>  多余空白", True),
+    ("剩余积分：41,023.50", False),
+    ("网关状态：healthy", False),
+    ("<b>这不是工具调用</b>", False),
+    ("", False),
+]
+for text, want in echo_cases:
+    got = A._is_tool_echo(text)
+    check(f"_is_tool_echo({text[:24]!r}) == {want}", got == want, f"got {got}")
 
 import shutil
 shutil.rmtree(tmp, ignore_errors=True)

@@ -317,6 +317,21 @@ def _pick_model() -> Optional[str]:
 # 核心：一次助手问答（带一轮工具调用）
 # ---------------------------------------------------------------------------
 
+# 模型把工具调用「原文回吐」时的特征（hy3 实测：第二轮不带 tools 时，
+# 它会把 `<tool_calls:xxx>` / `<tool_call:xxx>get_status` 当成正文输出）。
+# 这种输出对用户毫无意义，必须识别出来并回落到工具结果本身。
+import re as _re
+_TOOL_ECHO_RX = _re.compile(r"^\s*<\s*tool_call[s]?\b", _re.I)
+
+
+def _is_tool_echo(text: str) -> bool:
+    """判断是否是工具调用的原文回吐（而非正常回答）。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_TOOL_ECHO_RX.match(t))
+
+
 def assistant_reply(session_id: str, question: str) -> str:
     """自然语言 → （可选工具调用）→ 中文回答。
 
@@ -383,24 +398,52 @@ def assistant_reply(session_id: str, question: str) -> str:
             })
         try:
             payload2 = dict(payload)
-            payload2.pop("tools", None)
-            payload2.pop("tool_choice", None)
             payload2["messages"] = messages
-            req2 = urllib.request.Request(
-                GATEWAY_BASE + "/v1/chat/completions",
-                data=json.dumps(payload2).encode("utf-8"),
-                method="POST",
-                headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
-                d2 = json.loads(r2.read().decode("utf-8", "replace"))
-            final = ((d2.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            # 第二轮：保留 tools 声明但要求**必须出正文**（tool_choice=none）。
+            # 此前是直接删掉 tools，hy3 会因此把工具调用原文当正文回吐
+            # （实测输出 `<tool_calls:xxx>`，对用户毫无意义）。
+            payload2["tool_choice"] = "none"
+            final = ""
+            try:
+                req2 = urllib.request.Request(
+                    GATEWAY_BASE + "/v1/chat/completions",
+                    data=json.dumps(payload2).encode("utf-8"),
+                    method="POST",
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
+                    d2 = json.loads(r2.read().decode("utf-8", "replace"))
+                msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
+                # 模型可能又发起工具调用（或不支持 tool_choice=none）——
+                # 两种情况下都不采纳它的正文，直接走工具结果回落。
+                if not (msg2.get("tool_calls") or []):
+                    final = (msg2.get("content") or "").strip()
+            except Exception:
+                # tool_choice=none 不被支持时，退回「不带 tools」再试一次。
+                try:
+                    payload2.pop("tools", None)
+                    payload2.pop("tool_choice", None)
+                    req2 = urllib.request.Request(
+                        GATEWAY_BASE + "/v1/chat/completions",
+                        data=json.dumps(payload2).encode("utf-8"),
+                        method="POST",
+                        headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
+                        d2 = json.loads(r2.read().decode("utf-8", "replace"))
+                    msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
+                    if not (msg2.get("tool_calls") or []):
+                        final = (msg2.get("content") or "").strip()
+                except Exception:
+                    final = ""
+            # 回吐工具调用原文 → 视为无效输出
+            if _is_tool_echo(final):
+                final = ""
         except Exception:
             final = ""
         if final:
             _remember(session_id, "user", q)
             _remember(session_id, "assistant", final)
-            return final.strip()[:MAX_OUTPUT_CHARS]
-        # 第二次也失败：至少把工具结果直接给用户（比报错有用）
+            return final[:MAX_OUTPUT_CHARS]
+        # 第二轮没拿到可用正文：至少把工具结果直接给用户（比报错有用）。
         tool_text = "\n".join(
             str(m.get("content") or "") for m in messages if m.get("role") == "tool")
         if tool_text:
