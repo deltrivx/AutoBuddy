@@ -31,6 +31,21 @@
 
 ---
 
+## [v0.9.80] - 2026-10-15
+
+<!-- summary: 修正统计页回归测试——兼容「线上已被替换」状态（修复生效后旧文案不存在，规则命中0属预期） -->
+
+### 测试
+
+- 修正 `_test_stats_page_fix.py`：v0.9.79 部署后，线上 JS 里的旧品牌名文案
+  已被替换，导致「规则命中 N 处」断言恒为 0 而误报失败 —— 那**正是修复生效
+  的证据**。现改为双态判定：
+  - 旧文案已消失 → 断言「修复已生效 + 新文案就位 + 仓库名未动」；
+  - 旧文案仍在 → 断言规则能命中、替换后旧文案消失。
+  两个分支统一用 `out` 做 `node --check`（原先 `out` 只在 else 分支定义，
+  走 if 分支会 NameError）。
+- 用例数 29 → **30**；全量 45 个测试文件全绿。
+
 ## [v0.9.79] - 2026-10-15
 
 <!-- summary: 修复统计页加载失败/卡死——签到接口上游劣化到5~9秒拖垮整页，改stale-while-revalidate；旧品牌名workbuddy-switch改AutoBuddy -->
@@ -4250,7 +4265,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.79...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.80...HEAD
+[v0.9.80]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.79...v0.9.80
 [v0.9.79]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.78...v0.9.79
 [v0.9.78]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.77...v0.9.78
 [v0.9.77]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.76...v0.9.77

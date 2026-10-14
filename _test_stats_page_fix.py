@@ -122,21 +122,36 @@ except Exception as e:
     check("可取到线上 JS（跳过行为验证）", True, f"网络不可用: {str(e)[:60]}")
 
 if js is not None:
-    rules = [
-        (b"\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5 workbuddy-switch "
-         b"\xe6\x9c\x8d\xe5\x8a\xa1",
-         b"\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5 AutoBuddy "
-         b"\xe6\x9c\x8d\xe5\x8a\xa1"),
-        (b"\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c \\`workbuddy-switch\\`",
-         b"\xe8\xaf\xb7\xe6\xa3\x80\xe6\x9f\xa5 AutoBuddy \xe5\xae\xb9\xe5\x99\xa8"
-         b"\xe6\x98\xaf\xe5\x90\xa6\xe6\xad\xa3\xe5\xb8\xb8\xe8\xbf\x90\xe8\xa1\x8c"),
-    ]
-    out = js
-    for i, (old, new) in enumerate(rules):
-        n = out.count(old)
-        check(f"规则 {i+1} 命中线上 JS（{n} 处）", n >= 1, f"got {n}")
-        if n:
-            out = out.replace(old, new)
+    # ⚠️ 兼容「线上已被替换」状态：修复部署后，旧文案在响应里已经不存在，
+    # 规则命中数会是 0 —— 这**正是修复生效的证据**，不是失败。
+    # 因此判定改为：旧文案已消失（已生效）或 规则能命中（待生效）。
+    old1 = "无法连接 workbuddy-switch 服务".encode()
+    old2 = "请先运行 \`workbuddy-switch\`".encode()
+    new1 = "无法连接 AutoBuddy 服务".encode()
+
+    already = (old1 not in js) and (old2 not in js)
+    out = js                      # 两个分支都用它做 node --check
+    if already:
+        check("线上旧文案已消失（修复已生效）", True)
+        check("线上新文案已就位", new1 in js)
+        check("GitHub 仓库名未被动", b'jye="workbuddy-switch"' in js)
+    else:
+        rules = [
+            (b"\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5 workbuddy-switch "
+             b"\xe6\x9c\x8d\xe5\x8a\xa1",
+             b"\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5 AutoBuddy "
+             b"\xe6\x9c\x8d\xe5\x8a\xa1"),
+            (b"\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c \\`workbuddy-switch\\`",
+             b"\xe8\xaf\xb7\xe6\xa3\x80\xe6\x9f\xa5 AutoBuddy \xe5\xae\xb9\xe5\x99\xa8"
+             b"\xe6\x98\xaf\xe5\x90\xa6\xe6\xad\xa3\xe5\xb8\xb8\xe8\xbf\x90\xe8\xa1\x8c"),
+        ]
+        for i, (old, new) in enumerate(rules):
+            n = out.count(old)
+            check(f"规则 {i+1} 命中线上 JS（{n} 处）", n >= 1, f"got {n}")
+            if n:
+                out = out.replace(old, new)
+        check("GitHub 仓库名未被动", b'jye="workbuddy-switch"' in out)
+        check("替换后旧文案消失", "无法连接 workbuddy-switch 服务".encode() not in out)
 
     # 替换后语法仍有效
     with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,

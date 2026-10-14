@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.79](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.79)
+**当前稳定版：** [v0.9.80](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.80)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.80](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.80) | 2026-10-15 | 修正统计页回归测试——兼容「线上已被替换」状态（修复生效后旧文案不存在，规则命中0属预期） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.80.md) |
 | [v0.9.79](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.79) | 2026-10-15 | 修复统计页加载失败/卡死——签到接口上游劣化到5~9秒拖垮整页，改stale-while-revalidate；旧品牌名workbuddy-switch改AutoBuddy | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.79.md) |
 | [v0.9.78](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.78) | 2026-10-15 | 修正助手provider切换语义——切换=选编辑目标（不落盘），只有保存才提交 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.78.md) |
 | [v0.9.77](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.77) | 2026-10-14 | 修复助手配置页「点击OpenAI兼容接口直接卡死」——PUT保存时同步跑LLM探测实测102.1秒 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.77.md) |
@@ -172,7 +173,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.79    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.80    # 锁定版本
 ```
 
 ## 部署产物
