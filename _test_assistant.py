@@ -135,7 +135,12 @@ check("「助手」命令分支存在", '"助手" in text or low in ("assistant"
 check("_cmd_assistant_help 存在", "def _cmd_assistant_help()" in SRC_NT)
 check("菜单新增智能助手按钮", '("AB_ASSISTANT", "智能助手",   "常用")' in SRC_NT)
 check("菜单 key 映射到「助手」", '"AB_ASSISTANT": "助手",' in SRC_NT)
-check("help 文本说明助手", "智能助手查实时数据回答" in SRC_NT)
+check("help 文本说明助手（代查/代办，非只读）",
+      "智能助手代查/代办" in SRC_NT)
+check("help 文本说明写操作走确认流程",
+      "写操作会先问一句【待确认】再执行" in SRC_NT)
+check("help 不再宣称「只读不写」（误导，已修）",
+      "助手只读不写" not in SRC_NT)
 check("助手不可用时回落原兜底文案",
       "回复「帮助」查看可用指令" in SRC_NT)
 

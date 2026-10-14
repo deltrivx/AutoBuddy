@@ -31,6 +31,37 @@
 
 ---
 
+## [v0.9.78] - 2026-10-15
+
+<!-- summary: 修正助手provider切换语义——切换=选编辑目标（不落盘），只有保存才提交 -->
+
+### 变更
+
+- **助手 provider 切换语义修正**（用户反馈「切换又没保存，提示我干嘛」）：
+  同一个地方此前错了两次 —— v0.9.77 前切 provider 走 PUT（保存后同步跑 LLM
+  探测，实测 102.1 秒像卡死）；v0.9.77 改成切即落盘 + 提示缺密钥
+  （「切换又没保存」：用户以为只是选一下，实际已提交；空手切换也弹提示纯属噪音）。
+  - **最终模型：这是配置页，不是开关面板**。「切 provider」= 选择要编辑
+    哪一组字段，不是提交动作；
+  - 切换只改本地选中态 `selKey` + 重渲染字段表单，**零网络请求、不落盘**；
+  - 只有「保存」才提交，且按**当前选中**的 provider 收集字段；
+  - **草稿保持**：每个 provider 各自记草稿，切走再切回不丢已填内容
+    （v0.9.77 的 state 在 renderFields 内，切回会丢用户刚填的地址/密钥）；
+  - **提示策略**：空手切换不打扰；动过表单再切走才提醒「有未保存的修改」；
+    保存时缺密钥才提示（此时是真问题）；
+  - 修掉隐性 bug：`collect()` 原先读闭包里的初始 `cur`，切到 openai 后保存
+    仍按 gateway 字段规则收集（`supports_api_key=false`），地址与密钥被静默丢弃；
+  - 删除死接口 `POST /api/assistant/provider`（切换不再需要服务端参与）。
+
+### 测试
+
+- 重写 `_test_assistant_switch.py`（**39** 项）：切换不落盘零网络、只重渲染
+  字段表单、提示策略、草稿保持、`collect()` 用选中态、保存仍是唯一提交点、
+  死接口已删除、写意图与两段式确认不被破坏。
+- 修正 `_test_assistant.py`：help 文案改为「代查/代办」，并断言
+  **不再宣称「只读不写」**。
+- 全量 44 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.77] - 2026-10-14
 
 <!-- summary: 修复助手配置页「点击OpenAI兼容接口直接卡死」——PUT保存时同步跑LLM探测实测102.1秒 -->
@@ -4183,7 +4214,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.77...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.78...HEAD
+[v0.9.78]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.77...v0.9.78
 [v0.9.77]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.76...v0.9.77
 [v0.9.76]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.75...v0.9.76
 [v0.9.75]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.74...v0.9.75

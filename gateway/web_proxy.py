@@ -4068,203 +4068,246 @@ COLLAPSE_SCRIPT = r"""
     provRow.appendChild(provMain);
     var provWrap = wbEl("div", null);
     provWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
+    // 选中态：provider 标签只是「选择要编辑哪一组字段」，**不是提交动作**。
+    // 2026-10-15 用户反馈「切换又没保存，提示我干嘛」—— 原先切换即落盘
+    // 还会弹「没填 API Key」，既制造半成品状态又是噪音。
+    // 现在：切换只改本地选中态 + 重渲染表单，只有「保存」才提交。
+    var selKey = curKey;
     reg.forEach(function (p) {
-      var on = p.key === curKey;
+      var on = p.key === selKey;
       var tag = wbEl("button",
         "wb-am-tag wb-am-tag-click" + (on ? " wb-am-tag-used" : ""), p.name);
       tag.type = "button";
       tag.title = p.desc || p.name;
       tag.onclick = function () {
-        // 切 provider 是**纯本地配置切换**，绝不能触发任何网络探测 ——
-        // 2026-10-14 用户反馈「点击 OpenAI 兼容接口直接卡死」：原实现走
-        // PUT，而 PUT 会同步跑一次 LLM 探测（实测 102 秒），页面像卡死。
-        // 现在只保存 + 重渲染，零网络开销。
-        tag.disabled = true;
-        fetch("/api/assistant/provider", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider: p.key })
-        })
-          .then(function (r) { return r.json().catch(function () { return {}; }); })
-          .then(function (d) {
-            tag.disabled = false;
-            if (d && d.ok) {
-              wbToast(d.warn ? d.warn : ("已切换到 " + p.name), d.warn ? "warn" : "ok");
-            } else {
-              wbToast("切换失败：" + ((d && d.error) || "未知原因"), "err");
-            }
-            var old = document.getElementById("settings-assistant");
-            if (old) old.remove();
-            injectAssistant();
-          })
-          .catch(function () {
-            tag.disabled = false;
-            wbToast("请求失败，请重试", "err");
-          });
+        if (selKey === p.key) return;      // 已是选中态，不重复渲染
+        selKey = p.key;
+        // 只重渲染「字段表单」区（保留页面位置，不整页刷新）
+        var box = document.getElementById("wb-asst-fields");
+        if (box) {
+          box.innerHTML = "";
+          renderFields(box, p);
+        }
+        // 更新标签高亮
+        Array.prototype.forEach.call(provWrap.children, function (el, i) {
+          var k = reg[i] && reg[i].key;
+          el.className = "wb-am-tag wb-am-tag-click" + (k === selKey ? " wb-am-tag-used" : "");
+        });
+        // 提示策略（2026-10-15 用户反馈「切换又没保存，提示我干嘛」）：
+        // 切换本身是**选编辑目标**，不该每次都弹窗说教。只有当用户已经
+        // 动了表单（有未保存草稿）时，才提醒一句「记得保存」——
+        // 空手切换不打扰。
+        var touched = !!(draft[p.key] && Object.keys(draft[p.key]).length);
+        if (touched) {
+          wbToast("已切换到「" + p.name + "」，有未保存的修改，记得点「保存」", "warn");
+        }
       };
       provWrap.appendChild(tag);
     });
     provRow.appendChild(provWrap);
     card.appendChild(provRow);
 
+    // 字段表单容器：切 provider 时只重渲染它，不整页刷新。
+    var fieldsBox = wbEl("div", null);
+    fieldsBox.id = "wb-asst-fields";
+    card.appendChild(fieldsBox);
+    renderFields(fieldsBox, cur);
+
     // ---- 3. 字段表单（按注册表渲染：地址 / 密钥 / 模型 / 提示词）----
-    var slot = provs[curKey] || {};
+    // ---- 3. 字段表单（可重渲染：切 provider 只刷这一块）----
+    // 字段状态提升到外层：切 provider 只换「要编辑哪一组」，**已填内容要留着**。
+    // 2026-10-15 用户反馈「切换又没保存」暴露的缺陷：原实现 state 在
+    // renderFields 内，切走再切回会把用户刚填的地址/密钥全丢掉。
     var state = {
-      base_url: slot.base_url || cur.default_base_url || "",
+      base_url: "",
       api_key: "",
       model: cfg.model || "",
       systemPrompt: cfg.systemPrompt || ""
     };
+    // 每个 provider 各自记住「本次编辑中的草稿」，切回来时恢复。
+    var draft = {};
 
-    function fieldRow(label, desc, control) {
-      var row = wbEl("div", "wb-api-row");
-      var main = wbEl("div", "wb-api-main");
-      main.appendChild(wbEl("div", "wb-api-label", label));
-      if (desc) main.appendChild(wbEl("div", "wb-api-desc", desc));
-      row.appendChild(main);
-      row.appendChild(control);
-      return row;
-    }
+    function renderFields(box, prov) {
+      var slot = provs[prov.key] || {};
+      var cur = prov;
+      // 恢复该 provider 的草稿；没有草稿则用已保存值/默认值
+      var d = draft[prov.key] || {};
+      state.base_url = d.base_url !== undefined
+        ? d.base_url : (slot.base_url || cur.default_base_url || "");
+      state.api_key = d.api_key !== undefined ? d.api_key : "";
+      state.model = d.model !== undefined ? d.model : (cfg.model || "");
+      state.systemPrompt = d.systemPrompt !== undefined
+        ? d.systemPrompt : (cfg.systemPrompt || "");
 
-    // 3.1 接口地址：预设下拉 + 可编辑输入
-    if (cur.base_url_editable !== false) {
-      var presets = cur.base_url_presets || [];
-      var baseBox = wbEl("div", null);
-      baseBox.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:260px;";
-      var baseInput = wbEl("input", "wb-api-input");
-      baseInput.type = "text";
-      baseInput.value = state.base_url;
-      baseInput.placeholder = cur.requires_base_url
-        ? "必填，如 https://api.openai.com/v1" : "留空 = 用默认地址";
-      baseInput.style.cssText = "width:100%;";
-      baseInput.oninput = function () { state.base_url = baseInput.value; };
-      baseBox.appendChild(baseInput);
-      if (presets.length) {
-        var preWrap = wbEl("div", null);
-        preWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
-        presets.forEach(function (pre) {
-          var tag = wbEl("button", "wb-am-tag wb-am-tag-click", pre.label);
-          tag.type = "button";
-          tag.title = pre.value;
-          tag.onclick = function () {
-            baseInput.value = pre.value;
-            state.base_url = pre.value;
-          };
-          preWrap.appendChild(tag);
-        });
-        baseBox.appendChild(preWrap);
+      function fieldRow(label, desc, control) {
+        var row = wbEl("div", "wb-api-row");
+        var main = wbEl("div", "wb-api-main");
+        main.appendChild(wbEl("div", "wb-api-label", label));
+        if (desc) main.appendChild(wbEl("div", "wb-api-desc", desc));
+        row.appendChild(main);
+        row.appendChild(control);
+        return row;
       }
-      card.appendChild(fieldRow("接口地址（Base URL）",
-        presets.length ? "点下方标签快速填充，也可直接修改。" : "OpenAI 兼容的 /v1 地址。",
-        baseBox));
-    }
 
-    // 3.2 API Key（secret：已配置则占位提示，空串=清除，不提交=保留）
-    if (cur.supports_api_key) {
-      var hasKey = (slot.api_key || {}).has_value;
-      var keyInput = wbEl("input", "wb-api-input");
-      keyInput.type = "password";
-      keyInput.placeholder = hasKey
-        ? "已配置，留空保持不变" : (cur.api_key_hint || "填写 API Key");
-      keyInput.style.cssText = "width:100%;min-width:260px;";
-      keyInput.oninput = function () { state.api_key = keyInput.value; };
-      card.appendChild(fieldRow(cur.api_key_label || "API Key",
-        cur.api_key_hint || "仅本机保存，页面不回显明文。", keyInput));
-    }
-
-    // 3.3 模型：输入框 + 刷新清单
-    var modelBox = wbEl("div", null);
-    modelBox.style.cssText = "display:flex;gap:6px;align-items:center;min-width:260px;";
-    var modelInput = wbEl("input", "wb-api-input");
-    modelInput.type = "text";
-    modelInput.value = state.model;
-    modelInput.placeholder = "留空 = 自动挑选（推荐）";
-    modelInput.style.cssText = "flex:1;";
-    modelInput.oninput = function () { state.model = modelInput.value; };
-    modelBox.appendChild(modelInput);
-    if (cur.supports_model_refresh !== false) {
-      var refBtn = wbEl("button", "wb-api-btn", "刷新列表");
-      refBtn.onclick = function () {
-        refBtn.disabled = true;
-        refBtn.textContent = "获取中…";
-        fetch("/api/assistant/models", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            base_url: state.base_url || cur.default_base_url || "",
-            api_key: state.api_key
-          })
-        })
-          .then(function (r) { return r.json(); })
-          .then(function (d) {
-            refBtn.disabled = false;
-            refBtn.textContent = "刷新列表";
-            if (d && d.ok && d.models) {
-              // 用 datalist 提供候选，不打断手输
-              var dl = document.getElementById("wb-assistant-model-list");
-              if (!dl) {
-                dl = wbEl("datalist", null);
-                dl.id = "wb-assistant-model-list";
-                document.body.appendChild(dl);
-              }
-              dl.innerHTML = "";
-              d.models.forEach(function (m) {
-                var op = wbEl("option", null);
-                op.value = m;
-                dl.appendChild(op);
-              });
-              modelInput.setAttribute("list", "wb-assistant-model-list");
-              wbToast("已获取 " + d.count + " 个模型，可直接输入或选择", "ok");
-            } else {
-              wbToast("获取失败：" + ((d && d.error) || "未知原因"), "err");
-            }
-          })
-          .catch(function () {
-            refBtn.disabled = false;
-            refBtn.textContent = "刷新列表";
-            wbToast("请求失败，请重试", "err");
-          });
+      // 3.1 接口地址：预设下拉 + 可编辑输入
+      if (cur.base_url_editable !== false) {
+        var presets = cur.base_url_presets || [];
+        var baseBox = wbEl("div", null);
+        baseBox.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:260px;";
+        var baseInput = wbEl("input", "wb-api-input");
+        baseInput.type = "text";
+        baseInput.value = state.base_url;
+        baseInput.placeholder = cur.requires_base_url
+          ? "必填，如 https://api.openai.com/v1" : "留空 = 用默认地址";
+        baseInput.style.cssText = "width:100%;";
+        baseInput.oninput = function () {
+        state.base_url = baseInput.value;
+        draft[prov.key] = draft[prov.key] || {};
+        draft[prov.key].base_url = baseInput.value;
       };
-      modelBox.appendChild(refBtn);
+        baseBox.appendChild(baseInput);
+        if (presets.length) {
+          var preWrap = wbEl("div", null);
+          preWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
+          presets.forEach(function (pre) {
+            var tag = wbEl("button", "wb-am-tag wb-am-tag-click", pre.label);
+            tag.type = "button";
+            tag.title = pre.value;
+            tag.onclick = function () {
+              baseInput.value = pre.value;
+              state.base_url = pre.value;
+            };
+            preWrap.appendChild(tag);
+          });
+          baseBox.appendChild(preWrap);
+        }
+        box.appendChild(fieldRow("接口地址（Base URL）",
+          presets.length ? "点下方标签快速填充，也可直接修改。" : "OpenAI 兼容的 /v1 地址。",
+          baseBox));
+      }
+
+      // 3.2 API Key（secret：已配置则占位提示，空串=清除，不提交=保留）
+      if (cur.supports_api_key) {
+        var hasKey = (slot.api_key || {}).has_value;
+        var keyInput = wbEl("input", "wb-api-input");
+        keyInput.type = "password";
+        keyInput.placeholder = hasKey
+          ? "已配置，留空保持不变" : (cur.api_key_hint || "填写 API Key");
+        keyInput.style.cssText = "width:100%;min-width:260px;";
+        keyInput.oninput = function () {
+        state.api_key = keyInput.value;
+        draft[prov.key] = draft[prov.key] || {};
+        draft[prov.key].api_key = keyInput.value;
+      };
+        box.appendChild(fieldRow(cur.api_key_label || "API Key",
+          cur.api_key_hint || "仅本机保存，页面不回显明文。", keyInput));
+      }
+
+      // 3.3 模型：输入框 + 刷新清单
+      var modelBox = wbEl("div", null);
+      modelBox.style.cssText = "display:flex;gap:6px;align-items:center;min-width:260px;";
+      var modelInput = wbEl("input", "wb-api-input");
+      modelInput.type = "text";
+      modelInput.value = state.model;
+      modelInput.placeholder = "留空 = 自动挑选（推荐）";
+      modelInput.style.cssText = "flex:1;";
+      modelInput.oninput = function () {
+        state.model = modelInput.value;
+        draft[prov.key] = draft[prov.key] || {};
+        draft[prov.key].model = modelInput.value;
+      };
+      modelBox.appendChild(modelInput);
+      if (cur.supports_model_refresh !== false) {
+        var refBtn = wbEl("button", "wb-api-btn", "刷新列表");
+        refBtn.onclick = function () {
+          refBtn.disabled = true;
+          refBtn.textContent = "获取中…";
+          fetch("/api/assistant/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              base_url: state.base_url || cur.default_base_url || "",
+              api_key: state.api_key
+            })
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              refBtn.disabled = false;
+              refBtn.textContent = "刷新列表";
+              if (d && d.ok && d.models) {
+                // 用 datalist 提供候选，不打断手输
+                var dl = document.getElementById("wb-assistant-model-list");
+                if (!dl) {
+                  dl = wbEl("datalist", null);
+                  dl.id = "wb-assistant-model-list";
+                  document.body.appendChild(dl);
+                }
+                dl.innerHTML = "";
+                d.models.forEach(function (m) {
+                  var op = wbEl("option", null);
+                  op.value = m;
+                  dl.appendChild(op);
+                });
+                modelInput.setAttribute("list", "wb-assistant-model-list");
+                wbToast("已获取 " + d.count + " 个模型，可直接输入或选择", "ok");
+              } else {
+                wbToast("获取失败：" + ((d && d.error) || "未知原因"), "err");
+              }
+            })
+            .catch(function () {
+              refBtn.disabled = false;
+              refBtn.textContent = "刷新列表";
+              wbToast("请求失败，请重试", "err");
+            });
+        };
+        modelBox.appendChild(refBtn);
+      }
+      box.appendChild(fieldRow("模型",
+        "留空则按内置优先级自动挑选；也可手填或点「刷新列表」获取该接口的模型。",
+        modelBox));
+
+      // 3.4 系统提示词（高级，可空）
+      var promptBox = wbEl("div", null);
+      promptBox.style.cssText = "min-width:260px;";
+      var promptInput = wbEl("textarea", "wb-api-input");
+      promptInput.rows = 3;
+      promptInput.placeholder = "留空 = 用内置提示词（推荐）";
+      promptInput.style.cssText = "width:100%;resize:vertical;";
+      promptInput.value = state.systemPrompt;
+      promptInput.oninput = function () {
+        state.systemPrompt = promptInput.value;
+        draft[prov.key] = draft[prov.key] || {};
+        draft[prov.key].systemPrompt = promptInput.value;
+      };
+      promptBox.appendChild(promptInput);
+      box.appendChild(fieldRow("系统提示词（高级）",
+        "自定义助手的身份与口径；一般无需修改。", promptBox));
+
+      // ---- 4. 操作：测试连通性 + 保存 ----
+      var actRow = wbEl("div", "wb-api-row");
+      var actMain = wbEl("div", "wb-api-main");
+      actMain.appendChild(wbEl("div", "wb-api-label", "保存与测试"));
+      actMain.appendChild(wbEl("div", "wb-api-desc",
+        "「测试」会用当前填的内容真实问一句，能收到回答才算配好。"));
+      actRow.appendChild(actMain);
+      var actBox = wbEl("div", null);
+      actBox.style.cssText = "display:flex;gap:8px;";
     }
-    card.appendChild(fieldRow("模型",
-      "留空则按内置优先级自动挑选；也可手填或点「刷新列表」获取该接口的模型。",
-      modelBox));
-
-    // 3.4 系统提示词（高级，可空）
-    var promptBox = wbEl("div", null);
-    promptBox.style.cssText = "min-width:260px;";
-    var promptInput = wbEl("textarea", "wb-api-input");
-    promptInput.rows = 3;
-    promptInput.placeholder = "留空 = 用内置提示词（推荐）";
-    promptInput.style.cssText = "width:100%;resize:vertical;";
-    promptInput.value = state.systemPrompt;
-    promptInput.oninput = function () { state.systemPrompt = promptInput.value; };
-    promptBox.appendChild(promptInput);
-    card.appendChild(fieldRow("系统提示词（高级）",
-      "自定义助手的身份与口径；一般无需修改。", promptBox));
-
-    // ---- 4. 操作：测试连通性 + 保存 ----
-    var actRow = wbEl("div", "wb-api-row");
-    var actMain = wbEl("div", "wb-api-main");
-    actMain.appendChild(wbEl("div", "wb-api-label", "保存与测试"));
-    actMain.appendChild(wbEl("div", "wb-api-desc",
-      "「测试」会用当前填的内容真实问一句，能收到回答才算配好。"));
-    actRow.appendChild(actMain);
-    var actBox = wbEl("div", null);
-    actBox.style.cssText = "display:flex;gap:8px;";
 
     function collect() {
+      // 用**当前选中**的 provider 定义（selKey），不是初始渲染时的 cur ——
+      // 否则切到 openai 后保存，仍会按 gateway 的字段规则收集（漏 base_url/key）。
+      var prov = reg.filter(function (x) { return x.key === selKey; })[0] || {};
       var payload = {
-        provider: curKey,
+        provider: selKey,
         model: state.model,
         systemPrompt: state.systemPrompt,
         providers: {}
       };
       var pv = {};
-      if (cur.base_url_editable !== false) pv.base_url = state.base_url;
-      if (cur.supports_api_key && state.api_key) pv.api_key = state.api_key;
-      payload.providers[curKey] = pv;
+      if (prov.base_url_editable !== false) pv.base_url = state.base_url;
+      if (prov.supports_api_key && state.api_key) pv.api_key = state.api_key;
+      payload.providers[selKey] = pv;
       return payload;
     }
 
@@ -7334,35 +7377,6 @@ async def _assistant_probe(payload: Optional[Dict[str, Any]] = None) -> Dict[str
         return {"ok": False, "error": "未收到回答（检查地址、密钥与模型名）"}
     return {"ok": True, "durationMs": int((_t.time() - t0) * 1000),
             "replyPreview": reply[:200]}
-
-
-@app.post("/api/assistant/provider")
-async def assistant_switch_provider(request: Request):
-    """切换模型提供方（**只落盘，绝不探测**）。
-
-    与 PUT /api/assistant 的分工：PUT 是「保存完整配置」，本接口只做
-    「换 provider」这一个动作，因此零网络开销、即时返回。
-
-    修复动机（2026-10-14 用户反馈「点击 OpenAI 兼容接口直接卡死」）：
-    原前端切 provider 走 PUT，而 PUT 会同步跑一次 LLM 探测，
-    实测 **102.1 秒** —— 用户点一下就像页面卡死。
-    """
-    try:
-        payload = json.loads(await request.body() or b"{}")
-        key = str(payload.get("provider") or "").strip()
-        if key not in _assistant._PROVIDER_BY_KEY:
-            return {"ok": False, "error": "未知的模型提供方：%s" % (key or "未指定")}
-        _assistant._save_config({"provider": key})
-        rt = _assistant._runtime()
-        warn = None
-        if rt.get("enabled") and key != "gateway" and not rt.get("api_key"):
-            warn = ("已切换到「%s」，但还没填 API Key —— 助手暂时无法回答，"
-                    "请补上密钥后点「测试连通性」。"
-                    % (_PROVIDER_NAME.get(key) or key))
-        return {"ok": True, "warn": warn,
-                "runtime": _assistant.session_stats()}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:120]}
 
 
 @app.post("/api/assistant/test")
