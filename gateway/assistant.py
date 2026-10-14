@@ -502,14 +502,253 @@ def _tool_reqstats(_args: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# 阶段 4 新增工具：查询能力全覆盖（2026-10-14）
+#
+# 用户确认按三阶段路线推进，本阶段把只读查询从 6 个扩到 15 个，
+# 覆盖 AutoBuddy 五大功能域（积分/账号池/模型/每日任务/网关密钥）。
+#
+# 全部只读；写操作留给阶段 5（两段式确认）。
+# ---------------------------------------------------------------------------
+
+def _tool_account_pool(_args: Dict[str, Any]) -> str:
+    """账号池概览：模式、启用/停用数、最近选号。"""
+    d = _http_json(WEBUI_BASE + "/api/account-pool") or {}
+    if not d:
+        return "账号池数据获取失败"
+    accs = d.get("accounts") or []
+    enabled = [a for a in accs if a.get("enabled")]
+    disabled = [a for a in accs if a.get("disabled")]
+    usable = [a for a in accs if a.get("usable")]
+    mode_map = {"auto": "自动选号", "manual": "固定账号"}
+    lines = ["账号池：",
+             "  · 模式：%s" % mode_map.get(str(d.get("mode")), d.get("mode")),
+             "  · 账号总数：%d（启用 %d / 停用 %d）" % (len(accs), len(enabled), len(disabled)),
+             "  · 可用（凭据有效）：%d" % len(usable)]
+    if d.get("lastSelectedSource"):
+        lines.append("  · 最近选号来源：%s" % d.get("lastSelectedSource"))
+    if d.get("manualAccountId"):
+        lines.append("  · 固定账号：%s" % d.get("manualAccountId"))
+    if disabled:
+        names = ", ".join(str(a.get("name"))[:12] for a in disabled[:8])
+        lines.append("  · 已停用：%s%s" % (names, " 等 %d 个" % len(disabled) if len(disabled) > 8 else ""))
+    return "\n".join(lines)
+
+
+def _tool_selection_stats(args: Dict[str, Any]) -> str:
+    """选号分布：谁承接多、当前在飞数。"""
+    limit = int(args.get("limit") or 10)
+    d = _http_json(WEBUI_BASE + "/api/account-pool/selections?limit=200") or {}
+    counts = d.get("counts") or []
+    inflight = d.get("inflight") or {}
+    if not counts:
+        return "暂无选号记录"
+    total = d.get("total") or sum(c.get("count", 0) for c in counts)
+    lines = ["选号分布（近 %d 次，涉及 %s 个账号）：" % (total, d.get("distinctAccounts") or len(counts))]
+    for c in counts[:max(1, min(limit, 20))]:
+        name = str(c.get("accountName") or c.get("accountId") or "?")
+        n = c.get("count") or 0
+        pct = (n * 100.0 / total) if total else 0
+        lines.append("  %s: %d 次（%.1f%%）" % (name[:16], n, pct))
+    busy = {k: v for k, v in inflight.items() if v}
+    if busy:
+        lines.append("  · 当前在飞请求：%d 个账号" % len(busy))
+    else:
+        lines.append("  · 当前无在飞请求")
+    return "\n".join(lines)
+
+
+def _tool_disabled_models(_args: Dict[str, Any]) -> str:
+    """模型禁用明细：按账号列出被禁用的模型。
+
+    数据源是 `/api/account-pool` 的 `modelPolicy`（`model_policy.as_model_lists`
+    的投影：账号 -> **被禁用**的模型名列表）。
+
+    ⚠️ 2026-10-14 修正：原先读 `/api/account-models` 的 `accounts` 字段，但那里
+    是 dict（键为账号 ID）且 `models` 是**可用全集**（实测 38 个 = catalog 全集），
+    于是差集恒为 0，工具输出「没有任何禁用」而 `disabledTotal` 却是 354 ——
+    口径完全对不上。现改读权威禁用清单。
+    """
+    d = _http_json(WEBUI_BASE + "/api/account-pool") or {}
+    pol = d.get("modelPolicy") or {}
+    if not pol:
+        return "当前没有任何账号×模型被禁用"
+    # 名字映射：账号 ID -> 可读名称
+    name_by_id = {}
+    for a in (d.get("accounts") or []):
+        aid = a.get("id")
+        if aid:
+            name_by_id[str(aid)] = str(a.get("name") or a.get("nickname") or aid)
+    total = sum(len(v or []) for v in pol.values())
+    lines = ["模型禁用情况（%d 个账号、共 %d 个组合被禁用）：" % (len(pol), total)]
+    # 禁用多的排前面，便于快速定位重点账号
+    rows = sorted(pol.items(), key=lambda kv: -len(kv[1] or []))
+    for aid, models in rows[:12]:
+        name = name_by_id.get(str(aid), str(aid)[:16])
+        ms = [str(x) for x in (models or [])]
+        lines.append("  %s：%d 个 — %s%s" % (
+            name[:16], len(ms), ", ".join(m[:16] for m in ms[:8]),
+            " …等 %d 个" % len(ms) if len(ms) > 8 else ""))
+    if len(rows) > 12:
+        lines.append("  …及其他 %d 个账号" % (len(rows) - 12))
+    return "\n".join(lines)
+
+
+def _tool_health_check(_args: Dict[str, Any]) -> str:
+    """巡检配置与覆盖范围。"""
+    d = _http_json(WEBUI_BASE + "/api/model-health") or {}
+    cfg = d.get("config") or {}
+    accs = d.get("accounts") or []
+    if not cfg:
+        return "巡检配置获取失败"
+    lines = ["模型可用性巡检：",
+             "  · 自动巡检：%s" % ("开启" if cfg.get("enabled") else "关闭"),
+             "  · 间隔：%s 分钟" % cfg.get("intervalMinutes"),
+             "  · 只测常用模型：%s" % ("是" if cfg.get("onlyUsedModels") else "否"),
+             "  · 不可用自动禁用：%s" % ("是" if cfg.get("autoDisableAccounts") else "否"),
+             "  · 覆盖账号：%d 个" % len(accs)]
+    return "\n".join(lines)
+
+
+def _tool_account_credentials(_args: Dict[str, Any]) -> str:
+    """账号凭据有效期：哪些号快过期。"""
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/accounts") or {}
+    accs = d.get("accounts") or []
+    if not accs:
+        return "账号凭据数据获取失败"
+    import time as _t
+    now = _t.time()
+    rows = []
+    for a in accs:
+        exp = a.get("exp")
+        if not exp:
+            continue
+        left_days = (float(exp) - now) / 86400.0
+        rows.append((left_days, str(a.get("name") or a.get("user") or "?"),
+                     bool(a.get("has_at")), bool(a.get("has_rt"))))
+    if not rows:
+        return "未获取到凭据有效期"
+    rows.sort()
+    lines = ["账号凭据有效期（共 %d 个）：" % len(rows)]
+    urgent = [r for r in rows if r[0] < 7]
+    for left, name, has_at, has_rt in rows[:10]:
+        if left < 0:
+            state = "已过期"
+        elif left < 7:
+            state = "%.1f 天后过期 ⚠️" % left
+        else:
+            state = "%.0f 天" % left
+        cred = ("AT+RT" if (has_at and has_rt) else ("仅AT" if has_at else "无"))
+        lines.append("  %s: %s（%s）" % (name[:16], state, cred))
+    if urgent:
+        lines.append("  ⚠️ %d 个账号 7 天内到期，建议及时续期" % len(urgent))
+    return "\n".join(lines)
+
+
+def _tool_task_ledger(args: Dict[str, Any]) -> str:
+    """任务台账：各成长任务的完成情况。"""
+    limit = int(args.get("limit") or 10)
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/task-summary?limit=60") or {}
+    items = d.get("items") or []
+    if not items:
+        return "暂无任务台账"
+    items = sorted(items, key=lambda x: -(x.get("total") or 0))
+    lines = ["任务台账（Top %d，按累计次数）：" % min(limit, len(items))]
+    for it in items[:max(1, min(limit, 20))]:
+        name = str(it.get("task_name") or it.get("task_key") or "?")
+        grp = str(it.get("group_name") or "")
+        tot = it.get("total") or 0
+        ok = it.get("success") or 0
+        rate = (ok * 100.0 / tot) if tot else 0
+        lines.append("  %s%s：%d 次，成功 %d（%.0f%%）" % (
+            name[:18], ("［%s］" % grp[:8]) if grp else "", tot, ok, rate))
+    return "\n".join(lines)
+
+
+def _tool_credit_breakdown(_args: Dict[str, Any]) -> str:
+    """积分明细：今日签到/任务/累计，按天趋势。"""
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/credit-summary") or {}
+    if not d:
+        return "积分明细获取失败"
+    days = d.get("days") or []
+    lines = ["积分明细：",
+             "  · 今日合计：%s" % _fmt_num(d.get("todayCredits")),
+             "    - 签到：%s" % _fmt_num(d.get("todayCheckinCredits")),
+             "    - 任务：%s" % _fmt_num(d.get("todayTaskCredits")),
+             "  · 累计（台账）：%s" % _fmt_num(d.get("totalCredits"))]
+    if days:
+        lines.append("  · 近 %d 天：" % min(len(days), 7))
+        for dd in days[:7]:
+            lines.append("    - %s：合计 %s（签到 %s / 任务 %s）" % (
+                dd.get("date"), _fmt_num(dd.get("total")),
+                _fmt_num(dd.get("checkin")), _fmt_num(dd.get("task"))))
+    return "\n".join(lines)
+
+
+def _tool_api_keys(_args: Dict[str, Any]) -> str:
+    """API Key 状态：数量、启用、调用量。"""
+    d = _http_json(WEBUI_BASE + "/api/api-keys") or {}
+    keys = d.get("keys") or []
+    if not keys:
+        return "暂无 API Key（当前为开放模式）" if not d.get("requireKey") else "暂无 API Key"
+    lines = ["API Key（%d 个，%s）：" % (
+        len(keys), "需要密钥" if d.get("requireKey") else "开放模式")]
+    for k in keys[:10]:
+        lines.append("  %s：%s · 调用 %s 次" % (
+            str(k.get("name") or k.get("id") or "?")[:16],
+            "启用" if k.get("enabled") else "停用",
+            k.get("callCount") or 0))
+    return "\n".join(lines)
+
+
+def _tool_notify_status(_args: Dict[str, Any]) -> str:
+    """通知渠道与场景状态。"""
+    try:
+        try:
+            from gateway import notify as _nt
+        except ImportError:
+            import notify as _nt  # type: ignore
+        v = _nt.public_view()
+    except Exception as e:
+        return "通知状态获取失败：%s" % str(e)[:80]
+    chans = v.get("channels") or {}
+    scenes = v.get("scenes") or []
+    lines = ["通知：",
+             "  · 总开关：%s" % ("开启" if v.get("enabled") else "关闭")]
+    for key, view in chans.items():
+        name = view.get("name") or key
+        on = view.get("_enabled", True)
+        ready = view.get("_ready")
+        state = "已启用" if on else "已停用"
+        if not ready:
+            state += "（未配置完整）"
+        lines.append("  · %s：%s" % (name, state))
+    if scenes:
+        enabled_scenes = [sc.get("name") for sc in scenes if sc.get("enabled", True)]
+        lines.append("  · 消息场景：%d 个（%s）" % (
+            len(scenes), ", ".join(str(x) for x in enabled_scenes[:6]) or "无"))
+    return "\n".join(lines)
+
+
 # 注册表：name -> (函数, 描述, 参数说明)
 _TOOLS: Dict[str, tuple] = {
+    # ---- 原有 6 个 ----
     "get_credits": (_tool_credits, "积分统计（剩余/今日/近7天/本月）", "无参数"),
     "get_accounts": (_tool_accounts, "账号余额明细", "limit: 返回账号数，默认 23"),
     "get_models": (_tool_models, "当前模型清单与禁用分类", "无参数"),
     "get_status": (_tool_status, "网关与账号池状态", "无参数"),
-    "get_task_progress": (_tool_task, "每日任务进度", "无参数"),
+    "get_task_progress": (_tool_task, "每日任务进度与今日执行历史", "无参数"),
     "get_request_stats": (_tool_reqstats, "请求指标（成功率/耗时）", "无参数"),
+    # ---- 阶段 4 新增 9 个（查询全覆盖）----
+    "get_account_pool": (_tool_account_pool, "账号池概览：选号模式、启用/停用账号数、最近选号来源", "无参数"),
+    "get_selection_stats": (_tool_selection_stats, "选号分布：各账号承接次数与占比、当前在飞请求", "limit: 列出账号数，默认 10"),
+    "get_disabled_models": (_tool_disabled_models, "模型禁用明细：哪些账号禁用了哪些模型", "无参数"),
+    "get_health_check": (_tool_health_check, "模型可用性巡检：开关、间隔、覆盖账号数", "无参数"),
+    "get_account_credentials": (_tool_account_credentials, "账号凭据有效期：哪些账号快过期需续期", "无参数"),
+    "get_task_ledger": (_tool_task_ledger, "任务台账：各成长任务的累计次数与成功率", "limit: 列出任务数，默认 10"),
+    "get_credit_breakdown": (_tool_credit_breakdown, "积分明细：今日签到/任务/累计，近 7 天按天趋势", "无参数"),
+    "get_api_keys": (_tool_api_keys, "API Key 状态：数量、启停、调用次数", "无参数"),
+    "get_notify_status": (_tool_notify_status, "通知渠道与消息场景状态", "无参数"),
 }
 
 
@@ -523,6 +762,17 @@ def _tool_registry() -> List[Dict[str, Any]]:
         "get_status": {"type": "object", "properties": {}},
         "get_task_progress": {"type": "object", "properties": {}},
         "get_request_stats": {"type": "object", "properties": {}},
+        "get_account_pool": {"type": "object", "properties": {}},
+        "get_selection_stats": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "列出账号数，默认 10"}}},
+        "get_disabled_models": {"type": "object", "properties": {}},
+        "get_health_check": {"type": "object", "properties": {}},
+        "get_account_credentials": {"type": "object", "properties": {}},
+        "get_task_ledger": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "列出任务数，默认 10"}}},
+        "get_credit_breakdown": {"type": "object", "properties": {}},
+        "get_api_keys": {"type": "object", "properties": {}},
+        "get_notify_status": {"type": "object", "properties": {}},
     }
     return [{"type": "function", "function": {
         "name": name, "description": desc,

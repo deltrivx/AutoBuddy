@@ -157,7 +157,22 @@ sys.path.insert(0, str(ROOT))
 from gateway import assistant as A  # noqa: E402
 
 check("模块可导入", A is not None)
-check("6 个工具已注册", len(A._TOOLS) == 6, f"got {len(A._TOOLS)}")
+check("15 个工具已注册（阶段4 查询全覆盖）", len(A._TOOLS) == 15, f"got {len(A._TOOLS)}")
+
+# 阶段 4 新增的 9 个只读工具
+STAGE4_TOOLS = (
+    "get_account_pool", "get_selection_stats", "get_disabled_models",
+    "get_health_check", "get_account_credentials", "get_task_ledger",
+    "get_credit_breakdown", "get_api_keys", "get_notify_status",
+)
+for _t in STAGE4_TOOLS:
+    check(f"阶段4 工具 {_t} 已注册", _t in A._TOOLS)
+check("阶段4 工具全部只读（无写端点）",
+      '"/api/wb-daily/run"' not in SRC_AS
+      and "checkin/all" not in SRC_AS
+      and '"/api/wb-daily/abort/' not in SRC_AS)
+check("禁用明细读权威来源 modelPolicy（非可用全集）",
+      'd.get("modelPolicy")' in SRC_AS)
 check("_tool_registry 返回 OpenAI function 格式",
       all(t.get("type") == "function" and "function" in t for t in A._tool_registry()))
 check("每个工具都有 description",

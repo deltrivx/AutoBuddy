@@ -31,6 +31,38 @@
 
 ---
 
+## [v0.9.72] - 2026-10-14
+
+<!-- summary: 阶段4——助手只读工具 6→15，查询能力覆盖 AutoBuddy 五大功能域 -->
+
+### 新增
+
+- **助手查询能力全覆盖**（阶段 4）：新增 9 个只读工具，总数 6 → **15**。
+  - 账号池：`get_account_pool`（选号模式/启停数/最近选号来源）、
+    `get_selection_stats`（各账号承接次数与占比、在飞请求）、
+    `get_account_credentials`（凭据有效期、7 天内到期预警）；
+  - 模型：`get_disabled_models`（按账号列出禁用模型）、
+    `get_health_check`（巡检开关/间隔/覆盖账号数）；
+  - 每日任务：`get_task_ledger`（成长任务累计次数与成功率）；
+  - 积分：`get_credit_breakdown`（今日签到/任务拆分、近 7 天趋势）；
+  - 网关密钥：`get_api_keys`（数量/启停/调用次数）；
+  - 通知：`get_notify_status`（渠道就绪状态、消息场景）。
+
+### 修复
+
+- **禁用明细口径错**：`get_disabled_models` 首版读 `/api/account-models` 的
+  `accounts`，但该字段是 dict（键为账号 ID）且 `models` 是**可用全集**，
+  差集恒为 0 → 输出「没有任何禁用」而同响应的 `disabledTotal` 却是 354。
+  改读权威来源 `/api/account-pool` 的 `modelPolicy`，实测与
+  `account-models.disabledTotal` 完全一致（354 = 354）。
+
+### 测试
+
+- `_test_assistant.py` 更新并新增（143 → **154**）：工具数契约 6→15、
+  九个新工具逐一断言、阶段 4 工具全部只读、禁用明细必须读 `modelPolicy`。
+- 9 个新工具逐个对**线上真实端点**取数，全部正常（9/9）。
+- 全量 40 个测试文件全绿；Python 语法通过。
+
 ## [v0.9.71] - 2026-10-14
 
 <!-- summary: 修复「问一句就跑一轮任务」——疑问句被交互菜单的子串匹配拦截并触发写操作 -->
@@ -3998,7 +4030,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.71...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.72...HEAD
+[v0.9.72]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.71...v0.9.72
 [v0.9.71]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.70...v0.9.71
 [v0.9.70]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.69...v0.9.70
 [v0.9.69]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.68...v0.9.69
