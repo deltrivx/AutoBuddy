@@ -7395,8 +7395,14 @@ async def wecom_callback_msg(path: str, request: Request):
         from fastapi.concurrency import run_in_threadpool
         # from_user 作为会话标识传给智能助手（多轮上下文隔离）。
         # 放在线程池里跑：助手要调 LLM（最长 45s），绝不能阻塞事件循环。
+        #
+        # ⚠️ allow_defer=True：企微「接收消息服务器」要求 **5 秒内**返回响应体，
+        # 超时即丢弃（用户 2026-10-14 反馈「发了『你可以做什么』没回我」的
+        # 根因：LLM 链路实测 9 秒）。开启后，需要 LLM 的问题立即回一句
+        # 「正在查询」，算完由后台线程主动推送答复。
+        # 能力/菜单类与全部命令仍是**即时确定性回复**，不受影响。
         reply = await run_in_threadpool(
-            _notify.wecom_command_reply, cmd, from_user or None)
+            _notify.wecom_command_reply, cmd, from_user or None, True)
         plain_xml = _notify.build_reply_text(from_user, to_user, reply)
         enc_xml = _notify.encrypt_reply(plain_xml, token, aes_key, corpid,
                                         q.get("timestamp") or str(int(time.time())),

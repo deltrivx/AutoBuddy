@@ -121,8 +121,8 @@ print("\n[3] 集成契约（notify.py）")
 
 check("_assistant_fallback 存在", "def _assistant_fallback(" in SRC_NT)
 check("命令路由尾部调用助手", "reply = _assistant_fallback(text, session_id)" in SRC_NT)
-check("wecom_command_reply 接受 session_id",
-      "def wecom_command_reply(cmd: str, session_id: Optional[str] = None)" in SRC_NT)
+check("wecom_command_reply 接受 session_id 与 allow_defer",
+      "def wecom_command_reply(cmd: str, session_id: Optional[str] = None,\n                        allow_defer: bool = False)" in SRC_NT)
 check("_wecom_interpret 透传 session_id",
       "session_id: Optional[str] = None" in SRC_NT[SRC_NT.index("def _wecom_interpret"):]
       and "wecom_command_reply(content or \"\", session_id=session_id)" in SRC_NT)

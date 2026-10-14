@@ -735,8 +735,14 @@ def _readonly_fallback(text: str, low: str, orig: str) -> str:
     return ""
 
 
-def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
+def wecom_command_reply(cmd: str, session_id: Optional[str] = None,
+                        allow_defer: bool = False) -> str:
     """命令 / 自然语言 → 回复文本。企微与 Telegram 共用的**唯一**语义实现。
+
+    ``allow_defer``：允许「先回执 + 后台推送」。企微回调有 **5 秒硬限制**，
+    LLM 链路实测 9 秒会被企微直接丢弃（用户 2026-10-14 反馈「发了『你可以
+    做什么』没回我」的根因）。开启后，需要 LLM 的问题立即回一句「正在查询」，
+    算完由后台线程主动推送答复。
 
     ``session_id`` 用于智能助手的会话隔离（企微传 FromUserName、
     Telegram 传 chat_id）—— 不同用户的多轮对话互不串味。
@@ -769,7 +775,22 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
         text = low = _EN2ZH[low]
 
     # ---- 1. 疑问句优先交助手（绝不被命令分支拦截）----
+    #
+    # 分层（参考 MoviePilot 的消息链路设计）：
+    #   1a. 能力/菜单类 → **本地即时生成**，零延迟、零模型依赖。
+    #       这是最高频的「上手第一问」，却完全不需要查实时数据；
+    #       用 LLM 答既慢又浪费，还容易踩企微 5 秒红线。
+    #   1b. 能映射到只读命令的 → 本地即时查（确定性路径，最稳最快）。
+    #   1c. 真正需要理解的问题 → LLM；但企微回调 5 秒硬限制下必须
+    #       **先回执 + 后台推送**（allow_defer），否则回复被丢弃。
     if _looks_like_question(text):
+        if _looks_like_capability_question(text, low):
+            return _cmd_assistant_help()
+        if allow_defer and _assistant_available():
+            # 先回执，后台算完主动推送（企微 5 秒硬限制的解法）
+            if _defer_assistant_reply(text, session_id):
+                return ("🤔 正在查询，请稍候～\n"
+                        "结果出来后我会主动推送给你。")
         reply = _assistant_fallback(text, session_id)
         if reply:
             return reply
@@ -855,6 +876,107 @@ def _assistant_fallback(text: str, session_id: Optional[str] = None) -> str:
         return _assistant.assistant_reply(session_id or "default", text) or ""
     except Exception:
         return ""
+
+
+# 能力/菜单类问句的特征词（命中则**本地即时回复**，不打 LLM）。
+# 用户 2026-10-14 反馈「发了『你可以做什么』没回我」—— 实测根因是企微
+# 回调 5 秒硬限制，LLM 链路 9 秒，回复被企微丢弃。这类问句完全不需要
+# 查实时数据，本地生成既快又稳。
+_CAPABILITY_MARKERS = (
+    "你可以做什么", "你能做什么", "你能干什么", "你会什么", "你能帮我",
+    "有什么功能", "有哪些功能", "功能列表", "帮助", "菜单", "怎么用",
+    "如何使用", "使用说明", "指令", "命令列表", "help", "what can you do",
+)
+
+
+def _looks_like_capability_question(text: str, low: str = "") -> bool:
+    """是否是「问能力/问菜单」类问句（本地即时回复，不打 LLM）。"""
+    t = (text or "").strip().lower()
+    l = (low or "").strip().lower()
+    if not t:
+        return False
+    for m in _CAPABILITY_MARKERS:
+        if m.lower() in t or (l and m.lower() in l):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# LLM 延后推送（2026-10-14，企微 5 秒硬限制的解法）
+#
+# 用户反馈「发了『你可以做什么』到现在都没回我」。实测：LLM 链路 9 秒，
+# 而企微「接收消息服务器」要求 **5 秒内**返回响应体，超时即丢弃 ——
+# 用户侧表现为「没回」，服务侧其实算出来了。
+#
+# 参考 MoviePilot `app/application/messaging/ingress.py` 的分层：渠道只负责
+# 接收与即时回执，重活交给后台，结果走**主动推送**通道回给用户。
+#
+# 两个设计点：
+#   1) **串行化**：全局单工，同一时刻只跑一次 LLM。既防并发打爆模型，
+#      也防用户连发多条导致推送刷屏；
+#   2) **绕过通知总开关**：这是「用户问的答复」，不是例行通知，
+#      不该被通知总开关拦掉（但仍是私聊推送，不会进群）。
+# ---------------------------------------------------------------------------
+
+_DEFER_LOCK = threading.Lock()
+_DEFER_BUSY = False
+
+
+def _assistant_available() -> bool:
+    """助手是否可用（开关 + 已配置模型源）。"""
+    try:
+        try:
+            from gateway import assistant as _a
+        except ImportError:
+            import assistant as _a  # type: ignore
+        return bool(_a.ASSISTANT_ENABLED) and bool(_a._runtime().get("enabled"))
+    except Exception:
+        return False
+
+
+def _push_to_channel(channel: str, text: str) -> bool:
+    """把文本推送到指定渠道（绕过通知总开关，但要求渠道配置就绪）。"""
+    try:
+        cfg = _load()
+        ch_cfg = (cfg.get("channels", {}).get(channel) or {})
+        sender = _SENDERS.get(channel)
+        if not sender:
+            return False
+        r = sender(ch_cfg, text)
+        return bool(r.get("ok"))
+    except Exception:
+        return False
+
+
+def _defer_assistant_reply(text: str, session_id: str,
+                           channel: str = "wecom") -> bool:
+    """把 LLM 问答转到后台：立即回执，算完主动推送。返回是否已接管。"""
+    global _DEFER_BUSY
+    with _DEFER_LOCK:
+        if _DEFER_BUSY:
+            return False          # 已有一次在跑 → 丢弃本次（防刷屏）
+        _DEFER_BUSY = True
+
+    def _worker():
+        try:
+            reply = _assistant_fallback(text, session_id)
+            if reply:
+                _push_to_channel(channel, reply)
+        except Exception:
+            pass
+        finally:
+            global _DEFER_BUSY
+            with _DEFER_LOCK:
+                _DEFER_BUSY = False
+
+    threading.Thread(target=_worker, name="ab-assistant-defer", daemon=True).start()
+    return True
+
+
+def defer_stats() -> Dict[str, Any]:
+    """延后队列状态（可观测）。"""
+    with _DEFER_LOCK:
+        return {"busy": _DEFER_BUSY}
 
 
 def _write_confirm_flow(text: str, session_id: Optional[str] = None) -> str:

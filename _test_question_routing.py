@@ -72,8 +72,13 @@ check("疑问句分支在命令分支之前",
       < SRC_NT.index('if low.startswith("notify"):'),
       "疑问句必须最先判定，否则仍会被命令分支拦截")
 check("疑问句优先调助手（一等公民，非兜底）",
-      "if _looks_like_question(text):\n        reply = _assistant_fallback(text, session_id)"
-      in SRC_NT)
+      "if _looks_like_question(text):" in SRC_NT
+      and "reply = _assistant_fallback(text, session_id)" in SRC_NT)
+check("能力问句在疑问句内最先判定（不打 LLM，规避企微 5 秒红线）",
+      "if _looks_like_capability_question(text, low):" in SRC_NT)
+check("能力问句先于 LLM 延后判定",
+      SRC_NT.index("if _looks_like_capability_question(text, low):")
+      < SRC_NT.index("if allow_defer and _assistant_available():"))
 check("写操作只认精确命令（剥标点后 in 元组）",
       '_cmd in ("执行任务", "启动任务", "跑任务", "运行任务")' in SRC_NT)
 check("写操作 run 精确匹配", 'orig == "run"' in SRC_NT)

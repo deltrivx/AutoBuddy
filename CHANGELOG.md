@@ -31,6 +31,37 @@
 
 ---
 
+## [v0.9.76] - 2026-10-14
+
+<!-- summary: 修复「你可以做什么」收不到回复——企微5秒硬限制下LLM回复被丢弃，改为能力问句即时答+LLM延后推送 -->
+
+### 修复
+
+- **「你可以做什么」收不到回复**（用户反馈）：实测 LLM 链路 **9.0 秒**，
+  而企微「接收消息服务器」要求 **5 秒内**返回响应体，超时即丢弃 ——
+  服务侧算出来了，但回复被企微丢掉，用户侧表现为「没回」。
+  根因是此前只参考了 MoviePilot 的 LLM provider 配置，未研究其消息分层。
+  - 参考 MoviePilot `app/application/messaging/ingress.py` 的分层
+    （渠道只负责接收与即时回执，重活交后台，结果走主动推送）；
+  - **三道防线**：
+    1) 能力/菜单类问句**本地即时生成**（实测 0.001s，原 9s）——
+       最高频的「上手第一问」完全不需要查实时数据；
+    2) 能映射到只读命令的疑问句 → 本地即时查（确定性路径）；
+    3) 真需要 LLM 的问题 → **先回执 + 后台推送**（`allow_defer`），
+       企微 5 秒内返回「正在查询」，算完由后台线程主动推送答复；
+  - 延后推送**全局单工**（`_DEFER_BUSY`）：防并发打爆模型、防连发刷屏；
+  - 推送**绕过通知总开关**（这是用户问的答复，不是例行通知），但仍是私聊。
+
+### 测试
+
+- 新增 `_test_deferred_reply.py`（**57** 项）：能力问句函数与词表、
+  **能力问句必须先于 LLM 延后判定**、延后框架（单工锁/守护线程/回执文案/
+  异常兜底）、企微回调传 `allow_defer=True`；行为验证含
+  「你可以做什么」< 1 秒、17 个能力问句判定、延后单工与复位、
+  向后兼容、写操作确认不受影响。
+- 同步修正 `_test_assistant.py`、`_test_question_routing.py` 两条过期断言。
+- 全量 43 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.75] - 2026-10-14
 
 <!-- summary: 主动播报落地——任务失败推送智能分析（原因+建议），与既有通知分工不重叠 -->
@@ -4126,7 +4157,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.75...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.76...HEAD
+[v0.9.76]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.75...v0.9.76
 [v0.9.75]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.74...v0.9.75
 [v0.9.74]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.73...v0.9.74
 [v0.9.73]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.72...v0.9.73
