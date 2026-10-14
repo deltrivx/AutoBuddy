@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.63"
+VERSION_DEFAULT = "0.9.64"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -965,9 +965,96 @@ def selection_stats(limit: int = 20) -> Dict[str, Any]:
 # 仍保持粘性。
 STICKY_YIELD_RATIO = float(os.getenv("AB_STICKY_YIELD_RATIO", "0.5") or 0.5)
 
+# ---- 配额账本的时间衰减（2026-10-14 实测修正）----
+#
+# 实测问题：`credit_picks` 原是**纯累计计数器**，只增不减、重启才清零 ——
+#   · 早期抢占的账号比值永久偏高，长期被压制；
+#   · 重启清零又让比例失真，相关系数在 +0.032 ~ +0.083 之间反复摆动。
+# 改成指数衰减后：配额只反映「近半个衰减周期」的公平性，
+# 重启影响也显著变小（旧记忆自然淡出，不需要清零）。
+CREDIT_PICK_HALFLIFE = float(os.getenv("AB_CREDIT_PICK_HALFLIFE", "1800") or 1800)
+
+# sticky 配额仲裁（2026-10-14）：绑定账号的「有效已选 / 配额」比值劣于最优
+# 候选超过这个倍数时，解除粘性改走配额。**必须配合 sticky 记账才生效** ——
+# 不记账时吃满粘性流量的账号比值反而偏低，仲裁会做出反向判断。
+STICKY_QUOTA_ARBITRATION = (os.getenv("AB_STICKY_QUOTA_ARB", "1") or "1").strip() not in ("0", "false", "no")
+STICKY_QUOTA_FACTOR = float(os.getenv("AB_STICKY_QUOTA_FACTOR", "1.5") or 1.5)
+
+
+def _credit_pick_effective_locked(aid: str, now: Optional[float] = None) -> float:
+    """有效已选次数（指数衰减，半衰期 CREDIT_PICK_HALFLIFE）。
+
+    **调用方必须已持有 _SELECTION_LOCK**（锁外请用 `_credit_pick_effective`）。
+    """
+    if not aid:
+        return 0.0
+    rec = (_ACCOUNT_POOL_RUNTIME.get("credit_picks") or {}).get(aid)
+    if not isinstance(rec, dict):
+        return 0.0
+    n = float(rec.get("n") or 0.0)
+    t = float(rec.get("t") or 0.0)
+    if n <= 0 or t <= 0:
+        return 0.0
+    now = time.time() if now is None else float(now)
+    elapsed = now - t
+    if elapsed <= 0:
+        return n
+    return n * (0.5 ** (elapsed / max(CREDIT_PICK_HALFLIFE, 1.0)))
+
+
+def _credit_pick_effective(aid: str, now: Optional[float] = None) -> float:
+    """有效已选次数（带锁版本，供锁外调用，如粘性仲裁）。"""
+    with _SELECTION_LOCK:
+        return _credit_pick_effective_locked(aid, now)
+
+
+def _record_credit_pick_locked(aid: str, now: Optional[float] = None) -> None:
+    """记一次**实际承接**（sticky 与 auto 共用同一账本）。
+
+    **调用方必须已持有 _SELECTION_LOCK**。语义：先把旧记忆衰减到当前时刻，
+    再加 1，并以当前时刻为新的衰减基准。
+    """
+    if not aid:
+        return
+    now = time.time() if now is None else float(now)
+    picks = _ACCOUNT_POOL_RUNTIME.setdefault("credit_picks", {})
+    prev = _credit_pick_effective_locked(aid, now)
+    picks[aid] = {"n": prev + 1.0, "t": now}
+
+
+def _record_credit_pick(aid: str) -> None:
+    """记一次实际承接（带锁版本）。"""
+    if not aid:
+        return
+    with _SELECTION_LOCK:
+        _record_credit_pick_locked(aid)
+
+
+def _prune_credit_picks_locked(now: Optional[float] = None,
+                               keep_hint: int = 0) -> None:
+    """清掉衰减到可忽略的记录，防止账本随账号池增删无限增长。**须持有锁**。"""
+    picks = _ACCOUNT_POOL_RUNTIME.get("credit_picks") or {}
+    if len(picks) <= max(4 * max(int(keep_hint or 0), 1), 64):
+        return
+    now = time.time() if now is None else float(now)
+    for k in [k for k in picks if _credit_pick_effective_locked(k, now) < 0.05]:
+        picks.pop(k, None)
+
+
 
 def _sticky_should_yield(bound_id: Optional[str], candidates: List[Dict[str, Any]]) -> bool:
-    """绑定账号是否已「积分掉队」到应该让位（True = 解绑走配额）。"""
+    """绑定账号是否应该让位（True = 解绑走配额）。
+
+    两个条件，任一命中即让位：
+
+    1. **余额掉队**（2026-10-13）：绑定账号余额低于池内均值 × STICKY_YIELD_RATIO。
+    2. **配额仲裁**（2026-10-14）：绑定账号的「有效已选 / 配额」比值劣于最优候选
+       超过 STICKY_QUOTA_FACTOR 倍。配合 sticky 记账后，真正吃满流量的账号会被
+       识别出来并让位 —— 否则 sticky 占 96%、配额算法只服务 4% 流量，
+       离散度是理论值的 3.6 倍（实测 CV 1.25 vs 0.35）。
+
+    关闭积分调度、候选不足 2 个、余额均未知时都不让位（避免误伤）。
+    """
     if not bound_id or not candidates or len(candidates) < 2:
         return False
     if not CREDIT_WEIGHT_SCHED:
@@ -980,11 +1067,37 @@ def _sticky_should_yield(bound_id: Optional[str], candidates: List[Dict[str, Any
                 bals.append(float(v))
         if len(bals) < 2:
             return False
-        mine = credit_floor.balance_of(str(bound_id))
-        if not isinstance(mine, (int, float)) or mine <= 0:
-            return False
         avg = sum(bals) / len(bals)
-        return float(mine) < avg * STICKY_YIELD_RATIO
+        # 条件 1：余额明显掉队
+        mine = credit_floor.balance_of(str(bound_id))
+        if isinstance(mine, (int, float)) and mine > 0:
+            if float(mine) < avg * STICKY_YIELD_RATIO:
+                return True
+        # 条件 2：配额仲裁
+        if not STICKY_QUOTA_ARBITRATION:
+            return False
+        now = time.time()
+        ratios = []
+        for a in candidates:
+            aid = str(_account_id(a))
+            if not aid:
+                continue
+            v = credit_floor.balance_of(aid)
+            w = max(float(v) / avg, 0.05) if isinstance(v, (int, float)) and v > 0 else 1.0
+            ratios.append((_credit_pick_effective(aid, now) / min(w, _WEIGHT_CAP), aid))
+        if len(ratios) < 2:
+            return False
+        best_ratio, best_aid = min(ratios, key=lambda x: x[0])
+        if best_aid == str(bound_id):
+            return False
+        mine_ratio = None
+        for r, aid in ratios:
+            if aid == str(bound_id):
+                mine_ratio = r
+                break
+        if mine_ratio is None:
+            return False
+        return mine_ratio > best_ratio * STICKY_QUOTA_FACTOR
     except Exception:
         return False
 
@@ -1092,15 +1205,19 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
                 by_bound = {str(_account_id(a)): a for a in candidates if _account_id(a)}
                 acc = by_bound.get(str(bound))
                 if acc is not None:
-                    # 粘性让位于积分：绑定账号余额明显掉队时解绑，
-                    # 让本轮落入下面的配额排序（否则 97% 请求走粘性，
-                    # 积分调度被架空 —— 2026-10-13 实测相关性仅 0.032）。
+                    # 粘性让位于积分（2026-10-13 实测：97% 走粘性，配额被架空）：
+                    # 余额掉队 **或** 配额比值显著劣于最优候选时解绑，
+                    # 让本轮落入下面的配额排序。
                     if _sticky_should_yield(str(bound), candidates):
-                        # 解绑后直接落进下面的配额排序；记账由配额那行的
-                        # _remember_selection(acc, "auto") 统一负责 ——
-                        # 不在这里额外记一条，避免一次选号出现两条流水。
+                        # 解绑后落进配额排序；记账由配额那行统一负责，
+                        # 不在这里记，避免一次选号出现两条流水。
                         session_sticky.unbind(session_key)
                     else:
+                        # sticky 命中也记入配额账本（2026-10-14）：
+                        # 此前 sticky **不记账**，导致吃到大量粘性流量的账号
+                        # 比值反而偏低、更容易被 auto 选中，形成正反馈；
+                        # 且 auto 只服务 4% 流量，样本严重不足。
+                        _record_credit_pick(str(bound))
                         return _remember_selection(acc, "sticky")
         except Exception:
             pass
@@ -1164,16 +1281,19 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
                 # 某号选多了它的比值就升高、自动让位。
                 #   例：A 余额 3000、B 1000 → 配额 3:1 → 稳态 A≈75%、B≈25%。
                 _picked = _ACCOUNT_POOL_RUNTIME.setdefault("credit_picks", {})
+                _pick_now = time.time()
                 def _quota_key(a):
                     aid = str(_account_id(a))
                     quota = min(_weight(a), _WEIGHT_CAP)
-                    return (_picked.get(aid, 0) / quota,
+                    return (_credit_pick_effective_locked(aid, _pick_now) / quota,
                             int(inflight.get(aid, 0)))
                 ordered.sort(key=_quota_key)
-                # 记账：选中即累加（比值随之升高，下次自动让位 —— 自纠的核心）。
+                # 记账：选中即累加（比值随之升高，下次让位 —— 自纠的核心）。
                 # 与 _quota_key 同在调度锁内，避免并发下漏计导致比例失真。
-                _picked[str(_account_id(ordered[0]))] = \
-                    _picked.get(str(_account_id(ordered[0])), 0) + 1
+                # 带时间衰减（2026-10-14）：只保留近半个衰减周期的记忆，
+                # 防止早期抢占永久压制后来者；sticky 命中也走同一账本。
+                _record_credit_pick_locked(str(_account_id(ordered[0])), _pick_now)
+                _prune_credit_picks_locked(_pick_now, n)
             else:
                 ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
         except Exception:
@@ -1314,7 +1434,8 @@ _UPSTREAM_ERR_LOG_MAX = 400
 
 
 def _note_upstream_result(account_id: str, status_code: int, body_text: str,
-                         rid: Optional[str] = None) -> None:
+                         rid: Optional[str] = None,
+                         headers: Optional[Any] = None) -> None:
     """把一次上游结果记入冷却账本（成功清零、失败冷却）。
 
     挂在这里而不是散落各处：两条转发路径（流式 / 非流式）都要经过它，
@@ -1340,7 +1461,17 @@ def _note_upstream_result(account_id: str, status_code: int, body_text: str,
         if status_code == 200:
             cooldown.record_success(account_id)
         else:
-            cooldown.record_failure(account_id, status_code, body_text or "")
+            # 上游若给了 Retry-After（秒数或 HTTP 日期），作为冷却时长依据 ——
+            # 对齐 Azure Smart LB 的 Retry-After 语义：服务端比我们猜的准。
+            retry_after = None
+            if headers is not None:
+                try:
+                    retry_after = cooldown.parse_retry_after(
+                        headers.get("retry-after") or headers.get("Retry-After"))
+                except Exception:
+                    retry_after = None
+            cooldown.record_failure(account_id, status_code, body_text or "",
+                                    retry_after=retry_after)
     except Exception:
         # 冷却记账失败绝不能连累转发主流程
         pass
@@ -2612,7 +2743,8 @@ async def chat_completions(request: Request):
             await res.aclose()
             if not _looks_like_model_unavailable(res.status_code, body_text):
                 # 失败记账：429/402/404 等让该账号进入冷却，后续自动轮询跳过它
-                _note_upstream_result(served_account_id, res.status_code, body_text, rid=rid)
+                _note_upstream_result(served_account_id, res.status_code, body_text,
+                                      rid=rid, headers=res.headers)
                 # 失败即解绑：这个号已经证明不可用，下次换号，别把会话继续钉在它身上
                 try:
                     session_sticky.unbind(session_key)
@@ -2702,7 +2834,8 @@ async def chat_completions(request: Request):
             await res.aclose()
             if not _looks_like_model_unavailable(res.status_code, body_text):
                 # 失败记账（同流式路径）
-                _note_upstream_result(served_account_id, res.status_code, body_text, rid=rid)
+                _note_upstream_result(served_account_id, res.status_code, body_text,
+                                      rid=rid, headers=res.headers)
                 # 失败即解绑（同流式路径）
                 try:
                     session_sticky.unbind(session_key)

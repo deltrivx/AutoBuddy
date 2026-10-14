@@ -168,7 +168,41 @@ def _parse_6004_reset(body_text: str) -> Optional[float]:
         return None
 
 
-def record_failure(account_id: str, status_code: int, body_text: str) -> Optional[str]:
+def parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """解析 HTTP ``Retry-After`` 头，返回**秒数**；无法解析返回 None。
+
+    两种合法形式（RFC 7231）：
+      - 秒数：``120``
+      - HTTP 日期：``Wed, 21 Oct 2015 07:28:00 GMT``
+
+    为什么要解析它（2026-10-14，对齐 Azure Smart Load Balancer）：
+    那个方案的核心正是「感知 429 + Retry-After，按上游承诺的时长精确等待」。
+    我们此前只按错误语义猜冷却时长（429 软 600s 起、404 60s、渠道 30m），
+    上游给了准确信息却不用。
+    """
+    if not value:
+        return None
+    v = str(value).strip()
+    if not v:
+        return None
+    try:
+        return float(int(v))          # 秒数形式
+    except (TypeError, ValueError):
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(v)
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, dt.timestamp() - time.time())
+    except Exception:
+        return None
+
+
+def record_failure(account_id: str, status_code: int, body_text: str,
+                   retry_after: Optional[float] = None) -> Optional[str]:
     """记录一次上游失败，返回施加的冷却类型（None = 不冷却）。"""
     if not account_id:
         return None
@@ -199,6 +233,12 @@ def record_failure(account_id: str, status_code: int, body_text: str) -> Optiona
             # 只在它**比退避更晚**时才采纳，避免上游给了一个过去的时间戳
             # 反而缩短冷却（那样会白撞）。
             reset_at = _parse_6004_reset(body_text) if "6004" in (body_text or "") else None
+            # Retry-After（2026-10-14）：上游明确给了等待时长时，与退避取
+            # **更晚**者（保守 —— 上游说 5s 我们照做很可能立刻白撞），
+            # 并封顶 SOFT_RATE_MAX 防异常值把账号关太久。
+            if retry_after and float(retry_after) > 0:
+                until = max(until, min(now + float(retry_after), now + SOFT_RATE_MAX))
+                acc["retryAfterAt"] = until
             if reset_at and reset_at > now:
                 until = max(until, min(reset_at, now + SOFT_RATE_MAX))
                 acc["resetAt"] = reset_at

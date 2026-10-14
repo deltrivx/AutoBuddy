@@ -36,7 +36,7 @@ check("CREDIT_WEIGHT_SCHED 常量存在",
 check("默认开启（env 未设时为 True）",
       'os.getenv("AB_CREDIT_WEIGHT", "1")' in SRC)
 check("排序使用配额制（已选次数/配额比例）",
-      "_picked.get(aid, 0) / quota" in SRC)
+      "_credit_pick_effective_locked(aid, _pick_now) / quota" in SRC)
 check("余额读取走 credit_floor.balance_of（同源快照）",
       "credit_floor.balance_of(_account_id(a))" in SRC)
 check("未知余额取池均值（不惩罚新账号）",

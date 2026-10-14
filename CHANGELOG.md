@@ -31,6 +31,38 @@
 
 ---
 
+## [v0.9.64] - 2026-10-14
+
+<!-- summary: 调度算法三项优化——配额账本时间衰减、sticky 记账+配额仲裁、解析上游 Retry-After -->
+
+### 变更
+
+对比 Smart Load Balancer（Azure/aoai-smart-loadbalancing）后定位三个问题并实施：
+
+- **配额账本时间衰减**：`credit_picks` 原是纯累计计数器、只增不减，重启才清零
+  （相关系数在 +0.032~+0.083 反复摆动）。改为 `{n, t}` 指数衰减账本，
+  半衰期 `AB_CREDIT_PICK_HALFLIFE`（默认 1800s），并附带剪枝。
+- **sticky 记账 + 配额仲裁**：sticky 命中此前**不记账**，导致吃到大量粘性流量的
+  账号比值反而偏低、更容易被 auto 选中形成正反馈（auto 仅服务 4% 流量）。
+  现 sticky 也记入同一账本；绑定账号「有效已选/配额」劣于最优候选超过
+  `AB_STICKY_QUOTA_FACTOR`（默认 1.5）倍时解绑走配额。
+- **解析上游 Retry-After**（对齐 Azure Smart LB 核心语义）：新增
+  `cooldown.parse_retry_after()`，支持秒数与 HTTP 日期；转发路径透传
+  `res.headers`。与退避取更晚者并封顶 `SOFT_RATE_MAX`。
+
+### 测试
+
+- 新增 `_test_sched_decay_retryafter.py`（38 项）：源码契约 + 真实模块行为
+  （Retry-After=900s → 冷却约 900s；异常大值封顶；不传退回 600s）+ 衰减公式数值验证。
+- 同步更新 `_test_credit_weight_sched.py`、`_test_sticky_yield.py` 锁定新契约。
+- 全量 37 个测试文件全绿。
+
+### 新增可调参数
+
+- `AB_CREDIT_PICK_HALFLIFE`（默认 1800）：配额记忆半衰期（秒）。
+- `AB_STICKY_QUOTA_ARB`（默认 1）：sticky 配额仲裁开关。
+- `AB_STICKY_QUOTA_FACTOR`（默认 1.5）：让位倍数阈值。
+
 ## [v0.9.63] - 2026-10-13
 
 <!-- summary: 修复「交互菜单还是没变」根因——命令语义收拢为唯一实现，删除 web_proxy 重复内联命令链 -->
@@ -3765,7 +3797,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.63...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.64...HEAD
+[v0.9.64]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.63...v0.9.64
 [v0.9.63]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.62...v0.9.63
 [v0.9.62]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.61...v0.9.62
 [v0.9.61]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.60...v0.9.61
