@@ -98,6 +98,11 @@ SCENES: List[Dict[str, str]] = [
      "desc": "每日任务执行成功后推送任务积分与当前总积分"},
     {"key": "health_done", "name": "巡检结果通知",
      "desc": "模型可用性巡检结束后推送结果摘要与当前可用模型"},
+    # 主动播报（2026-10-14 用户确认「需要」）：任务失败时推**分析**而非事实。
+    # 与 task_done 的分工：task_done 发事实（积分/账号数），本场景发归因
+    # （为什么失败 + 怎么办），两者互不重叠、不会重复推送同一事件。
+    {"key": "task_failed_analysis", "name": "任务失败分析",
+     "desc": "每日任务失败时推送智能归因（失败原因 + 处理建议）"},
     {"key": "model_change", "name": "模型目录变化",
      "desc": "上游模型目录新增或下线时推送变化明细与当前可用模型"},
     # 保留的通用场景
@@ -1404,6 +1409,55 @@ def build_checkin_done(checkin_credits: float, remaining: float,
         "  · 累计任务积分：%s" % _fmt_num(total),
     ]
     return ("✅ 签到完成", lines)
+
+
+def build_task_failed_analysis(detail: str, accounts_done: int = 0,
+                               accounts_total: int = 0,
+                               duration_sec: float = 0.0) -> tuple:
+    """⑥ 任务失败分析：把失败原因翻译成「原因 + 建议」（主动播报）。
+
+    与 `diagnose_task_failure` 工具**共用同一套确定性映射**（
+    `_classify_task_failure`），保证「问助手」和「主动推送」口径一致。
+
+    分工原则（用户 2026-10-14 确认）：
+      - `task_done` 发**事实**（本次积分、账号数）；
+      - 本场景发**分析**（为什么失败、该怎么办）。
+    两者内容不重叠，不会对同一事件重复推送。
+    """
+    reason, advice = _classify_task_failure(detail)
+    mins = int(duration_sec // 60) if duration_sec else 0
+    lines = [
+        "🔍 每日任务失败分析",
+        "  · 原因：%s" % reason,
+        "  · 建议：%s" % advice,
+    ]
+    if accounts_total:
+        lines.append("  · 进度：账号 %d/%d" % (accounts_done, accounts_total))
+    if mins:
+        lines.append("  · 已运行：%d 分钟" % mins)
+    return ("🔍 每日任务失败分析", lines)
+
+
+def _classify_task_failure(detail: str) -> tuple:
+    """把失败 detail 归类成（原因, 建议）—— 确定性映射，不猜。
+
+    助手工具 `diagnose_task_failure` 与本函数共用，保证两处口径一致。
+    """
+    d = str(detail or "")
+    if "进程中断" in d or "容器重启" in d:
+        return ("进程被中断（容器重启/被终止）",
+                "多为发版重建容器所致，非系统缺陷；避免在执行中重建容器")
+    if "无可用账号" in d:
+        return ("账号池无可用账号",
+                "检查账号凭据是否过期、账号是否被全部停用")
+    if "超时" in d:
+        return ("执行超时",
+                "账号数多时属正常现象（按账号判定），可适当提高单账号超时")
+    if "vendor 脚本缺失" in d or "内置脚本缺失" in d:
+        return ("内置脚本缺失", "镜像可能不完整，建议重建容器或反馈作者")
+    if d:
+        return (d[:80], "可查看容器日志进一步定位")
+    return ("原因未记录", "可查看容器日志进一步定位")
 
 
 def build_task_done(task_credits: float, total: float,

@@ -841,19 +841,16 @@ def _tool_diagnose_task(args: Dict[str, Any]) -> str:
         detail = ""
         if isinstance(s, dict):
             detail = str(s.get("detail") or "")
-        # 已知原因的归类与建议（确定性映射，不猜）
-        reason, advice = "原因未记录", "可查看容器日志进一步定位"
-        if "进程中断" in detail or "容器重启" in detail:
-            reason = "进程被中断（容器重启/被终止）"
-            advice = "多为发版重建容器所致，非系统缺陷；避免在执行中重建容器"
-        elif "无可用账号" in detail:
-            reason = "账号池无可用账号"
-            advice = "检查账号凭据是否过期、账号是否被全部停用"
-        elif "超时" in detail:
-            reason = "执行超时"
-            advice = "账号数多时属正常现象（按账号判定），可适当提高单账号超时"
-        elif detail:
-            reason = detail[:80]
+        # 与主动播报**共用同一套映射**（notify._classify_task_failure），
+        # 保证「问助手」和「主动推送」口径一致，不会出现两套说法。
+        try:
+            try:
+                from gateway import notify as _nt6
+            except ImportError:
+                import notify as _nt6  # type: ignore
+            reason, advice = _nt6._classify_task_failure(detail)
+        except Exception:
+            reason, advice = (detail[:80] or "原因未记录"), "可查看容器日志进一步定位"
         lines.append("  · %s（%s，%s）" % (jid, hm, mode))
         lines.append("    - 原因：%s" % reason)
         lines.append("    - 建议：%s" % advice)

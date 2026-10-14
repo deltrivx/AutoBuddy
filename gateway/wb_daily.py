@@ -296,6 +296,7 @@ class DailyJob:
         self.tasks_summary: list[dict] = []      # 任务台账（任务维度，落库用）
         self._cur_account: dict | None = None    # 当前正在跑的账号
         self._checkin_notified = False           # 本轮签到通知是否已发（幂等）
+        self._failed_notified = False            # 本轮失败分析是否已发（幂等）
 
     def _notify_checkin_once(self) -> None:
         """本轮首个账号完成时推送一次「签到成功」通知（用户 2026-10-13 需求）。
@@ -879,6 +880,61 @@ async def _execute(job: DailyJob):
         job.log_line(f"脚本退出码 {rc}，请查看日志定位失败账号")
         job.finish("failed", {"rc": rc, "summary": _tail_summary(all_lines)})
     _persist_run(job, all_lines)
+    # 失败即推分析（成功走 task_done，两者互不重叠）。
+    # 放在 _persist_run 之后：确保落库完成再推，面板与推送数据一致。
+    if job.status != "done":
+        try:
+            await _notify_task_failed(job)
+        except Exception as e:
+            job.log_line(f"失败分析推送异常（不影响主流程）: {str(e)[:80]}")
+
+
+async def _notify_task_failed(job: DailyJob) -> None:
+    """推送「任务失败分析」场景通知（2026-10-14 用户确认「需要」）。
+
+    与 task_done 的分工：task_done 发**事实**（积分/账号数），本场景发**分析**
+    （为什么失败 + 怎么办）。两者内容不重叠，不会对同一事件重复推送。
+
+    归因逻辑与助手工具 `diagnose_task_failure` 共用
+    `notify._classify_task_failure`，保证「问助手」与「主动推送」口径一致。
+
+    幂等：`_failed_notified` 保证一轮只发一次（失败路径有多处出口）。
+    异常一律吞掉 —— 通知是附属功能，绝不能影响任务主流程。
+    """
+    if job._failed_notified:
+        return
+    job._failed_notified = True
+    try:
+        try:
+            import notify
+        except ImportError:
+            try:
+                from gateway import notify  # type: ignore
+            except ImportError:
+                return
+        # 失败原因：result 可能是 dict（含 rc/summary）或纯字符串
+        detail = ""
+        result = job.result
+        if isinstance(result, dict):
+            detail = str(result.get("detail") or "")
+            if not detail and result.get("rc") not in (None, 0):
+                detail = "脚本退出码 %s" % result.get("rc")
+        else:
+            detail = str(result or "")
+        duration = 0.0
+        if job.finished_at and job.created_at:
+            duration = float(job.finished_at) - float(job.created_at)
+        title, lines = notify.build_task_failed_analysis(
+            detail, accounts_done=job.accounts_done,
+            accounts_total=job.accounts_total, duration_sec=duration)
+        r = notify.send_scene("task_failed_analysis", title, lines)
+        if r.get("ok"):
+            job.log_line("任务失败分析已推送：%s" % ",".join(r.get("sent_to") or []))
+    except Exception as e:
+        try:
+            job.log_line(f"失败分析推送异常（不影响主流程）: {str(e)[:80]}")
+        except Exception:
+            pass
 
 
 async def _notify_task_done(job: DailyJob, store: dict) -> None:
@@ -971,6 +1027,13 @@ async def _guard(job: DailyJob):
     finally:
         if job.status == "running":
             job.finish("failed", "未知退出")
+        # _execute 内的失败分支已各自推送；走到这里说明是它没覆盖到的出口
+        # （异常/未知退出），补推一次。幂等标记保证不会与前者重复。
+        if job.status != "done" and not job._failed_notified:
+            try:
+                await _notify_task_failed(job)
+            except Exception:
+                pass
         global _last_run_at
         _last_run_at = time.time()
         # 回写持久化：重启后调度以此为基准，不会立即重跑一轮。

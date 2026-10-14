@@ -31,6 +31,31 @@
 
 ---
 
+## [v0.9.75] - 2026-10-14
+
+<!-- summary: 主动播报落地——任务失败推送智能分析（原因+建议），与既有通知分工不重叠 -->
+
+### 新增
+
+- **任务失败主动播报**（用户确认「需要」）：新增 `task_failed_analysis` 通知场景，
+  任务失败时推送**分析**而非事实。
+  - 分工原则：`task_done` 发**事实**（本次积分、账号数），本场景发**分析**
+    （原因、建议、进度、已运行时长）—— 内容不重叠，同一事件不重复推送；
+  - 归因映射**与助手工具共用** `notify._classify_task_failure()`，
+    「问助手」与「主动推送」口径一致，不会出现两套说法；
+  - 两处失败出口都接（`rc != 0` 分支 + `_guard` 兜底），
+    `_failed_notified` 幂等标记保证一轮只发一次；
+  - 推送放在 `_persist_run()` 之后，确保面板与推送数据一致；
+  - 通知异常一律吞掉，绝不影响任务主流程。
+
+### 测试
+
+- 新增 `_test_broadcast_analysis.py`（**38** 项）：场景注册与分工说明、
+  两处接入点与幂等、**口径一致**（助手必须调共享映射、不得有自己的一套）、
+  归因映射 6 类输入（含空 detail）、文案要素、场景总数 8 且键唯一、
+  订阅过滤兼容新场景。
+- 全量 42 个测试文件全绿；Python 语法通过。
+
 ## [v0.9.74] - 2026-10-14
 
 <!-- summary: 阶段6——助手主动智能（积分趋势预测+任务失败归因）；修掉运行中任务被误报为失败 -->
@@ -4101,7 +4126,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.74...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.75...HEAD
+[v0.9.75]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.74...v0.9.75
 [v0.9.74]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.73...v0.9.74
 [v0.9.73]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.72...v0.9.73
 [v0.9.72]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.71...v0.9.72
