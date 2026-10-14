@@ -31,6 +31,37 @@
 
 ---
 
+## [v0.9.66] - 2026-10-14
+
+<!-- summary: 修复 token 统计页 500——entrypoint 双向软链成环导致 SQLite 打不开数据库 -->
+
+### 修复
+
+- **token 统计页 500**：实测 `/api/token-stats` 报 500，堆栈为
+  `sqlite3.OperationalError: unable to open database file`。根因是
+  `entrypoint.sh` 的双向软链**成环**：
+  `.autobuddy/token_stats.db-wal` 与 `.wb-switch/token_stats.db-wal` 互指
+  （A→B→A），SQLite 打开拿到 ELOOP。
+  - 原实现用 `[ ! -e ]` 判断目标占用，而 `-e` **跟随符号链接** ——
+    对悬空链接返回 false，反向轮把悬空链接当「不存在」又建一条反向链 → 成环。
+  - 修正：源只接受真实实体（`[ -e ]`）；目标占用判断含 `-L`；
+    SQLite 边车文件（`-wal` / `-shm` / `-journal`）**永不跨目录链接**。
+- **连带影响**：读路径（token-stats）与写路径（token usage flush）同时中断，
+  故障期间日志有 1839 条 `Error flushing token usage`，用量数据持续丢失。
+  线上急救（删 4 个循环/悬空链接，未触碰主库）后读写均已恢复，
+  `usage_logs` 实时写入，延迟 0 分钟。
+
+### 测试
+
+- 新增 `_test_entrypoint_symlink.py`（17 项）：源码契约 + **真实执行**
+  （复刻故障现场 → 跑修复逻辑 → 验证无环无悬空、普通文件仍双向传播）、
+  干净场景边车不跨目录、幂等性、互指清理后重启不重建互指。
+- 全量 38 个测试文件全绿。
+
+### 升级说明
+
+- 重建容器即可。已生成的循环链接需手工清理一次（本次线上已处理）。
+
 ## [v0.9.65] - 2026-10-14
 
 <!-- summary: 修复配额仲裁边界缺陷——最优候选为0承接时任何有记录的账号都被判让位，粘性被架空 -->
@@ -3817,7 +3848,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.65...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.66...HEAD
+[v0.9.66]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.65...v0.9.66
 [v0.9.65]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.64...v0.9.65
 [v0.9.64]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.63...v0.9.64
 [v0.9.63]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.62...v0.9.63

@@ -68,18 +68,49 @@ mkdir -p /data/.autobuddy
 mkdir -p /data/.wb-switch
 
 # 自动双向映射保障
+#
+# ⚠️ 2026-10-14 修复：原实现用 `[ ! -e ]` 判断，而 `-e` **跟随符号链接** ——
+# 对悬空链接返回 false，于是反向那一轮把悬空链接当成「不存在」，再建一条
+# 指回本目录的链接，形成 A→B→A 死循环。SQLite 打开时拿到 ELOOP，报
+# `unable to open database file`，/api/token-stats 直接 500。
+#
+# 实测案例：token_stats.db-wal 双向互指（05:05 与 12:18 两轮链接交叉生成）。
+#
+# 三条修正：
+#   1) 存在性判断改为 `-e` **或** `-L`（有一个就算已占位，不再重复建链）；
+#   2) 目标本身是符号链接时跳过（可能是反向链，避免成环）；
+#   3) SQLite 边车文件（-wal / -shm / -journal）**永不跨目录链接** ——
+#      它们是事务副产品，必须与主库同目录，链到别处必然打不开。
+link_if_absent() {
+    src="$1"; dst="$2"
+    # 只传播**真实实体**：悬空链接（-e 为假）直接跳过。
+    # 这是原 bug 的核心 —— 反向那一轮把悬空链接当实体链过去，与既有的
+    # 正向链接互指，形成 A→B→A 死循环（ELOOP → 打不开数据库）。
+    [ -e "$src" ] || return 0
+    # 目标已占用（实体或链接都算）→ 跳过，不重复建链、不覆盖。
+    if [ -e "$dst" ] || [ -L "$dst" ]; then return 0; fi
+    ln -s "$src" "$dst" 2>/dev/null || true
+}
+
+is_sqlite_sidecar() {
+    case "$1" in
+        *-wal|*-shm|*-journal) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 for f in /data/.autobuddy/*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
     fname=$(basename "$f")
-    if [ ! -e "/data/.wb-switch/$fname" ]; then
-        ln -s "/data/.autobuddy/$fname" "/data/.wb-switch/$fname" 2>/dev/null || true
-    fi
+    is_sqlite_sidecar "$fname" && continue
+    link_if_absent "/data/.autobuddy/$fname" "/data/.wb-switch/$fname"
 done
 # 反向保障（官方生成的新文件落到 .autobuddy）
 for f in /data/.wb-switch/*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
     fname=$(basename "$f")
-    if [ ! -e "/data/.autobuddy/$fname" ]; then
-        ln -s "/data/.wb-switch/$fname" "/data/.autobuddy/$fname" 2>/dev/null || true
-    fi
+    is_sqlite_sidecar "$fname" && continue
+    link_if_absent "/data/.wb-switch/$fname" "/data/.autobuddy/$fname"
 done
 
 
