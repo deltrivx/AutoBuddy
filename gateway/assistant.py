@@ -421,17 +421,71 @@ def _tool_status(_args: Dict[str, Any]) -> str:
 
 
 def _tool_task(_args: Dict[str, Any]) -> str:
-    d = _http_json(WEBUI_BASE + "/api/wb-daily/jobs") or {}
-    jobs = d.get("jobs") or []
-    if not jobs:
-        return "暂无任务记录"
-    j = jobs[0]
-    return ("每日任务：\n"
-            "  · 最近一轮：%s\n"
-            "  · 状态：%s\n"
-            "  · 进度：%s（账号 %s/%s）" % (
-                j.get("job_id"), j.get("status"), j.get("progress"),
-                j.get("accounts_done"), j.get("accounts_total")))
+    """每日任务进度 + **今日执行历史**。
+
+    2026-10-14 用户反馈「我只是问他今天执行过任务吗？为何就直接执行了」——
+    除了路由缺陷，还暴露本工具**答不了历史问题**：原先只读内存态
+    `/api/wb-daily/jobs`（只有当前进程的最近一轮，容器重启即丢），
+    「今天跑过吗」根本无从判断。
+    现补 `runs`（SQLite 落库历史），并统计今日轮次。
+    """
+    import datetime as _dt
+    import time as _t
+    today = _dt.date.today().isoformat()
+
+    # 1) 今日历史（落库，跨重启）
+    runs = []
+    try:
+        d = _http_json(WEBUI_BASE + "/api/wb-daily/runs?limit=50") or {}
+        runs = d if isinstance(d, list) else (d.get("runs") or d.get("items") or [])
+    except Exception:
+        runs = []
+
+    def _day(ts):
+        try:
+            return _dt.date.fromtimestamp(float(ts)).isoformat()
+        except Exception:
+            return ""
+
+    today_runs = [r for r in runs if _day(r.get("started_at")) == today]
+    done_today = [r for r in today_runs if str(r.get("status")) == "done"]
+
+    # 2) 当前/最近一轮（内存态，含实时进度）
+    jobs = []
+    try:
+        d2 = _http_json(WEBUI_BASE + "/api/wb-daily/jobs") or {}
+        jobs = d2.get("jobs") or []
+    except Exception:
+        jobs = []
+
+    lines = ["每日任务："]
+    if not today_runs:
+        lines.append("  · 今天（%s）**没有执行记录**。" % today)
+    else:
+        lines.append("  · 今天执行了 %d 轮（成功 %d 轮）。"
+                     % (len(today_runs), len(done_today)))
+        for r in today_runs[-5:]:
+            st = r.get("started_at")
+            try:
+                hm = _dt.datetime.fromtimestamp(float(st)).strftime("%H:%M")
+            except Exception:
+                hm = "?"
+            fin = r.get("finished_at")
+            dur = ""
+            try:
+                if st and fin:
+                    dur = "（%.0f 分钟）" % ((float(fin) - float(st)) / 60.0)
+            except Exception:
+                dur = ""
+            lines.append("    - %s 启动 · %s%s · 账号 %s" % (
+                hm, r.get("status"), dur, r.get("accounts") or "?"))
+
+    if jobs:
+        j = jobs[0]
+        lines.append("  · 最近一轮：%s · %s · 账号 %s/%s" % (
+            j.get("status"), j.get("progress"),
+            j.get("accounts_done"), j.get("accounts_total")))
+    return "\n".join(lines)
 
 
 def _tool_reqstats(_args: Dict[str, Any]) -> str:

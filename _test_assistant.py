@@ -101,8 +101,14 @@ check("工具全部只读（无 POST/PUT 调用）",
       "_tool_credits" in SRC_AS
       and 'method="POST"' not in SRC_AS[SRC_AS.index("def _tool_credits"):
                                           SRC_AS.index("def _tool_registry")])
-check("启动任务/签到不在工具集（写操作须走命令）",
-      "wb-daily/run" not in SRC_AS and "checkin/all" not in SRC_AS)
+# 写端点必须不在工具集。注意 `/api/wb-daily/runs`（读历史）含子串
+# `wb-daily/run`，旧断言把它误判成写端点 —— 用带引号的精确串判定。
+check("启动任务写端点不在工具集（写操作须走命令）",
+      '"/api/wb-daily/run"' not in SRC_AS)
+check("签到写端点不在工具集",
+      "checkin/all" not in SRC_AS)
+check("只读历史端点 runs 在工具集（回答「今天跑过吗」）",
+      "/api/wb-daily/runs" in SRC_AS)
 
 print("\n[3] 集成契约（notify.py）")
 
@@ -124,7 +130,7 @@ check("菜单新增智能助手按钮", '("AB_ASSISTANT", "智能助手",   "常
 check("菜单 key 映射到「助手」", '"AB_ASSISTANT": "助手",' in SRC_NT)
 check("help 文本说明助手", "智能助手查实时数据回答" in SRC_NT)
 check("助手不可用时回落原兜底文案",
-      "回复「帮助」查看可用指令，或直接提问" in SRC_NT)
+      "回复「帮助」查看可用指令" in SRC_NT)
 
 print("\n[4] web_proxy 不阻塞事件循环")
 

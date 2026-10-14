@@ -678,11 +678,71 @@ def _cmd_checkin() -> str:
     return "签到已提交：%s" % (d.get("status") or "已开始")
 
 
+# ---------------------------------------------------------------------------
+# 疑问句判定（2026-10-14 用户反馈修复）
+#
+# 用户反馈：「我只是问他今天执行过任务吗？为何就直接执行了……交互是交互，
+# 智能助手是智能助手，可以包含交互菜单命令，而不是交互菜单不够了才调用智能助手。」
+#
+# 根因：`if "任务" in text` 这类**子串匹配**分不清「问状态」与「下令执行」——
+# 「今天执行过任务吗」命中后直接调 _cmd_run() 把任务跑了。
+#
+# 修正：疑问句一律交智能助手（只读工具回答，从根上杜绝「问一句跑一轮」）；
+# 写操作只认**显式精确命令**，绝不被自然语言触发。
+# ---------------------------------------------------------------------------
+_QUESTION_MARKERS = (
+    "吗", "呢", "什么", "多少", "哪些", "怎么", "怎样", "如何",
+    "是否", "是不是", "有没有", "能否", "能不能", "可不可以",
+    "？", "?", "跑完", "跑过", "执行过", "跑了",
+)
+
+
+def _looks_like_question(text: str) -> bool:
+    """是否是疑问句（问状态 / 问数据，而不是下令执行）。
+
+    现有显式命令（账号余额 / 模型 / 状态 / 任务进度 / 执行任务 / 签到 /
+    notify on/off / help）**都不含**这些标记，所以不会误伤命令本身。
+    """
+    t = text or ""
+    return any(m in t for m in _QUESTION_MARKERS)
+
+
+def _readonly_fallback(text: str, low: str, orig: str) -> str:
+    """助手不可用时的**只读**兜底（疑问句专用）。
+
+    设计红线：这里**绝不**调用写操作（_cmd_run / _cmd_checkin / 通知开关）——
+    疑问句永远是查询，助手挂了也不能反过来把用户的任务给执行了。
+    """
+    try:
+        if "账号" in text or orig in ("accounts", "balance"):
+            return _cmd_accounts()
+        if "模型" in text or orig in ("models",):
+            return _cmd_models()
+        if "积分" in text or "余额" in text or orig in ("credits",):
+            return _cmd_credits()
+        if "状态" in text or orig in ("status",):
+            return _cmd_status()
+        # 任务相关疑问：只给进度，绝不启动任务
+        if "任务" in text or orig in ("daily", "run"):
+            return _cmd_daily()
+    except Exception:
+        return ""
+    return ""
+
+
 def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
-    """命令 → 回复文本。企微与 Telegram 共用的**唯一**命令语义实现。
+    """命令 / 自然语言 → 回复文本。企微与 Telegram 共用的**唯一**语义实现。
 
     ``session_id`` 用于智能助手的会话隔离（企微传 FromUserName、
     Telegram 传 chat_id）—— 不同用户的多轮对话互不串味。
+
+    路由模型（2026-10-14 重构，菜单与助手**平级**）：
+      1. **疑问句 → 智能助手**：一等公民入口，不是兜底。助手只用只读工具
+         回答，从根上杜绝「问一句跑一轮」。
+      2. **显式命令 → 确定性命令**（菜单按钮 / 精确命令）：只读查询允许关键词
+         命中（误命中也只是返回数据）；**写操作只认精确形式**。
+      3. 其余自然语言 → 智能助手。
+    助手不可用时疑问句降级到只读命令兜底（仍不触发写操作）。
     """
     text = (cmd or "").strip()
     if not text:
@@ -697,6 +757,17 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
               "daily": "任务", "run": "任务", "checkin": "签到", "help": "help"}
     if low in _EN2ZH:
         text = low = _EN2ZH[low]
+
+    # ---- 1. 疑问句优先交助手（绝不被命令分支拦截）----
+    if _looks_like_question(text):
+        reply = _assistant_fallback(text, session_id)
+        if reply:
+            return reply
+        ro = _readonly_fallback(text, low, orig)
+        if ro:
+            return ro
+        return ("这个问题我暂时答不上来（智能助手未配置或不可用）。\n"
+                "可以改用命令查询：账号余额 / 模型 / 状态 / 任务进度。")
 
     if low.startswith("notify"):
         arg = low.split()[-1] if " " in low else ""
@@ -714,6 +785,7 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
     if "助手" in text or low in ("assistant", "ai"):
         return _cmd_assistant_help()
     try:
+        # ---- 2a. 只读查询：关键词命中即可（最坏只是多返回了数据）----
         if "账号" in text or orig in ("accounts", "balance"):
             return _cmd_accounts()
         if "模型" in text or orig in ("models",):
@@ -722,23 +794,24 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
             return _cmd_credits()
         if "状态" in text or orig in ("status",):
             return _cmd_status()
-        if "签到" in text or orig in ("checkin",):
-            return _cmd_checkin()
-        if "任务" in text or orig in ("daily", "run"):
-            if orig == "daily":
-                return _cmd_daily()
+        if "任务进度" in text or orig == "daily":
+            return _cmd_daily()
+        # ---- 2b. 写操作：只认显式精确命令，绝不被自然语言触发 ----
+        # 「今天执行过任务吗」含「任务」但属疑问句，已在上面被助手接走；
+        # 能走到这里的「执行任务」必须是用户明确下达的命令（或菜单按钮）。
+        _cmd = text.strip().strip("。！!，,~～.… ")
+        if _cmd in ("执行任务", "启动任务", "跑任务", "运行任务") or orig == "run":
             return _cmd_run()
+        if _cmd in ("签到", "全部签到") or orig == "checkin":
+            return _cmd_checkin()
     except Exception:
         return "数据读取失败，请稍后再试"
-    # 未命中任何命令 → 交给智能助手（自然语言问答）。
-    #
-    # 设计（2026-10-14 第二阶段）：**命令优先，LLM 兜底**。上面 9 个命令是
-    # 确定性路径（零延迟、不依赖模型可用性），永不被 LLM 故障拖累；
-    # 助手只接管未命中命令的自然语言。不可用时回落原兜底文案。
+
+    # ---- 3. 其余自然语言 → 智能助手（与菜单平级的入口，不是兜底）----
     reply = _assistant_fallback(text, session_id)
     if reply:
         return reply
-    return "收到：%s\n（回复「帮助」查看可用指令，或直接提问）" % text[:60]
+    return "收到：%s\n（回复「帮助」查看可用指令，或直接向我提问）" % text[:60]
 
 
 def _assistant_fallback(text: str, session_id: Optional[str] = None) -> str:
