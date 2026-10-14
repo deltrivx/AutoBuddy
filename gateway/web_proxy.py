@@ -4075,13 +4075,31 @@ COLLAPSE_SCRIPT = r"""
       tag.type = "button";
       tag.title = p.desc || p.name;
       tag.onclick = function () {
-        // 只改 provider，其余字段沿用该 provider 自己保存的值
-        wbApiAction("/api/assistant", "PUT", { provider: p.key },
-          "已切换到 " + p.name)
-          .then(function () {
+        // 切 provider 是**纯本地配置切换**，绝不能触发任何网络探测 ——
+        // 2026-10-14 用户反馈「点击 OpenAI 兼容接口直接卡死」：原实现走
+        // PUT，而 PUT 会同步跑一次 LLM 探测（实测 102 秒），页面像卡死。
+        // 现在只保存 + 重渲染，零网络开销。
+        tag.disabled = true;
+        fetch("/api/assistant/provider", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: p.key })
+        })
+          .then(function (r) { return r.json().catch(function () { return {}; }); })
+          .then(function (d) {
+            tag.disabled = false;
+            if (d && d.ok) {
+              wbToast(d.warn ? d.warn : ("已切换到 " + p.name), d.warn ? "warn" : "ok");
+            } else {
+              wbToast("切换失败：" + ((d && d.error) || "未知原因"), "err");
+            }
             var old = document.getElementById("settings-assistant");
             if (old) old.remove();
             injectAssistant();
+          })
+          .catch(function () {
+            tag.disabled = false;
+            wbToast("请求失败，请重试", "err");
           });
       };
       provWrap.appendChild(tag);
@@ -7254,22 +7272,50 @@ async def assistant_get():
 
 @app.put("/api/assistant")
 async def assistant_put(request: Request):
-    """保存助手配置（合并式；secret 语义与通知渠道一致）。"""
+    """保存助手配置（合并式；secret 语义与通知渠道一致）。
+
+    ⚠️ 2026-10-14 修复（用户反馈「点击 OpenAI 兼容接口直接卡死」）：
+
+    原实现在保存后**同步跑一次 LLM 探测**，实测耗时 **102.1 秒**
+    （探测要跑两轮 LLM：45s 超时 ×2 + 工具调用）。前端 await 同一个请求，
+    页面看着就像卡死；总开关按钮也走这里，等于点一下也要等 100 秒。
+
+    现在保存只落盘、**绝不探测** —— 想验证连通性请用「测试连通性」按钮
+    （POST /api/assistant/test，那是用户主动发起、有明确等待预期的动作）。
+
+    ``probe`` 参数可选：只有前端明确传 ``probe: true`` 时才探测
+    （向后兼容旧调用方），且探测失败**不影响**保存结果。
+    """
     try:
         payload = json.loads(await request.body() or b"{}")
-        cfg = _assistant._save_config(payload)
-        # 保存后立即自检一次，让前端能马上看到「配得对不对」。
-        # 失败不影响保存（可能只是网络抖动），只作为提示返回。
-        probe = None
+        _assistant._save_config(payload)
+        # 校验当前配置是否「可用」：切到 openai 但没填密钥时明确告诉前端，
+        # 让它提示用户去补配置 —— 而不是把坏配置静默生效。
+        warn = None
         try:
-            probe = await _assistant_probe(payload)
+            rt = _assistant._runtime()
+            if rt.get("enabled") and rt.get("provider") != "gateway" \
+                    and not rt.get("api_key"):
+                warn = ("已切换到「%s」，但尚未填写 API Key —— 助手暂时无法回答，"
+                        "请补配置后点「测试连通性」验证。"
+                        % (_PROVIDER_NAME.get(rt.get("provider")) or rt.get("provider")))
         except Exception:
-            probe = None
-        return {"ok": True, "probe": probe,
+            warn = None
+        probe = None
+        if payload.get("probe") is True:
+            try:
+                probe = await _assistant_probe(payload)
+            except Exception:
+                probe = None
+        return {"ok": True, "warn": warn, "probe": probe,
                 "runtime": _assistant.session_stats()}
     except Exception as e:
         return Response(content=json.dumps({"ok": False, "error": str(e)[:120]}),
                         status_code=500, media_type="application/json")
+
+
+# provider key -> 中文名（保存后给前端的提示用，避免再查一次注册表）
+_PROVIDER_NAME = {p["key"]: p.get("name") for p in _assistant.PROVIDERS}
 
 
 async def _assistant_probe(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -7288,6 +7334,35 @@ async def _assistant_probe(payload: Optional[Dict[str, Any]] = None) -> Dict[str
         return {"ok": False, "error": "未收到回答（检查地址、密钥与模型名）"}
     return {"ok": True, "durationMs": int((_t.time() - t0) * 1000),
             "replyPreview": reply[:200]}
+
+
+@app.post("/api/assistant/provider")
+async def assistant_switch_provider(request: Request):
+    """切换模型提供方（**只落盘，绝不探测**）。
+
+    与 PUT /api/assistant 的分工：PUT 是「保存完整配置」，本接口只做
+    「换 provider」这一个动作，因此零网络开销、即时返回。
+
+    修复动机（2026-10-14 用户反馈「点击 OpenAI 兼容接口直接卡死」）：
+    原前端切 provider 走 PUT，而 PUT 会同步跑一次 LLM 探测，
+    实测 **102.1 秒** —— 用户点一下就像页面卡死。
+    """
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        key = str(payload.get("provider") or "").strip()
+        if key not in _assistant._PROVIDER_BY_KEY:
+            return {"ok": False, "error": "未知的模型提供方：%s" % (key or "未指定")}
+        _assistant._save_config({"provider": key})
+        rt = _assistant._runtime()
+        warn = None
+        if rt.get("enabled") and key != "gateway" and not rt.get("api_key"):
+            warn = ("已切换到「%s」，但还没填 API Key —— 助手暂时无法回答，"
+                    "请补上密钥后点「测试连通性」。"
+                    % (_PROVIDER_NAME.get(key) or key))
+        return {"ok": True, "warn": warn,
+                "runtime": _assistant.session_stats()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:120]}
 
 
 @app.post("/api/assistant/test")

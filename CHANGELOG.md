@@ -31,6 +31,32 @@
 
 ---
 
+## [v0.9.77] - 2026-10-14
+
+<!-- summary: 修复助手配置页「点击OpenAI兼容接口直接卡死」——PUT保存时同步跑LLM探测实测102.1秒 -->
+
+### 修复
+
+- **助手配置页点击 provider 直接卡死**（用户反馈「点击 OpenAI 兼容接口直接卡死，
+  还没配置就已经切换了」）：实测 `PUT /api/assistant` 耗时 **102.1 秒**。
+  - 根因 1（卡死）：`assistant_put()` 保存后**同步跑一次 LLM 探测**
+    （两轮 LLM：45s 超时 ×2 + 工具调用），前端 await 同一请求看着像卡死；
+    **总开关按钮也走这个 PUT**，点一下开关也要等 100 秒；
+  - 根因 2（未配置就切换）：`_save_config()` 在探测**之前**执行 ——
+    provider 已被切成 openai 但密钥为空，助手进入坏状态；
+    探测失败只影响返回的 `probe` 字段，救不回已落盘的配置。
+  - 修复：PUT **不再自动探测**（只落盘；保留 `probe: true` 显式开关）；
+    新增轻量切换接口 `POST /api/assistant/provider`（只换 provider、零网络开销）；
+    切到需密钥的 provider 但未填密钥时返回 `warn`，前端 toast 提示去补配置。
+
+### 测试
+
+- 新增 `_test_assistant_switch.py`（**35** 项）：PUT 不再自动探测、
+  轻量切换接口只落盘不探测、前端改走新接口且不再走 PUT、
+  测试连通性接口保持独立、配置层 secret 三态语义未被破坏、
+  行为验证（切 openai 未填密钥 → warn 判据成立）。
+- 全量 44 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.76] - 2026-10-14
 
 <!-- summary: 修复「你可以做什么」收不到回复——企微5秒硬限制下LLM回复被丢弃，改为能力问句即时答+LLM延后推送 -->
@@ -4157,7 +4183,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.76...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.77...HEAD
+[v0.9.77]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.76...v0.9.77
 [v0.9.76]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.75...v0.9.76
 [v0.9.75]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.74...v0.9.75
 [v0.9.74]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.73...v0.9.74
