@@ -132,7 +132,16 @@ check("run_in_threadpool 跑命令路由", "run_in_threadpool(" in SRC_WP)
 check("传入 from_user 作为会话 id", "from_user or None" in SRC_WP)
 check("web_proxy 无第二份命令语义（历史教训）",
       'elif cmd == "accounts"' not in SRC_WP and 'elif cmd == "models"' not in SRC_WP)
-check("web_proxy 无第二份助手实现", "assistant_reply" not in SRC_WP)
+# 「无第二份助手实现」的正确判据：web_proxy 不得内含助手核心逻辑
+# （系统提示词 / 工具注册表 / 工具分发 / 自己的命令分支）。
+# 允许且应当**委托** —— 连通性测试要调 _assistant.assistant_reply()。
+check("web_proxy 无第二份助手实现（无 SYSTEM_PROMPT/工具表/分发）",
+      "SYSTEM_PROMPT" not in SRC_WP
+      and "_tool_registry" not in SRC_WP
+      and "_dispatch_tool" not in SRC_WP)
+check("web_proxy 只委托 assistant（import + 调用 probe）",
+      "import assistant as _assistant" in SRC_WP
+      and "_assistant.assistant_reply(" in SRC_WP)
 
 print("\n[5] 真实模块行为（不依赖网络）")
 
@@ -200,6 +209,129 @@ echo_cases = [
 for text, want in echo_cases:
     got = A._is_tool_echo(text)
     check(f"_is_tool_echo({text[:24]!r}) == {want}", got == want, f"got {got}")
+
+# ---------------------------------------------------------------------------
+# [6] Provider 注册表与配置层（第三阶段：设置页可视化配置）
+# 参考 MoviePilot 的 LLMProviderInfo / ProviderSpec。
+# ---------------------------------------------------------------------------
+print("\n[6] Provider 注册表（对齐 MoviePilot LLMProviderInfo）")
+
+reg = A.PROVIDERS
+keys = [p["key"] for p in reg]
+check("注册表非空且 key 唯一", len(keys) == len(set(keys)) and keys, f"got {keys}")
+check("默认自带 provider（gateway）", "gateway" in keys)
+check("支持自定义 provider（openai 兼容）", "openai" in keys)
+
+for p in reg:
+    for field in ("key", "name", "desc", "default_base_url",
+                  "base_url_editable", "requires_base_url",
+                  "supports_api_key", "supports_model_refresh"):
+        check(f"provider {p['key']} 有字段 {field}", field in p,
+              f"missing {field}")
+    check(f"provider {p['key']} base_url_presets 是列表",
+          isinstance(p.get("base_url_presets"), list))
+    if p.get("base_url_presets"):
+        check(f"provider {p['key']} 每个 preset 有 id/label/value",
+              all(set(["id", "label", "value"]) <= set(pre.keys())
+                  for pre in p["base_url_presets"]))
+    # secret 语义要求：需要密钥的 provider 必须带标签与提示
+    if p.get("supports_api_key"):
+        check(f"provider {p['key']} 有 api_key_label", bool(p.get("api_key_label")))
+        check(f"provider {p['key']} 有 api_key_hint", bool(p.get("api_key_hint")))
+
+check("默认 provider 取 gateway", A._default_provider() == "gateway")
+check("_PROVIDER_BY_KEY 索引与注册表一致",
+      set(A._PROVIDER_BY_KEY.keys()) == set(keys))
+
+print("\n[7] 配置读写与 secret 语义（真实文件）")
+
+# 全新配置：默认值
+cfg0 = A._load_config()
+check("默认 enabled=True", cfg0.get("enabled") is True)
+check("默认 provider=gateway", cfg0.get("provider") == "gateway")
+check("默认 model 为空（自动挑选）", cfg0.get("model") == "")
+check("默认 providers 覆盖注册表全部 provider",
+      set(cfg0.get("providers", {}).keys()) >= set(keys))
+
+# 保存 provider + 地址 + 密钥
+A._save_config({"provider": "openai",
+                "providers": {"openai": {"base_url": "https://api.deepseek.com/v1",
+                                          "api_key": "sk-test-123"}}})
+rt = A._runtime()
+check("runtime 反映新 provider", rt.get("provider") == "openai")
+check("runtime 反映新 base_url", rt.get("base_url") == "https://api.deepseek.com/v1")
+check("runtime 读到 api_key", rt.get("api_key") == "sk-test-123")
+
+# secret 语义 1：不提交 = 保留
+A._save_config({"model": "deepseek-chat"})
+rt2 = A._runtime()
+check("不提交 api_key 时保留原值", rt2.get("api_key") == "sk-test-123")
+check("model 已更新", rt2.get("model") == "deepseek-chat")
+
+# secret 语义 2：空串 = 清除
+A._save_config({"providers": {"openai": {"api_key": ""}}})
+check("提交空串 = 清除密钥", A._runtime().get("api_key") == "")
+
+# secret 语义 3：GET 视图永不回明文
+v = A.public_view()
+ok_secret = True
+for pk, slot in v["config"]["providers"].items():
+    ak = slot.get("api_key")
+    if not (isinstance(ak, dict) and set(ak.keys()) == {"has_value"}):
+        ok_secret = False
+check("public_view 的 api_key 只回 {has_value}", ok_secret,
+      f"got {v['config']['providers']}")
+
+# 未配置时 has_value=False
+A._save_config({"provider": "gateway"})
+v2 = A.public_view()
+check("未配置密钥时 has_value=False",
+      v2["config"]["providers"]["gateway"]["api_key"] == {"has_value": False})
+
+# enabled 开关贯通到 runtime
+A._save_config({"enabled": False})
+check("enabled=False 时 runtime 不可用", A._runtime().get("enabled") is False)
+check("enabled=False 时 session_stats.enabled=False",
+      A.session_stats().get("enabled") is False)
+check("enabled=False 时 assistant_reply 返回空串",
+      A.assistant_reply("s", "你好") == "")
+A._save_config({"enabled": True})
+check("恢复 enabled=True", A._runtime().get("enabled") is True)
+
+# systemPrompt 可覆盖
+A._save_config({"systemPrompt": "你是测试助手"})
+check("systemPrompt 可保存并贯通 runtime",
+      A._runtime().get("systemPrompt") == "你是测试助手")
+
+# 配置持久化（重新加载仍在）
+A._save_config({"model": "persist-check"})
+reloaded = A._load_config()
+check("配置落盘后可重新读取", reloaded.get("model") == "persist-check")
+
+# base_url 反斜杠归一化（尾斜杠去掉，避免 //v1/...）
+A._save_config({"providers": {"gateway": {"base_url": "http://127.0.0.1:18091/"}}})
+check("base_url 去掉尾斜杠",
+      A._runtime().get("base_url") == "http://127.0.0.1:18091")
+
+# _pick_model：显式指定优先
+A._save_config({"provider": "gateway", "model": "hy3"})
+check("_pick_model 用设置页显式指定的模型", A._pick_model() == "hy3")
+
+print("\n[8] 设置页接口契约（web_proxy）")
+check("GET /api/assistant 存在", '@app.get("/api/assistant")' in SRC_WP)
+check("PUT /api/assistant 存在", '@app.put("/api/assistant")' in SRC_WP)
+check("POST /api/assistant/test 存在", '@app.post("/api/assistant/test")' in SRC_WP)
+check("POST /api/assistant/models 存在", '@app.post("/api/assistant/models")' in SRC_WP)
+check("GET 返回 public_view（脱敏）", "_assistant.public_view()" in SRC_WP)
+check("保存走 _save_config（合并式）", "_assistant._save_config(" in SRC_WP)
+check("测试返回 ok/durationMs/replyPreview（MP 的 LLMTestResult）",
+      "durationMs" in SRC_WP and "replyPreview" in SRC_WP)
+check("模型清单拉 /v1/models 并带 key",
+      'base + "/v1/models"' in SRC_WP and "api_key=key" in SRC_WP)
+check("助手 section 已注入设置页", "settings-assistant" in SRC_WP)
+check("设置页刷新会重取助手配置", "injectAssistant()" in SRC_WP)
+check("通知区在助手区之后注入（DOM 顺序：API→巡检→助手→通知）",
+      SRC_WP.index("injectAssistant();") < SRC_WP.index("injectNotify();"))
 
 import shutil
 shutil.rmtree(tmp, ignore_errors=True)

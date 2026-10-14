@@ -3296,8 +3296,11 @@ COLLAPSE_SCRIPT = r"""
     if (oldAbout) oldAbout.remove();
     var oldNotify = document.getElementById("settings-notify");
     if (oldNotify) oldNotify.remove();
+    var oldAssistant = document.getElementById("settings-assistant");
+    if (oldAssistant) oldAssistant.remove();
     injectApiAccess();
     injectModelHealth();
+    injectAssistant();
     injectNotify();
     // 关于面板里有一行「当前规模」，禁用项增减后要跟着变，所以一并重取。
     injectAbout();
@@ -3995,6 +3998,322 @@ COLLAPSE_SCRIPT = r"""
     dlg.appendChild(actions);
 
     document.body.appendChild(overlay);
+  }
+
+  // ---------------------------------------------------------------------
+  // 设置页：智能助手模型配置（第三阶段）
+  //
+  // 用户需求（2026-10-14）：「在设置页面添加智能助手模型配置，而不是你自己写，
+  // 参考 MoviePilot 的相关配置，默认自带模型提供，也可以配置其他模型」。
+  //
+  // 对齐 MoviePilot 的 LLMProviderInfo 模型：
+  //   - provider 注册表驱动（后端 PROVIDERS，前端自动渲染，加 provider 不用改前端）
+  //   - base_url_presets：预设地址下拉，免手打
+  //   - base_url_editable：允许自定义地址
+  //   - secret 字段：GET 不回明文，占位提示「已配置，留空保持不变」
+  //   - supports_model_refresh：模型清单可刷新
+  //   - 底部「测试连通性 + 保存」（MP 的 LLMTestResult 同款语义）
+  //
+  // 与通知渠道的差异：这里是**内联表单**（不是弹窗）—— 助手配置字段少、
+  // 且是「一页一处」的设置项，内联比弹窗更直观、少一次点击。
+  // ---------------------------------------------------------------------
+  function wbRenderAssistantSection(host, data) {
+    var reg = data.registry || [];
+    var cfg = data.config || {};
+    var provs = cfg.providers || {};
+    var curKey = cfg.provider || (reg[0] && reg[0].key) || "gateway";
+    var cur = reg.filter(function (p) { return p.key === curKey; })[0] || reg[0] || {};
+
+    var section = wbEl("section", "min-w-0 space-y-2.5");
+    section.id = "settings-assistant";
+    var head = wbEl("div", "px-1");
+    var h2 = wbEl("h2", "text-[13px] font-medium leading-5", "智能助手");
+    h2.id = "settings-assistant-title";
+    head.appendChild(h2);
+    section.appendChild(head);
+    section.setAttribute("aria-labelledby", "settings-assistant-title");
+
+    var card = wbEl("div", "wb-api-card");
+
+    // ---- 1. 总开关 ----
+    var swRow = wbEl("div", "wb-api-row");
+    var swMain = wbEl("div", "wb-api-main");
+    swMain.appendChild(wbEl("div", "wb-api-label", "启用智能助手"));
+    swMain.appendChild(wbEl("div", "wb-api-desc",
+      "开启后，企微 / Telegram 里未命中命令的自然语言会交给模型回答"
+      + "（实时查积分、账号、模型、任务进度）。命令始终优先，助手只做兜底。"));
+    swRow.appendChild(swMain);
+    var swBtn = wbEl("button",
+      "wb-api-btn" + (cfg.enabled ? " wb-api-btn-on" : ""),
+      cfg.enabled ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+    swBtn.onclick = function () {
+      swBtn.disabled = true;
+      wbApiAction("/api/assistant", "PUT", { enabled: !cfg.enabled },
+        !cfg.enabled ? "已开启智能助手" : "已关闭智能助手")
+        .then(function () {
+          var old = document.getElementById("settings-assistant");
+          if (old) old.remove();
+          injectAssistant();
+        });
+    };
+    swRow.appendChild(swBtn);
+    card.appendChild(swRow);
+
+    // ---- 2. Provider 选择（注册表驱动）----
+    var provRow = wbEl("div", "wb-api-row");
+    var provMain = wbEl("div", "wb-api-main");
+    provMain.appendChild(wbEl("div", "wb-api-label", "模型提供方"));
+    provMain.appendChild(wbEl("div", "wb-api-desc",
+      "默认用本网关自带的账号池（无需额外密钥）；也可以配任意 OpenAI 兼容接口。"));
+    provRow.appendChild(provMain);
+    var provWrap = wbEl("div", null);
+    provWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
+    reg.forEach(function (p) {
+      var on = p.key === curKey;
+      var tag = wbEl("button",
+        "wb-am-tag wb-am-tag-click" + (on ? " wb-am-tag-used" : ""), p.name);
+      tag.type = "button";
+      tag.title = p.desc || p.name;
+      tag.onclick = function () {
+        // 只改 provider，其余字段沿用该 provider 自己保存的值
+        wbApiAction("/api/assistant", "PUT", { provider: p.key },
+          "已切换到 " + p.name)
+          .then(function () {
+            var old = document.getElementById("settings-assistant");
+            if (old) old.remove();
+            injectAssistant();
+          });
+      };
+      provWrap.appendChild(tag);
+    });
+    provRow.appendChild(provWrap);
+    card.appendChild(provRow);
+
+    // ---- 3. 字段表单（按注册表渲染：地址 / 密钥 / 模型 / 提示词）----
+    var slot = provs[curKey] || {};
+    var state = {
+      base_url: slot.base_url || cur.default_base_url || "",
+      api_key: "",
+      model: cfg.model || "",
+      systemPrompt: cfg.systemPrompt || ""
+    };
+
+    function fieldRow(label, desc, control) {
+      var row = wbEl("div", "wb-api-row");
+      var main = wbEl("div", "wb-api-main");
+      main.appendChild(wbEl("div", "wb-api-label", label));
+      if (desc) main.appendChild(wbEl("div", "wb-api-desc", desc));
+      row.appendChild(main);
+      row.appendChild(control);
+      return row;
+    }
+
+    // 3.1 接口地址：预设下拉 + 可编辑输入
+    if (cur.base_url_editable !== false) {
+      var presets = cur.base_url_presets || [];
+      var baseBox = wbEl("div", null);
+      baseBox.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:260px;";
+      var baseInput = wbEl("input", "wb-api-input");
+      baseInput.type = "text";
+      baseInput.value = state.base_url;
+      baseInput.placeholder = cur.requires_base_url
+        ? "必填，如 https://api.openai.com/v1" : "留空 = 用默认地址";
+      baseInput.style.cssText = "width:100%;";
+      baseInput.oninput = function () { state.base_url = baseInput.value; };
+      baseBox.appendChild(baseInput);
+      if (presets.length) {
+        var preWrap = wbEl("div", null);
+        preWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
+        presets.forEach(function (pre) {
+          var tag = wbEl("button", "wb-am-tag wb-am-tag-click", pre.label);
+          tag.type = "button";
+          tag.title = pre.value;
+          tag.onclick = function () {
+            baseInput.value = pre.value;
+            state.base_url = pre.value;
+          };
+          preWrap.appendChild(tag);
+        });
+        baseBox.appendChild(preWrap);
+      }
+      card.appendChild(fieldRow("接口地址（Base URL）",
+        presets.length ? "点下方标签快速填充，也可直接修改。" : "OpenAI 兼容的 /v1 地址。",
+        baseBox));
+    }
+
+    // 3.2 API Key（secret：已配置则占位提示，空串=清除，不提交=保留）
+    if (cur.supports_api_key) {
+      var hasKey = (slot.api_key || {}).has_value;
+      var keyInput = wbEl("input", "wb-api-input");
+      keyInput.type = "password";
+      keyInput.placeholder = hasKey
+        ? "已配置，留空保持不变" : (cur.api_key_hint || "填写 API Key");
+      keyInput.style.cssText = "width:100%;min-width:260px;";
+      keyInput.oninput = function () { state.api_key = keyInput.value; };
+      card.appendChild(fieldRow(cur.api_key_label || "API Key",
+        cur.api_key_hint || "仅本机保存，页面不回显明文。", keyInput));
+    }
+
+    // 3.3 模型：输入框 + 刷新清单
+    var modelBox = wbEl("div", null);
+    modelBox.style.cssText = "display:flex;gap:6px;align-items:center;min-width:260px;";
+    var modelInput = wbEl("input", "wb-api-input");
+    modelInput.type = "text";
+    modelInput.value = state.model;
+    modelInput.placeholder = "留空 = 自动挑选（推荐）";
+    modelInput.style.cssText = "flex:1;";
+    modelInput.oninput = function () { state.model = modelInput.value; };
+    modelBox.appendChild(modelInput);
+    if (cur.supports_model_refresh !== false) {
+      var refBtn = wbEl("button", "wb-api-btn", "刷新列表");
+      refBtn.onclick = function () {
+        refBtn.disabled = true;
+        refBtn.textContent = "获取中…";
+        fetch("/api/assistant/models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base_url: state.base_url || cur.default_base_url || "",
+            api_key: state.api_key
+          })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            refBtn.disabled = false;
+            refBtn.textContent = "刷新列表";
+            if (d && d.ok && d.models) {
+              // 用 datalist 提供候选，不打断手输
+              var dl = document.getElementById("wb-assistant-model-list");
+              if (!dl) {
+                dl = wbEl("datalist", null);
+                dl.id = "wb-assistant-model-list";
+                document.body.appendChild(dl);
+              }
+              dl.innerHTML = "";
+              d.models.forEach(function (m) {
+                var op = wbEl("option", null);
+                op.value = m;
+                dl.appendChild(op);
+              });
+              modelInput.setAttribute("list", "wb-assistant-model-list");
+              wbToast("已获取 " + d.count + " 个模型，可直接输入或选择", "ok");
+            } else {
+              wbToast("获取失败：" + ((d && d.error) || "未知原因"), "err");
+            }
+          })
+          .catch(function () {
+            refBtn.disabled = false;
+            refBtn.textContent = "刷新列表";
+            wbToast("请求失败，请重试", "err");
+          });
+      };
+      modelBox.appendChild(refBtn);
+    }
+    card.appendChild(fieldRow("模型",
+      "留空则按内置优先级自动挑选；也可手填或点「刷新列表」获取该接口的模型。",
+      modelBox));
+
+    // 3.4 系统提示词（高级，可空）
+    var promptBox = wbEl("div", null);
+    promptBox.style.cssText = "min-width:260px;";
+    var promptInput = wbEl("textarea", "wb-api-input");
+    promptInput.rows = 3;
+    promptInput.placeholder = "留空 = 用内置提示词（推荐）";
+    promptInput.style.cssText = "width:100%;resize:vertical;";
+    promptInput.value = state.systemPrompt;
+    promptInput.oninput = function () { state.systemPrompt = promptInput.value; };
+    promptBox.appendChild(promptInput);
+    card.appendChild(fieldRow("系统提示词（高级）",
+      "自定义助手的身份与口径；一般无需修改。", promptBox));
+
+    // ---- 4. 操作：测试连通性 + 保存 ----
+    var actRow = wbEl("div", "wb-api-row");
+    var actMain = wbEl("div", "wb-api-main");
+    actMain.appendChild(wbEl("div", "wb-api-label", "保存与测试"));
+    actMain.appendChild(wbEl("div", "wb-api-desc",
+      "「测试」会用当前填的内容真实问一句，能收到回答才算配好。"));
+    actRow.appendChild(actMain);
+    var actBox = wbEl("div", null);
+    actBox.style.cssText = "display:flex;gap:8px;";
+
+    function collect() {
+      var payload = {
+        provider: curKey,
+        model: state.model,
+        systemPrompt: state.systemPrompt,
+        providers: {}
+      };
+      var pv = {};
+      if (cur.base_url_editable !== false) pv.base_url = state.base_url;
+      if (cur.supports_api_key && state.api_key) pv.api_key = state.api_key;
+      payload.providers[curKey] = pv;
+      return payload;
+    }
+
+    var testBtn = wbEl("button", "wb-api-btn", "测试连通性");
+    testBtn.onclick = function () {
+      testBtn.disabled = true;
+      testBtn.textContent = "测试中…";
+      fetch("/api/assistant/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: collect() })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          testBtn.disabled = false;
+          testBtn.textContent = "测试连通性";
+          if (d && d.ok) {
+            wbToast("连通正常（" + (d.durationMs || 0) + "ms）："
+              + (d.replyPreview || "").slice(0, 60), "ok");
+          } else {
+            wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
+          }
+        })
+        .catch(function () {
+          testBtn.disabled = false;
+          testBtn.textContent = "测试连通性";
+          wbToast("请求失败，请重试", "err");
+        });
+    };
+    actBox.appendChild(testBtn);
+
+    var saveBtn = wbEl("button", "wb-api-btn wb-api-btn-primary", "保存");
+    saveBtn.onclick = function () {
+      saveBtn.disabled = true;
+      wbApiAction("/api/assistant", "PUT", collect(), "已保存智能助手配置")
+        .then(function () {
+          var old = document.getElementById("settings-assistant");
+          if (old) old.remove();
+          injectAssistant();
+        });
+    };
+    actBox.appendChild(saveBtn);
+    actRow.appendChild(actBox);
+    card.appendChild(actRow);
+
+    section.appendChild(card);
+    host.appendChild(section);
+  }
+
+  function injectAssistant() {
+    var host = wbFindSettingsHost();
+    if (!host) return;
+    if (document.getElementById("settings-assistant")) return;
+
+    function render(data) {
+      var host2 = wbFindSettingsHost();
+      if (!host2 || document.getElementById("settings-assistant")) return;
+      wbRenderAssistantSection(host2, data);
+    }
+
+    fetch("/api/assistant", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || data.error) return;
+        render(data);
+      })
+      .catch(function () {});
   }
 
   function injectNotify() {
@@ -6898,6 +7217,102 @@ async def notify_probe(request: Request):
     except Exception as e:
         return Response(content=json.dumps({"ok": False, "error": str(e)[:120]}),
                         status_code=500, media_type="application/json")
+
+
+# ---------------------------------------------------------------------------
+# 智能助手配置（第三阶段：设置页可视化配置，参考 MoviePilot 的 LLMProviderInfo）
+#
+# 用户需求（2026-10-14）：「在设置页面添加智能助手模型配置，而不是你自己写，
+# 参考 MoviePilot 的相关配置，默认自带模型提供，也可以配置其他模型」。
+#
+# 接口分工：
+#   GET  /api/assistant          注册表 + 当前配置（密钥只回 has_value）
+#   PUT  /api/assistant          保存配置（secret：不提交=保留/空串=清除/有值=覆盖）
+#   POST /api/assistant/models   拉取某 provider 的模型清单（弹窗里刷新用）
+#   POST /api/assistant/test     连通性测试：用当前配置问一句，看能否拿到回答
+# ---------------------------------------------------------------------------
+try:
+    from gateway import assistant as _assistant
+except ImportError:
+    import assistant as _assistant  # type: ignore[no-redef]
+
+
+@app.get("/api/assistant")
+async def assistant_get():
+    """助手配置视图：provider 注册表 + 当前配置（脱敏）。"""
+    try:
+        return _assistant.public_view()
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
+
+
+@app.put("/api/assistant")
+async def assistant_put(request: Request):
+    """保存助手配置（合并式；secret 语义与通知渠道一致）。"""
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        cfg = _assistant._save_config(payload)
+        # 保存后立即自检一次，让前端能马上看到「配得对不对」。
+        # 失败不影响保存（可能只是网络抖动），只作为提示返回。
+        probe = None
+        try:
+            probe = await _assistant_probe(payload)
+        except Exception:
+            probe = None
+        return {"ok": True, "probe": probe,
+                "runtime": _assistant.session_stats()}
+    except Exception as e:
+        return Response(content=json.dumps({"ok": False, "error": str(e)[:120]}),
+                        status_code=500, media_type="application/json")
+
+
+async def _assistant_probe(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """用给定（或当前）配置问一句，验证能否真正拿到回答。
+
+    与「拉模型清单」的区别：拉清单只证明**地址可达**，probe 证明
+    **能完成一次对话**（密钥有效、模型名对、配额没爆）—— 后者才是用户关心的。
+    """
+    import time as _t
+    t0 = _t.time()
+    try:
+        reply = _assistant.assistant_reply("probe-%d" % int(t0), "用一句话说明你是谁")
+    except Exception as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:100])}
+    if not reply:
+        return {"ok": False, "error": "未收到回答（检查地址、密钥与模型名）"}
+    return {"ok": True, "durationMs": int((_t.time() - t0) * 1000),
+            "replyPreview": reply[:200]}
+
+
+@app.post("/api/assistant/test")
+async def assistant_test(request: Request):
+    """连通性测试（MoviePilot 的 LLMTestResult 同款语义）。"""
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        if payload.get("save"):
+            _assistant._save_config(payload.get("config") or {})
+        return await _assistant_probe(payload.get("config"))
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:120]}
+
+
+@app.post("/api/assistant/models")
+async def assistant_models(request: Request):
+    """拉取指定 provider 的模型清单（弹窗「刷新」按钮用）。"""
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        base = str(payload.get("base_url") or "").strip().rstrip("/")
+        key = str(payload.get("api_key") or "").strip()
+        if not base:
+            return {"ok": False, "error": "请先填写接口地址"}
+        d = _assistant._http_json(base + "/v1/models", timeout=15.0, api_key=key) or {}
+        ids = [str(m.get("id")) for m in (d.get("data") or []) if m.get("id")]
+        if not ids:
+            return {"ok": False, "error": "该地址未返回模型清单（可能不是 OpenAI 兼容接口）"}
+        return {"ok": True, "models": ids, "count": len(ids)}
+    except Exception as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:100])}
 
 
 # ---------------------------------------------------------------------------

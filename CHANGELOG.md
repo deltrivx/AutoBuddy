@@ -31,6 +31,46 @@
 
 ---
 
+## [v0.9.69] - 2026-10-14
+
+<!-- summary: 设置页新增智能助手配置区——provider 注册表驱动，默认自带模型，也可配任意 OpenAI 兼容接口 -->
+
+### 新增
+
+- **设置页「智能助手」配置区**（用户第三阶段需求）：参考 MoviePilot 的
+  `LLMProviderInfo` 模型，把助手模型配置从「写死」改为页面可视化配置。
+  - 对齐 MP：`base_url_presets` 预设地址、`base_url_editable`、`requires_base_url`、
+    `supports_api_key` + label/hint、`supports_model_refresh`、`LLMTestResult` 连通性测试；
+  - **未照搬**：OAuth 授权流（自托管网关，密钥模式足够）、
+    服务端工具能力探测（我们的工具调用由 assistant 自己实现）；
+  - 默认自带 **AutoBuddy 网关** provider（复用账号池，无需额外密钥，开箱即用）；
+    另有 **OpenAI 兼容接口** provider，预设 OpenAI / DeepSeek / Moonshot / 硅基流动，
+    也可手填任意兼容地址；
+  - 注册表驱动：新增 provider 只改后端 `PROVIDERS`，前端自动渲染。
+
+### 变更
+
+- 助手配置改为独立文件 `assistant_config.json`（与通知配置解耦）；
+- secret 语义与通知渠道一致：**不提交=保留、空串=清除、有值=覆盖**；
+  `public_view()` 只回 `{has_value}`，绝不回明文；
+- 系统提示词也可在页面自定义（留空用内置）；
+- 新增接口：`GET/PUT /api/assistant`、`POST /api/assistant/test`、`POST /api/assistant/models`；
+  测试用**当前填写值**（不必先保存就能验证）。
+
+### 修复
+
+- **配置层自死锁**：写配置时用了 `threading.Lock`，而 `_save_config` 持有锁期间
+  会调用 `_load_config()`（读-改-写需基于最新值），普通 Lock 不可重入 →
+  本地测试跑到保存直接挂住 3 分钟无输出才暴露。已改 `threading.RLock()`。
+  此类 bug 若漏到生产会让所有保存请求永久挂起。
+
+### 测试
+
+- `_test_assistant.py` 新增 [6][7][8] 三组共 58 项（78 → **136**）：
+  注册表契约、配置读写（真实文件，含 secret 三态语义 / 明文永不回显 /
+  enabled 贯通 / 尾斜杠归一化）、4 个接口契约与 section 注入/DOM 顺序。
+- 全量 39 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.68] - 2026-10-14
 
 <!-- summary: 修复智能助手 tool_echo 缺陷——hy3 第二轮把工具调用原文当正文回吐，用户看到乱码 -->
@@ -3905,7 +3945,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.68...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.69...HEAD
+[v0.9.69]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.68...v0.9.69
 [v0.9.68]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.67...v0.9.68
 [v0.9.67]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.66...v0.9.67
 [v0.9.66]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.65...v0.9.66

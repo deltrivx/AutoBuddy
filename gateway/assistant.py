@@ -43,8 +43,10 @@
 
 import json
 import os
+import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
@@ -52,7 +54,6 @@ from typing import Any, Callable, Dict, List, Optional
 # ---------------------------------------------------------------------------
 
 ASSISTANT_ENABLED = (os.getenv("AB_ASSISTANT_ENABLED", "1") or "1").strip() not in ("0", "false", "no")
-ASSISTANT_MODEL = (os.getenv("AB_ASSISTANT_MODEL", "") or "").strip()
 ASSISTANT_TIMEOUT = float(os.getenv("AB_ASSISTANT_TIMEOUT", "45") or 45)
 SESSION_TTL = float(os.getenv("AB_ASSISTANT_SESSION_TTL", "1800") or 1800)
 MAX_SESSIONS = int(os.getenv("AB_ASSISTANT_MAX_SESSIONS", "200") or 200)
@@ -65,6 +66,189 @@ GATEWAY_BASE = os.getenv("AB_ASSISTANT_GATEWAY", "http://127.0.0.1:18091")
 
 # 兜底模型（按优先级尝试）。留空则由运行时从 /v1/models 动态挑选。
 _FALLBACK_MODELS = ("hy3", "deepseek-v3", "kimi-k3", "deepseek-chat")
+
+# ---------------------------------------------------------------------------
+# Provider 注册表（参考 MoviePilot 的 LLMProviderInfo / ProviderSpec）
+#
+# 用户需求（2026-10-14 第三阶段）：「在设置页面添加智能助手模型配置，
+# 而不是你自己写，参考 MoviePilot 的相关配置，默认自带模型提供，
+# 也可以配置其他模型」。
+#
+# 设计对齐 MoviePilot `app/schemas/llm.py` 的 LLMProviderInfo：
+#   - `base_url_presets`：预设地址（下拉选，省得手打）
+#   - `base_url_editable`：是否允许自定义地址
+#   - `requires_base_url`：是否必须填地址
+#   - `supports_api_key`：是否需要密钥；secret 语义与通知渠道一致
+#     （GET 不回明文、空串=清除、不提交=保留）
+#   - `supports_model_refresh`：能否拉 /v1/models 刷新模型清单
+#   - `description`：设置页上的说明
+#
+# 与 MoviePilot 的差异（场景不同，不照搬）：
+#   - 没有 OAuth 授权流（我们是自托管网关，密钥模式足够）
+#   - 不做「服务端工具能力」探测（那是给 OpenAI/Anthropic 官方端的能力，
+#     我们走的是账号池中转，工具调用由 assistant 自己实现）
+# ---------------------------------------------------------------------------
+
+# 配置载体：独立文件，避免和通知配置耦在一起（两者生命周期不同）。
+CONFIG_FILE = Path(os.getenv("AB_ASSISTANT_CONFIG",
+                              str(Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "assistant_config.json")))
+
+# ⚠️ 必须用 RLock 而不是 Lock：`_save_config` 持有锁期间会调用
+# `_load_config()`（读-改-写需要基于最新值），普通 Lock 不可重入会自死锁。
+# 2026-10-14 实测踩过：本地测试跑到 _save_config 直接挂住，整条命令无输出。
+_CONFIG_LOCK = threading.RLock()
+
+
+def _default_provider() -> str:
+    """默认 provider id。env 可覆盖（AB_ASSISTANT_PROVIDER）。"""
+    return (os.getenv("AB_ASSISTANT_PROVIDER", "") or "").strip() or "gateway"
+
+
+# 注册表：key -> 定义。新 provider 往这里加即可，前端自动渲染。
+PROVIDERS: List[Dict[str, Any]] = [
+    {
+        "key": "gateway",
+        "name": "AutoBuddy 网关（自带）",
+        "desc": "复用本网关的账号池与模型目录，无需额外密钥。"
+                "默认选项，开箱即用。",
+        "default_base_url": GATEWAY_BASE,
+        "base_url_presets": [
+            {"id": "local", "label": "本机网关（默认）", "value": GATEWAY_BASE},
+        ],
+        "base_url_editable": True,
+        "requires_base_url": True,
+        "supports_api_key": False,
+        "supports_model_refresh": True,
+        "models": [],                      # 空 = 运行时从 /v1/models 动态拉取
+    },
+    {
+        "key": "openai",
+        "name": "OpenAI 兼容接口",
+        "desc": "任意 OpenAI 兼容的 /v1/chat/completions 端点"
+                "（OpenAI、DeepSeek、Moonshot、OneAPI、New API 等）。",
+        "default_base_url": "https://api.openai.com/v1",
+        "base_url_presets": [
+            {"id": "openai", "label": "OpenAI 官方", "value": "https://api.openai.com/v1"},
+            {"id": "deepseek", "label": "DeepSeek", "value": "https://api.deepseek.com/v1"},
+            {"id": "moonshot", "label": "Moonshot（Kimi）", "value": "https://api.moonshot.cn/v1"},
+            {"id": "siliconflow", "label": "硅基流动", "value": "https://api.siliconflow.cn/v1"},
+        ],
+        "base_url_editable": True,
+        "requires_base_url": True,
+        "supports_api_key": True,
+        "api_key_label": "API Key",
+        "api_key_hint": "留空且已配置过 = 保持不变；填值 = 覆盖；明确提交空串 = 清除",
+        "supports_model_refresh": True,
+        "models": [],
+    },
+]
+
+_PROVIDER_BY_KEY = {p["key"]: p for p in PROVIDERS}
+
+
+def _blank_config() -> Dict[str, Any]:
+    """配置默认值。"""
+    return {
+        "enabled": True,
+        "provider": _default_provider(),
+        "model": "",                      # 空 = 自动挑选
+        "systemPrompt": "",               # 空 = 用内置 SYSTEM_PROMPT
+        "providers": {
+            "gateway": {"base_url": GATEWAY_BASE, "api_key": ""},
+            "openai": {"base_url": "https://api.openai.com/v1", "api_key": ""},
+        },
+    }
+
+
+def _load_config() -> Dict[str, Any]:
+    """读取配置（不存在/损坏 → 默认值）。"""
+    with _CONFIG_LOCK:
+        cfg = _blank_config()
+        try:
+            if CONFIG_FILE.exists():
+                raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    cfg.update({k: v for k, v in raw.items() if k in cfg})
+                    provs = raw.get("providers")
+                    if isinstance(provs, dict):
+                        for k, v in provs.items():
+                            if k in cfg["providers"] and isinstance(v, dict):
+                                cfg["providers"][k].update(v)
+        except Exception:
+            pass
+        return cfg
+
+
+def _save_config(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """合并保存；secret 语义：不提交=保留、空串=清除、有值=覆盖。"""
+    with _CONFIG_LOCK:
+        cfg = _load_config()
+        body = patch or {}
+        for k in ("enabled", "provider", "model", "systemPrompt"):
+            if k in body:
+                cfg[k] = body[k]
+        provs = body.get("providers")
+        if isinstance(provs, dict):
+            for pk, pv in provs.items():
+                if pk not in cfg["providers"] or not isinstance(pv, dict):
+                    continue
+                slot = cfg["providers"][pk]
+                for k in ("base_url", "api_key"):
+                    if k not in pv:
+                        continue          # 未提交 → 保留
+                    v = pv[k]
+                    if v is None:
+                        continue          # 保留
+                    slot[k] = str(v or "").strip()
+        try:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
+        except Exception:
+            pass
+        return cfg
+
+
+def _runtime() -> Dict[str, Any]:
+    """当前生效的运行时配置（provider + base_url + key + model）。"""
+    cfg = _load_config()
+    if not cfg.get("enabled", True):
+        return {"enabled": False}
+    pk = str(cfg.get("provider") or _default_provider())
+    prov = _PROVIDER_BY_KEY.get(pk) or _PROVIDER_BY_KEY[_default_provider()]
+    slot = (cfg.get("providers") or {}).get(prov["key"]) or {}
+    base = str(slot.get("base_url") or "").strip() or prov.get("default_base_url") or ""
+    return {
+        "enabled": True,
+        "provider": prov["key"],
+        "base_url": base.rstrip("/"),
+        "api_key": str(slot.get("api_key") or "").strip(),
+        "model": str(cfg.get("model") or "").strip(),
+        "systemPrompt": str(cfg.get("systemPrompt") or "").strip(),
+    }
+
+
+def public_view() -> Dict[str, Any]:
+    """设置页视图：注册表 + 当前配置（密钥只回 has_value，不回明文）。"""
+    cfg = _load_config()
+    provs_out: Dict[str, Any] = {}
+    for p in PROVIDERS:
+        slot = (cfg.get("providers") or {}).get(p["key"]) or {}
+        provs_out[p["key"]] = {
+            "base_url": str(slot.get("base_url") or p.get("default_base_url") or ""),
+            "api_key": {"has_value": bool(str(slot.get("api_key") or "").strip())},
+        }
+    return {
+        "registry": PROVIDERS,
+        "config": {
+            "enabled": bool(cfg.get("enabled", True)),
+            "provider": str(cfg.get("provider") or _default_provider()),
+            "model": str(cfg.get("model") or ""),
+            "systemPrompt": str(cfg.get("systemPrompt") or ""),
+            "providers": provs_out,
+        },
+        "runtime": session_stats(),
+    }
 
 SYSTEM_PROMPT = """你是 AutoBuddy 网关的智能助手「小助手」，运行在企微/Telegram 交互里。
 
@@ -131,9 +315,14 @@ def clear_session(session_id: str) -> None:
 
 
 def session_stats() -> Dict[str, Any]:
+    """运行态摘要（供「助手」命令与设置页展示）。"""
+    rt = _runtime()
     with _SESSIONS_LOCK:
-        return {"enabled": ASSISTANT_ENABLED, "sessions": len(_SESSIONS),
-                "model": ASSISTANT_MODEL or "(auto)", "ttlSec": SESSION_TTL}
+        return {"enabled": bool(rt.get("enabled")),
+                "sessions": len(_SESSIONS),
+                "provider": rt.get("provider") or "",
+                "model": rt.get("model") or "(自动挑选)",
+                "ttlSec": SESSION_TTL}
 
 
 # ---------------------------------------------------------------------------
@@ -141,11 +330,15 @@ def session_stats() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _http_json(url: str, timeout: float = 8.0, method: str = "GET",
-               body: Optional[bytes] = None) -> Any:
+               body: Optional[bytes] = None,
+               api_key: str = "") -> Any:
+    """同步取 JSON。``api_key`` 非空时带 Authorization 头（自定义 provider 用）。"""
     import urllib.request
     req = urllib.request.Request(url, data=body, method=method)
     if body:
         req.add_header("Content-Type", "application/json")
+    if api_key:
+        req.add_header("Authorization", "Bearer %s" % api_key)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
@@ -299,11 +492,22 @@ def _dispatch_tool(name: str, args: Dict[str, Any]) -> str:
 # 模型选择
 # ---------------------------------------------------------------------------
 
-def _pick_model() -> Optional[str]:
-    if ASSISTANT_MODEL:
-        return ASSISTANT_MODEL
+def _pick_model(rt: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """挑助手用的模型。
+
+    优先级：设置页显式指定 > provider 的 /v1/models 里按 _FALLBACK_MODELS 挑
+    > 目录第一个。拉不到目录时退回 _FALLBACK_MODELS[0]（网关不可用时至少
+    让请求发出去，由上游报真实错误）。
+    """
+    rt = rt or _runtime()
+    if not rt.get("enabled"):
+        return None
+    if rt.get("model"):
+        return rt["model"]
+    base = rt.get("base_url") or GATEWAY_BASE
     try:
-        d = _http_json(GATEWAY_BASE + "/v1/models", timeout=6.0) or {}
+        d = _http_json(base + "/v1/models", timeout=6.0,
+                       api_key=rt.get("api_key") or "") or {}
         ids = [str(m.get("id")) for m in (d.get("data") or []) if m.get("id")]
         for want in _FALLBACK_MODELS:
             if want in ids:
@@ -342,11 +546,17 @@ def assistant_reply(session_id: str, question: str) -> str:
     q = (question or "").strip()
     if not q:
         return ""
-    model = _pick_model()
+    rt = _runtime()
+    if not rt.get("enabled"):
+        return ""
+    model = _pick_model(rt)
     if not model:
         return ""
+    base = rt.get("base_url") or GATEWAY_BASE
+    api_key = rt.get("api_key") or ""
+    sys_prompt = rt.get("systemPrompt") or SYSTEM_PROMPT
 
-    messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": sys_prompt}]
     messages.extend(_history(session_id))
     messages.append({"role": "user", "content": q[:1500]})
 
@@ -364,10 +574,12 @@ def assistant_reply(session_id: str, question: str) -> str:
     try:
         import urllib.request
         req = urllib.request.Request(
-            GATEWAY_BASE + "/v1/chat/completions",
+            base + "/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             method="POST",
             headers={"Content-Type": "application/json"})
+        if api_key:
+            req.add_header("Authorization", "Bearer %s" % api_key)
         with urllib.request.urlopen(req, timeout=ASSISTANT_TIMEOUT) as r:
             d = json.loads(r.read().decode("utf-8", "replace"))
     except Exception:
@@ -406,10 +618,12 @@ def assistant_reply(session_id: str, question: str) -> str:
             final = ""
             try:
                 req2 = urllib.request.Request(
-                    GATEWAY_BASE + "/v1/chat/completions",
+                    base + "/v1/chat/completions",
                     data=json.dumps(payload2).encode("utf-8"),
                     method="POST",
                     headers={"Content-Type": "application/json"})
+                if api_key:
+                    req2.add_header("Authorization", "Bearer %s" % api_key)
                 with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
                     d2 = json.loads(r2.read().decode("utf-8", "replace"))
                 msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
@@ -423,10 +637,12 @@ def assistant_reply(session_id: str, question: str) -> str:
                     payload2.pop("tools", None)
                     payload2.pop("tool_choice", None)
                     req2 = urllib.request.Request(
-                        GATEWAY_BASE + "/v1/chat/completions",
+                        base + "/v1/chat/completions",
                         data=json.dumps(payload2).encode("utf-8"),
                         method="POST",
                         headers={"Content-Type": "application/json"})
+                    if api_key:
+                        req2.add_header("Authorization", "Bearer %s" % api_key)
                     with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
                         d2 = json.loads(r2.read().decode("utf-8", "replace"))
                     msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
