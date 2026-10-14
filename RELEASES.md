@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.64](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.64)
+**当前稳定版：** [v0.9.65](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.65)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.65](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.65) | 2026-10-14 | 修复配额仲裁边界缺陷——最优候选为0承接时任何有记录的账号都被判让位，粘性被架空 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.65.md) |
 | [v0.9.64](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.64) | 2026-10-14 | 调度算法三项优化——配额账本时间衰减、sticky 记账+配额仲裁、解析上游 Retry-After | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.64.md) |
 | [v0.9.63](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.63) | 2026-10-13 | 修复「交互菜单还是没变」根因——命令语义收拢为唯一实现，删除 web_proxy 重复内联命令链 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.63.md) |
 | [v0.9.62](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.62) | 2026-10-13 | 修复通知「剩余积分>总积分」口径悖论；菜单按钮改为四项积分统计口径 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.62.md) |
@@ -157,7 +158,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.64    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.65    # 锁定版本
 ```
 
 ## 部署产物

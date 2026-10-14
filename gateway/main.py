@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.64"
+VERSION_DEFAULT = "0.9.65"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -979,6 +979,13 @@ CREDIT_PICK_HALFLIFE = float(os.getenv("AB_CREDIT_PICK_HALFLIFE", "1800") or 180
 # 不记账时吃满粘性流量的账号比值反而偏低，仲裁会做出反向判断。
 STICKY_QUOTA_ARBITRATION = (os.getenv("AB_STICKY_QUOTA_ARB", "1") or "1").strip() not in ("0", "false", "no")
 STICKY_QUOTA_FACTOR = float(os.getenv("AB_STICKY_QUOTA_FACTOR", "1.5") or 1.5)
+# 让位的**绝对下限**（单位 = 一次有效承接）。
+#
+# 为什么必须有它（2026-10-14 自测发现）：只判「劣于最优 N 倍」时，最优候选
+# 是 0 承接的新账号会让倍数阈值退化成 `> 0` —— 任何有记录的账号都被判让位，
+# 于是每次请求都解绑去找「最近最少承接」的号，**会话连续性名存实亡**。
+# 加上绝对下限后：小幅不平衡不打断会话，明显失衡（≥ MIN_GAP 次承接）才让位。
+STICKY_QUOTA_MIN_GAP = float(os.getenv("AB_STICKY_QUOTA_MIN_GAP", "1.0") or 1.0)
 
 
 def _credit_pick_effective_locked(aid: str, now: Optional[float] = None) -> float:
@@ -1096,6 +1103,12 @@ def _sticky_should_yield(bound_id: Optional[str], candidates: List[Dict[str, Any
                 mine_ratio = r
                 break
         if mine_ratio is None:
+            return False
+        # 绝对下限：至少多出 MIN_GAP 次有效承接才值得打断会话连续性。
+        # 用 <=（严格大于才让位）：差距恰好等于下限属于「一次请求的差」，
+        # 不该打断会话。否则最优候选为 0 承接时倍数阈值退化成 >0，
+        # 任何有记录的账号都让位，会话连续性名存实亡（2026-10-14 自测发现）。
+        if (mine_ratio - best_ratio) <= STICKY_QUOTA_MIN_GAP:
             return False
         return mine_ratio > best_ratio * STICKY_QUOTA_FACTOR
     except Exception:

@@ -70,6 +70,12 @@ check("仲裁读有效已选", "_credit_pick_effective(aid, now) / min(w, _WEIGH
 check("绑定账号已是最优则不让位", 'if best_aid == str(bound_id):' in SRC_M)
 check("关闭开关时不仲裁", "if not STICKY_QUOTA_ARBITRATION:" in SRC_M)
 check("余额掉队条件保留（旧契约不回退）", "float(mine) < avg * STICKY_YIELD_RATIO" in SRC_M)
+check("STICKY_QUOTA_MIN_GAP 常量存在", "STICKY_QUOTA_MIN_GAP = " in SRC_M)
+check("MIN_GAP 默认 1.0", '"AB_STICKY_QUOTA_MIN_GAP", "1.0"' in SRC_M)
+check("绝对下限判定用 <=（严格大于才让位）",
+      "(mine_ratio - best_ratio) <= STICKY_QUOTA_MIN_GAP" in SRC_M)
+check("MIN_GAP 与倍数阈值同时生效（两个条件是 AND）",
+      "if (mine_ratio - best_ratio) <= STICKY_QUOTA_MIN_GAP:\n            return False\n        return mine_ratio > best_ratio * STICKY_QUOTA_FACTOR" in SRC_M)
 
 print("\n[3] ③ Retry-After 解析")
 
@@ -141,6 +147,32 @@ check("一个半衰期后 = 0.5", abs(decayed(1, 1000.0, 2800.0, 1800) - 0.5) < 
 check("两个半衰期后 = 0.25", abs(decayed(1, 1000.0, 4600.0, 1800) - 0.25) < 1e-9)
 check("三个半衰期后 ≈ 0.125", abs(decayed(1, 1000.0, 6400.0, 1800) - 0.125) < 1e-9)
 check("时间倒流（t 在未来）→ 不放大", decayed(1, 2000.0, 1000.0, 1800) == 1.0)
+
+print("\n[7] 配额仲裁边界（复刻修复后逻辑：AND 两个条件）")
+
+FACTOR, MIN_GAP = 1.5, 1.0
+
+
+def yields(mine, best):
+    """复刻 _sticky_should_yield 的仲裁段（2026-10-14 修正）。"""
+    if (mine - best) <= MIN_GAP:
+        return False
+    return mine > best * FACTOR
+
+
+check("最优为 0 + 仅 1 次承接 → 不让位（MIN_GAP 防退化）",
+      yields(1.0, 0.0) is False)
+check("最优为 0 + 严重失衡（10 vs 0）→ 让位",
+      yields(10.0, 0.0) is True)
+check("完全持平（5 vs 5）→ 不让位", yields(5.0, 5.0) is False)
+check("倍数失衡但差距不足（1.2 vs 1.0）→ 不让位",
+      yields(1.2, 1.0) is False)
+check("倍数失衡且差距够（3 vs 1，3 倍）→ 让位",
+      yields(3.0, 1.0) is True)
+check("差距够但倍数不足（2.1 vs 1.0，2.1 倍 > 1.5）→ 让位",
+      yields(2.1, 1.0) is True)
+check("绑定方已是最优（负差距）→ 不让位",
+      yields(3.0, 5.0) is False)
 
 print(f"\n{'=' * 52}\n通过 {_ok} 项" + (f"，失败 {len(_fail)} 项：{_fail}" if _fail else "，全部通过"))
 raise SystemExit(1 if _fail else 0)

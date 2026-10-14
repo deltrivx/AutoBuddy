@@ -31,6 +31,26 @@
 
 ---
 
+## [v0.9.65] - 2026-10-14
+
+<!-- summary: 修复配额仲裁边界缺陷——最优候选为0承接时任何有记录的账号都被判让位，粘性被架空 -->
+
+### 修复
+
+- **配额仲裁边界缺陷**（v0.9.64 上线后容器内自测发现）：A 被选 1 次、
+  B 为 0 次时仲裁即判 A 让位。根因：只判倍数条件
+  `mine_ratio > best_ratio * FACTOR`，当最优候选比值为 0 时阈值退化成 `> 0`，
+  任何有承接记录的账号都触发让位 —— 会话粘性被完全架空，
+  每次请求都走到配额排序，同一对话频繁换账号。
+- 增加绝对下限 `AB_STICKY_QUOTA_MIN_GAP`（默认 1.0），与倍数阈值 AND：
+  至少多出 `MIN_GAP` 次有效承接才打断会话连续性。
+
+### 测试
+
+- `_test_sched_decay_retryafter.py` 新增 [7] 组 7 项边界用例
+  （总数 38 → 49），并锁 5 项源码契约（常量、默认值、`<=` 语义、AND 组合）。
+- 全量 37 个测试文件全绿。
+
 ## [v0.9.64] - 2026-10-14
 
 <!-- summary: 调度算法三项优化——配额账本时间衰减、sticky 记账+配额仲裁、解析上游 Retry-After -->
@@ -3797,7 +3817,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.64...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.65...HEAD
+[v0.9.65]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.64...v0.9.65
 [v0.9.64]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.63...v0.9.64
 [v0.9.63]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.62...v0.9.63
 [v0.9.62]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.61...v0.9.62
