@@ -793,6 +793,328 @@ def _dispatch_tool(name: str, args: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 阶段 5：写操作两段式确认（2026-10-14）
+#
+# 用户反馈（v0.9.71 的直接动因）：「我只是问他今天执行过任务吗？为何就直接
+# 执行了」。结构性解法：**写操作永不被自然语言直接触发**，必须先经一次显式
+# 确认，且确认逻辑是**纯确定性代码**，不经过 LLM 判断。
+#
+# 流程：
+#   用户: 执行任务
+#   助手: 【待确认】将启动一轮每日任务
+#         · 影响：22 个账号（签到+成长任务+领奖）
+#         · 预计：40-60 分钟
+#         · 回复「确认」执行，「取消」放弃
+#   用户: 确认
+#   助手: 已启动（job_id: xxxx），完成后推送结果
+#
+# 设计要点：
+#   1. **意图识别是确定性的**：`_WRITE_INTENTS` 关键词表 + 精确匹配，
+#      与 v0.9.71 的 `_looks_like_question` 互补 —— 疑问句走查询，
+#      陈述/命令句才可能进写意图；
+#   2. **确认态与会话同生命周期**：复用 `_SESSIONS`，TTL 5 分钟（短于对话
+#      的 30 分钟，因为确认是即时决策，放太久容易忘）；
+#   3. **影响预告**：每个写操作带 `impact`（影响范围）与 `estimate`（耗时预估），
+#      让用户在确认前就知道会发生什么；
+#   4. **审计日志**：每次实际执行都记 `audit`（时间/会话/操作/参数），
+#      便于事后追溯「谁在什么时候让助手做了什么」。
+# ---------------------------------------------------------------------------
+
+WRITE_CONFIRM_ENABLED = (os.getenv("AB_ASSISTANT_WRITE_CONFIRM", "1") or "1").strip() not in ("0", "false", "no")
+WRITE_CONFIRM_TTL = float(os.getenv("AB_ASSISTANT_CONFIRM_TTL", "300") or 300)
+
+_AUDIT: List[Dict[str, Any]] = []
+_AUDIT_MAX = 200
+
+# 写操作注册表：action -> (描述, 影响预告, 耗时预估, 执行器)
+# 执行器签名：fn(args: dict) -> str（返回给用户的执行结果文本）
+_WRITE_OPS: Dict[str, Dict[str, Any]] = {}
+
+
+def _register_write_op(action: str, desc: str, impact: str, estimate: str):
+    """注册一个写操作（装饰器用法）。"""
+    def _wrap(fn):
+        _WRITE_OPS[action] = {
+            "desc": desc, "impact": impact, "estimate": estimate,
+            "fn": fn, "keywords": [],
+        }
+        return fn
+    return _wrap
+
+
+def _write_intent(text: str) -> Optional[str]:
+    """把用户输入解析成写操作 action；不是写意图则返回 None。
+
+    确定性判据（按优先级）：
+      1. 精确命令名（含同义词）；
+      2. 含「执行/启动/跑 + 任务」等动词组合。
+    疑问句**不在此处理** —— v0.9.71 已在 notify 层把疑问句截走，
+    这里再兜一层：含疑问标记的一律不判为写意图（双保险）。
+    """
+    t = (text or "").strip().lower().strip("。！!，,~～.… ")
+    if not t:
+        return None
+    # 双保险：疑问句永远不是写意图
+    try:
+        from gateway import notify as _nt
+    except ImportError:
+        try:
+            import notify as _nt  # type: ignore
+        except ImportError:
+            _nt = None
+    if _nt is not None and _nt._looks_like_question(text):
+        return None
+    for m in ("吗", "呢", "？", "?"):
+        if m in t:
+            return None
+
+    # 精确命令（菜单按钮与手打命令）
+    if t in ("执行任务", "启动任务", "跑任务", "运行任务", "run", "task_run"):
+        return "run_daily"
+    if t in ("签到", "全部签到", "checkin"):
+        return "checkin_all"
+    if t in ("中止任务", "停止任务", "取消任务", "abort", "abort_task"):
+        return "abort_daily"
+    if t in ("触发巡检", "立即巡检", "跑一次巡检", "probe_models"):
+        return "probe_models"
+    if t in ("开启通知", "打开通知", "notify_on"):
+        return "notify_on"
+    if t in ("关闭通知", "关掉通知", "notify_off"):
+        return "notify_off"
+    if t in ("重置选号统计", "清空选号统计", "reset_selections"):
+        return "reset_selections"
+
+    # 动词组合（自然语言下令，但不是疑问句）
+    if ("任务" in t or "每日" in t) and any(v in t for v in ("执行", "启动", "跑", "运行", "来一轮", "跑一轮")):
+        return "run_daily"
+    if "签到" in t and any(v in t for v in ("执行", "去", "来", "全部")):
+        return "checkin_all"
+    if "巡检" in t and any(v in t for v in ("触发", "执行", "跑", "立即")):
+        return "probe_models"
+    return None
+
+
+def _pending_write(session_id: str) -> Optional[Dict[str, Any]]:
+    """取该会话待确认的写操作（过期则清除）。"""
+    key = _session_key(session_id)
+    now = time.time()
+    with _SESSIONS_LOCK:
+        s = _SESSIONS.get(key) or {}
+        p = s.get("pending_write")
+        if not p:
+            return None
+        if float(p.get("expires") or 0) < now:
+            s.pop("pending_write", None)
+            return None
+        return dict(p)
+
+
+def _set_pending_write(session_id: str, action: str, args: Dict[str, Any]) -> None:
+    key = _session_key(session_id)
+    now = time.time()
+    with _SESSIONS_LOCK:
+        s = _SESSIONS.setdefault(key, {"history": [], "updated": now})
+        s["pending_write"] = {
+            "action": action, "args": dict(args or {}),
+            "expires": now + WRITE_CONFIRM_TTL, "created": now,
+        }
+        s["updated"] = now
+
+
+def _clear_pending_write(session_id: str) -> None:
+    key = _session_key(session_id)
+    with _SESSIONS_LOCK:
+        s = _SESSIONS.get(key)
+        if s:
+            s.pop("pending_write", None)
+
+
+def _audit_write(session_id: str, action: str, args: Dict[str, Any], result: str) -> None:
+    """审计日志：谁在什么时候让助手做了什么（内存环形缓冲，可观测）。"""
+    _AUDIT.append({
+        "ts": time.time(),
+        "session": _session_key(session_id),
+        "action": action,
+        "args": {k: str(v)[:40] for k, v in (args or {}).items()},
+        "ok": bool(result) and "失败" not in result[:20],
+        "result": str(result)[:160],
+    })
+    del _AUDIT[:-_AUDIT_MAX]
+
+
+def write_audit_log(limit: int = 20) -> List[Dict[str, Any]]:
+    """最近若干条写操作审计（供排查/未来面板）。"""
+    return list(_AUDIT[-max(1, int(limit)):])
+
+
+_CONFIRM_WORDS = ("确认", "确定", "是的", "是", "好", "好的", "嗯", "可以",
+                  "ok", "yes", "y", "执行", "确认执行", "去吧")
+_CANCEL_WORDS = ("取消", "算了", "不用", "先不", "否", "不", "no", "n", "放弃")
+
+
+def _confirm_intent(text: str) -> Optional[str]:
+    """识别对【待确认】的回复：返回 "confirm" / "cancel" / None。"""
+    t = (text or "").strip().lower().strip("。！!，,~～.… ")
+    if not t:
+        return None
+    if t in _CANCEL_WORDS:
+        return "cancel"
+    if t in _CONFIRM_WORDS:
+        return "confirm"
+    # 复合句：「确认执行」「好的，执行吧」——含确认词且不含取消词
+    if any(c in t for c in ("确认", "确定")) and not any(x in t for x in _CANCEL_WORDS):
+        return "confirm"
+    if t in ("执行", "去吧", "来吧"):
+        return "confirm"
+    return None
+
+
+def _write_op_prompt(action: str) -> str:
+    """待确认提示（含影响预告与耗时预估）。"""
+    op = _WRITE_OPS.get(action) or {}
+    return ("【待确认】%s\n"
+            "  · 影响：%s\n"
+            "  · 预计：%s\n"
+            "  · 回复「确认」执行，「取消」放弃（%d 秒内有效）" % (
+                op.get("desc") or action,
+                op.get("impact") or "—",
+                op.get("estimate") or "—",
+                int(WRITE_CONFIRM_TTL)))
+
+
+def try_write_flow(session_id: str, text: str) -> Optional[str]:
+    """写操作两段式流程入口（在 LLM 之前拦截）。
+
+    返回 None 表示「这不是写操作流程」，调用方继续走正常问答；
+    返回字符串表示已由本流程处理（待确认提示 / 执行结果 / 取消回执）。
+
+    调用方（notify.wecom_command_reply）在把文本交给助手前先过这里 ——
+    这样写意图**完全不经过 LLM**，从结构上杜绝「问一句跑一轮」。
+    """
+    if not WRITE_CONFIRM_ENABLED:
+        return None
+    q = (text or "").strip()
+    if not q:
+        return None
+
+    # 1) 已有待确认 → 先处理确认/取消
+    pend = _pending_write(session_id)
+    if pend:
+        intent = _confirm_intent(q)
+        if intent == "cancel":
+            _clear_pending_write(session_id)
+            return "已取消，未执行任何操作。"
+        if intent == "confirm":
+            action = str(pend.get("action") or "")
+            args = pend.get("args") or {}
+            _clear_pending_write(session_id)
+            op = _WRITE_OPS.get(action)
+            if not op:
+                return "操作定义不存在：%s（已取消）" % action
+            try:
+                result = str(op["fn"](args))
+            except Exception as e:
+                result = "执行失败：%s: %s" % (type(e).__name__, str(e)[:100])
+            _audit_write(session_id, action, args, result)
+            return result
+        # 既不是确认也不是取消 → 视为放弃本次确认，按新输入继续
+        _clear_pending_write(session_id)
+
+    # 2) 识别写意图 → 进入待确认
+    action = _write_intent(q)
+    if action and action in _WRITE_OPS:
+        _set_pending_write(session_id, action, {})
+        return _write_op_prompt(action)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 阶段 5：注册 6 个写操作（只保留「影响可预期、可回滚或可重跑」的）
+#
+# 有意**排除**的危险操作（面板可做，助手不做）：
+#   - 登录/改密/导入导出/删除全部 Key —— 涉及凭据与数据主权
+#   - 账号级永久删除
+# 这些留给设置页人工操作。
+# ---------------------------------------------------------------------------
+
+def _wb_post(path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """向 WebUI 代理发 POST（同容器 loopback）。"""
+    return _http_json(WEBUI_BASE + path, timeout=30.0, method="POST",
+                      body=json.dumps(body or {}).encode("utf-8")) or {}
+
+
+@_register_write_op("run_daily", "将启动一轮每日任务（签到 + 成长任务 + 领奖）",
+                    "全部参与账号（通常 20+ 个）", "约 40-60 分钟")
+def _op_run_daily(_args: Dict[str, Any]) -> str:
+    d = _wb_post("/api/wb-daily/run")
+    if d.get("job_id"):
+        return ("✅ 已启动一轮每日任务（job_id: %s）。\n"
+                "完成后会自动推送结果；也可问我「任务跑完了吗」。" % d["job_id"])
+    return "启动失败：%s" % (d.get("detail") or "可能已有任务在执行")
+
+
+@_register_write_op("checkin_all", "将为全部账号执行签到",
+                    "全部参与账号", "约 5-15 分钟")
+def _op_checkin_all(_args: Dict[str, Any]) -> str:
+    d = _wb_post("/api/checkin/all")
+    return "✅ 签到已提交（%s）。" % (d.get("status") or "已开始")
+
+
+@_register_write_op("abort_daily", "将中止当前正在执行的每日任务",
+                    "当前运行中的那一轮（未完成的账号会中断）", "立即生效")
+def _op_abort_daily(_args: Dict[str, Any]) -> str:
+    # 先找正在跑的任务，避免对空跑 abort
+    try:
+        d = _http_json(WEBUI_BASE + "/api/wb-daily/jobs") or {}
+        jobs = d.get("jobs") or []
+    except Exception:
+        jobs = []
+    running = [j for j in jobs if j.get("status") == "running"]
+    if not running:
+        return "当前没有正在执行的任务，无需中止。"
+    jid = running[0].get("job_id")
+    _wb_post("/api/wb-daily/abort/%s" % jid)
+    return "✅ 已请求中止任务 %s。" % jid
+
+
+@_register_write_op("probe_models", "将立即执行一轮模型可用性巡检",
+                    "按巡检配置覆盖的账号与模型", "约 5-20 分钟")
+def _op_probe_models(_args: Dict[str, Any]) -> str:
+    d = _wb_post("/api/model-health/run")
+    if d.get("ok") is False:
+        return "启动巡检失败：%s" % (d.get("error") or "未知原因")
+    return "✅ 已启动一轮模型巡检，结果会自动写入禁用/启用状态。"
+
+
+@_register_write_op("notify_on", "将开启通知推送总开关",
+                    "所有已启用渠道（企微/Telegram）", "立即生效")
+def _op_notify_on(_args: Dict[str, Any]) -> str:
+    try:
+        try:
+            from gateway import notify as _nt
+        except ImportError:
+            import notify as _nt  # type: ignore
+        _nt.update_config({"enabled": True})
+        return "✅ 通知已开启。"
+    except Exception as e:
+        return "操作失败：%s" % str(e)[:80]
+
+
+@_register_write_op("notify_off", "将关闭通知推送总开关",
+                    "所有渠道的例行推送都会停止", "立即生效")
+def _op_notify_off(_args: Dict[str, Any]) -> str:
+    try:
+        try:
+            from gateway import notify as _nt
+        except ImportError:
+            import notify as _nt  # type: ignore
+        _nt.update_config({"enabled": False})
+        return "✅ 通知已关闭。"
+    except Exception as e:
+        return "操作失败：%s" % str(e)[:80]
+
+
+# ---------------------------------------------------------------------------
 # 模型选择
 # ---------------------------------------------------------------------------
 

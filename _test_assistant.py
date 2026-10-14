@@ -103,12 +103,19 @@ check("工具全部只读（无 POST/PUT 调用）",
                                           SRC_AS.index("def _tool_registry")])
 # 写端点必须不在工具集。注意 `/api/wb-daily/runs`（读历史）含子串
 # `wb-daily/run`，旧断言把它误判成写端点 —— 用带引号的精确串判定。
-check("启动任务写端点不在工具集（写操作须走命令）",
-      '"/api/wb-daily/run"' not in SRC_AS)
-check("签到写端点不在工具集",
-      "checkin/all" not in SRC_AS)
+# 阶段 5 后，写端点（wb-daily/run、checkin/all）从「完全不存在」变为
+# 「只存在于 _WRITE_OPS 执行器、且必须经两段式确认」。因此判据要从
+# 「文件里没有」改为「工具区（_tool_* 函数）里没有」—— 工具是只读的，
+# 写操作走独立的确认流程（_test_write_confirm.py 锁定）。
+_tools_start = SRC_AS.index("def _tool_credits")
+_tools_end = SRC_AS.index("def _tool_registry")
+_TOOLS_SRC = SRC_AS[_tools_start:_tools_end]
+check("工具区无写端点（启动任务）", '"/api/wb-daily/run"' not in _TOOLS_SRC)
+check("工具区无写端点（签到）", "checkin/all" not in _TOOLS_SRC)
 check("只读历史端点 runs 在工具集（回答「今天跑过吗」）",
-      "/api/wb-daily/runs" in SRC_AS)
+      "/api/wb-daily/runs" in _TOOLS_SRC)
+check("写端点只出现在写操作执行器里（经确认流程）",
+      '"/api/wb-daily/run"' in SRC_AS and "def _op_run_daily" in SRC_AS)
 
 print("\n[3] 集成契约（notify.py）")
 
@@ -167,10 +174,11 @@ STAGE4_TOOLS = (
 )
 for _t in STAGE4_TOOLS:
     check(f"阶段4 工具 {_t} 已注册", _t in A._TOOLS)
-check("阶段4 工具全部只读（无写端点）",
-      '"/api/wb-daily/run"' not in SRC_AS
-      and "checkin/all" not in SRC_AS
-      and '"/api/wb-daily/abort/' not in SRC_AS)
+check("阶段4 工具全部只读（工具区无写端点）",
+      '"/api/wb-daily/run"' not in _TOOLS_SRC
+      and "checkin/all" not in _TOOLS_SRC
+      and '"/api/wb-daily/abort/' not in _TOOLS_SRC,
+      "写端点只能存在于 _WRITE_OPS 执行器（经两段式确认），不得出现在工具区")
 check("禁用明细读权威来源 modelPolicy（非可用全集）",
       'd.get("modelPolicy")' in SRC_AS)
 check("_tool_registry 返回 OpenAI function 格式",

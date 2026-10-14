@@ -752,9 +752,14 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
     _EN = {"start": "help", "notify_on": "notify on", "notify_off": "notify off"}
     if low in _EN:
         low = _EN[low]
+    # ⚠️ 2026-10-14 阶段 5：`run` **不再**归一成「任务」。
+    # 原映射让 `run` 变成「任务」后绕过 _write_confirm_flow，直接落到下面的
+    # 写操作分支立即执行（实测 fired=[RUN]）—— 破坏两段式确认。
+    # 保持原形即可被 _write_intent 识别为 run_daily，先进确认流程。
+    # `daily` 仍归一为「任务」：它是只读查询（进度），走 2a 分支。
     _EN2ZH = {"status": "状态", "credits": "积分", "balance": "积分",
               "accounts": "账号", "models": "模型",
-              "daily": "任务", "run": "任务", "checkin": "签到", "help": "help"}
+              "daily": "任务", "checkin": "签到", "help": "help"}
     if low in _EN2ZH:
         text = low = _EN2ZH[low]
 
@@ -784,6 +789,18 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
         return _cmd_help()
     if "助手" in text or low in ("assistant", "ai"):
         return _cmd_assistant_help()
+    # ---- 1.5 写操作两段式确认（阶段 5）----
+    #
+    # 位置很关键：在**疑问句之后、写操作分支之前**。
+    #   · 疑问句已在上面被助手接走，永远不会走到这里；
+    #   · 因此能到这儿的「执行任务」是明确下令 → 先要一次显式确认。
+    # 纯确定性逻辑（不经 LLM），从结构上杜绝「问一句跑一轮」。
+    try:
+        reply = _write_confirm_flow(text, session_id)
+        if reply:
+            return reply
+    except Exception:
+        pass
     try:
         # ---- 2a. 只读查询：关键词命中即可（最坏只是多返回了数据）----
         if "账号" in text or orig in ("accounts", "balance"):
@@ -831,6 +848,23 @@ def _assistant_fallback(text: str, session_id: Optional[str] = None) -> str:
         if not _assistant.ASSISTANT_ENABLED:
             return ""
         return _assistant.assistant_reply(session_id or "default", text) or ""
+    except Exception:
+        return ""
+
+
+def _write_confirm_flow(text: str, session_id: Optional[str] = None) -> str:
+    """写操作两段式确认（阶段 5）。非空返回值即已处理，调用方直接回给用户。
+
+    逻辑全在 assistant.try_write_flow()：纯确定性识别（关键词 + 精确匹配），
+    **不经过 LLM** —— 从结构上杜绝「问一句跑一轮」。
+    异常吞掉返回空串，绝不拖累命令路由。
+    """
+    try:
+        try:
+            from gateway import assistant as _assistant
+        except ImportError:
+            import assistant as _assistant  # type: ignore
+        return _assistant.try_write_flow(session_id or "default", text) or ""
     except Exception:
         return ""
 

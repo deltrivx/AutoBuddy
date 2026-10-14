@@ -31,6 +31,44 @@
 
 ---
 
+## [v0.9.73] - 2026-10-14
+
+<!-- summary: 阶段5——写操作两段式确认，写操作永不被自然语言直接触发 -->
+
+### 新增
+
+- **写操作两段式确认**（阶段 5）：写操作必须先经一次显式确认才执行，
+  从结构上杜绝「问一句跑一轮」。
+  - 意图识别是**确定性**的（关键词表 + 精确匹配），不经过 LLM；
+  - 双保险：`_write_intent` 内先判疑问句，疑问句永远不进写意图；
+  - **影响预告**：每个写操作带 `impact`（影响范围）+ `estimate`（耗时预估）；
+  - 确认态 TTL 5 分钟；审计日志记录每次实际执行（时间/会话/操作/参数/结果）；
+  - 6 个写操作：`run_daily` / `checkin_all` / `abort_daily` / `probe_models` /
+    `notify_on` / `notify_off`；
+  - **有意排除**（面板可做，助手不做）：登录/改密、导入导出、删除全部 Key、
+    账号永久删除 —— 涉及凭据与数据主权。
+
+### 修复
+
+- **`run` 命令绕过确认流程直接执行**：`_EN2ZH` 把 `run` 归一成「任务」，
+  导致它不匹配 `_write_intent` 的 `run` 分支而落到旧写操作分支立即执行
+  （实测 `fired=[RUN]`）。改为 `run` 不再归一（保持原形即可进确认流程）；
+  `daily` 仍归一为「任务」（只读查询，走查询分支）。
+
+### 测试
+
+- 新增 `_test_write_confirm.py`（**100** 项）：确认框架契约、危险操作排除、
+  集成位置（疑问句之后/写分支之前）、意图识别（16 写 + 12 非写）、
+  完整流程（待确认→取消→放弃→确认→TTL→旁路→审计）。
+- 同步更新 `_test_assistant.py`（155 项，写端点判据改为「工具区不得出现」）
+  与 `_test_question_routing.py`（64 项，写命令改为「先要确认」）。
+- 全量 41 个测试文件全绿；Python 语法通过。
+
+### 新增可调参数
+
+- `AB_ASSISTANT_WRITE_CONFIRM`（默认 1）：写操作确认总开关。
+- `AB_ASSISTANT_CONFIRM_TTL`（默认 300 秒）：确认态有效期。
+
 ## [v0.9.72] - 2026-10-14
 
 <!-- summary: 阶段4——助手只读工具 6→15，查询能力覆盖 AutoBuddy 五大功能域 -->
@@ -4030,7 +4068,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.72...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.73...HEAD
+[v0.9.73]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.72...v0.9.73
 [v0.9.72]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.71...v0.9.72
 [v0.9.71]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.70...v0.9.71
 [v0.9.70]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.69...v0.9.70

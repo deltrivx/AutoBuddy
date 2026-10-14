@@ -220,28 +220,54 @@ N.wecom_command_reply("任务进度")
 check("「任务进度」走查询而非执行",
       fired == ["DAILY"], f"fired={fired}")
 
-# 显式命令 → 必须正常触发写操作（不能因修 bug 把命令也废了）
+# 显式命令 → 阶段 5 起改为**两段式确认**：先返回待确认提示，
+# 不立即执行；用户回「确认」才真正触发写操作。
+# （旧契约是「立即触发 RUN」，v0.9.73 起有confirmed —— 这是防误触发的核心设计。）
 fired.clear()
-N.wecom_command_reply("执行任务")
-check("「执行任务」仍触发 RUN", fired == ["RUN"], f"fired={fired}")
+r_cmd = N.wecom_command_reply("执行任务")
+check("「执行任务」先要确认（不立即执行）",
+      fired == [] and bool(r_cmd) and "待确认" in r_cmd, f"fired={fired} reply={r_cmd[:40]}")
 
 fired.clear()
-N.wecom_command_reply("签到")
-check("「签到」仍触发 CHECKIN", fired == ["CHECKIN"], f"fired={fired}")
+r_ci = N.wecom_command_reply("签到")
+check("「签到」先要确认（不立即执行）",
+      fired == [] and bool(r_ci) and "待确认" in r_ci, f"fired={fired} reply={r_ci[:40]}")
 
 # 带标点的命令也要认（用户手打常带句号）
 fired.clear()
-N.wecom_command_reply("执行任务。")
-check("「执行任务。」（带句号）仍触发 RUN", fired == ["RUN"], f"fired={fired}")
+r_dot = N.wecom_command_reply("执行任务。")
+check("「执行任务。」（带句号）仍进确认流程",
+      fired == [] and bool(r_dot) and "待确认" in r_dot, f"fired={fired} reply={r_dot[:40]}")
 
 # 英文命令（Telegram 菜单）
 fired.clear()
-N.wecom_command_reply("run")
-check("「run」仍触发 RUN", fired == ["RUN"], f"fired={fired}")
+r_run = N.wecom_command_reply("run")
+check("「run」仍进确认流程",
+      fired == [] and bool(r_run) and "待确认" in r_run, f"fired={fired} reply={r_run[:40]}")
 
 fired.clear()
-N.wecom_command_reply("checkin")
-check("「checkin」仍触发 CHECKIN", fired == ["CHECKIN"], f"fired={fired}")
+r_ci2 = N.wecom_command_reply("checkin")
+check("「checkin」仍进确认流程",
+      fired == [] and bool(r_ci2) and "待确认" in r_ci2, f"fired={fired} reply={r_ci2[:40]}")
+
+# 确认后才真正执行（走 assistant 的执行器，不再经过 notify 的 _cmd_*）
+try:
+    try:
+        from gateway import assistant as _A5
+    except ImportError:
+        import assistant as _A5  # type: ignore
+    sid5 = "qr-confirm-test"
+    _A5.clear_session(sid5)
+    _A5.try_write_flow(sid5, "执行任务")      # 下令 → 待确认
+    pend = _A5._pending_write(sid5)
+    check("下令后待确认态已建立", pend is not None and pend.get("action") == "run_daily",
+          f"pend={pend}")
+    # 取消 → 不执行
+    rc = _A5.try_write_flow(sid5, "取消")
+    check("取消后不执行且清状态",
+          bool(rc) and "已取消" in rc and _A5._pending_write(sid5) is None)
+except Exception as _e5:
+    check("确认流程可跑通", False, f"{type(_e5).__name__}: {_e5}")
 
 # 恢复环境 + reload 回默认状态
 if _old_env is None:
