@@ -31,6 +31,41 @@
 
 ---
 
+## [v0.9.67] - 2026-10-14
+
+<!-- summary: 交互加入智能助手——自然语言提问实时数据回答（参考 MoviePilot agent/llm 设计） -->
+
+### 新增
+
+- **交互智能助手**（第二阶段需求）：未命中命令的自然语言交给 LLM，
+  通过工具调用查实时数据后用中文回答。
+  - 参考 MoviePilot `app/agent/llm/`：工具注册表 + 会话隔离 + 命令/自然语言分层；
+  - **命令优先，LLM 兜底**：9 个既有命令是确定性路径（零延迟、不依赖模型可用性），
+    永不被 LLM 故障拖累；
+  - **复用自家网关供电**：经 loopback 调自家网关（免鉴权），
+    天然继承账号池调度/冷却/配额，不占额外资源；
+  - **只读工具**（6 个）：积分统计、账号余额、当前模型、网关状态、
+    任务进度、请求指标 —— 不执行写操作，避免自然语言歧义误操作；
+  - 多轮对话：按用户分会话，保留最近 6 轮，TTL 30 分钟；
+  - 模型自动挑选（hy3 → deepseek-v3 → kimi-k3 → deepseek-chat），可指定；
+  - 菜单新增「智能助手」按钮（`AB_ASSISTANT`），「助手」命令查看用法；
+  - `AB_ASSISTANT_ENABLED=0` 一键退回纯命令模式。
+
+### 测试
+
+- 新增 `_test_assistant.py`（64 项）：模块契约、工具集（含**只读保证**）、
+  集成契约（三个调用点透传 session_id、菜单按钮、回落文案）、
+  **web_proxy 无第二份助手实现**（规避 v0.9.63 教训）、
+  真实模块行为（is_command 10 用例、会话隔离、TTL 清理、异常隔离）。
+- 同步更新 `_test_command_routing.py` 锁定 `run_in_threadpool` 新契约。
+- 全量 39 个测试文件全绿。
+
+### 新增可调参数
+
+- `AB_ASSISTANT_ENABLED`（默认 1）、`AB_ASSISTANT_MODEL`（空=自动）、
+  `AB_ASSISTANT_TIMEOUT`（45s）、`AB_ASSISTANT_SESSION_TTL`（1800s）、
+  `AB_ASSISTANT_MAX_SESSIONS`（200）、`AB_ASSISTANT_HISTORY`（6 轮）。
+
 ## [v0.9.66] - 2026-10-14
 
 <!-- summary: 修复 token 统计页 500——entrypoint 双向软链成环导致 SQLite 打不开数据库 -->
@@ -3848,7 +3883,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.66...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.67...HEAD
+[v0.9.67]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.66...v0.9.67
 [v0.9.66]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.65...v0.9.66
 [v0.9.65]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.64...v0.9.65
 [v0.9.64]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.63...v0.9.64

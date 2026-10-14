@@ -6973,7 +6973,10 @@ async def wecom_callback_msg(path: str, request: Request):
         # 导致「改了 notify.py 菜单却没变」—— 回调实际走的是本文件这份。
         # 2026-10-13 用户二次反馈后收拢：本文件只做加解密，不含命令语义。
         from fastapi.concurrency import run_in_threadpool
-        reply = await run_in_threadpool(_notify.wecom_command_reply, cmd)
+        # from_user 作为会话标识传给智能助手（多轮上下文隔离）。
+        # 放在线程池里跑：助手要调 LLM（最长 45s），绝不能阻塞事件循环。
+        reply = await run_in_threadpool(
+            _notify.wecom_command_reply, cmd, from_user or None)
         plain_xml = _notify.build_reply_text(from_user, to_user, reply)
         enc_xml = _notify.encrypt_reply(plain_xml, token, aes_key, corpid,
                                         q.get("timestamp") or str(int(time.time())),

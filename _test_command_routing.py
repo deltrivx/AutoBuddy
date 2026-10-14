@@ -71,7 +71,7 @@ check("web_proxy 不再有 models 分支", 'elif cmd == "models"' not in SRC_WP)
 check("web_proxy 不再有 status/daily/run/checkin 分支",
       not any(f'elif cmd == "{c}"' in SRC_WP for c in ("status", "daily", "run", "checkin")))
 check("web_proxy 用 run_in_threadpool（同步函数不可阻塞事件循环）",
-      "run_in_threadpool(_notify.wecom_command_reply" in SRC_WP)
+      "run_in_threadpool(" in SRC_WP and "wecom_command_reply" in SRC_WP)
 
 # _wecom_interpret 也改为纯委托
 tree_nt = ast.parse(SRC_NT)

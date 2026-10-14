@@ -516,7 +516,9 @@ def wecom_callback_message(params: Dict[str, Any], body_xml_encrypted: str) -> O
             return None
         # 四元组：菜单点击是 event 消息，命令在 EventKey 里（无 Content）
         msg_type, content, from_user, event_key = _xml_text_content(plain)
-        reply_text = _wecom_interpret(msg_type, content, event_key)
+        # from_user 作为会话标识：同一用户的连续对话归同一会话（助手多轮上下文）。
+        reply_text = _wecom_interpret(msg_type, content, event_key,
+                                      session_id=from_user)
         if not reply_text:
             return None
         # 组回复 XML → 加密 → 包外层
@@ -580,7 +582,10 @@ def _cmd_help() -> str:
             "· 状态 —— 网关与账号池状态\n"
             "· 签到 —— 全部账号签到\n"
             "· 任务 —— 每日任务进度 / 启动\n"
-            "· 通知 on/off —— 开关通知推送")
+            "· 通知 on/off —— 开关通知推送\n"
+            "\n💬 也可以直接自然语言提问（智能助手查实时数据回答），\n"
+            "   如「现在积分多少」「哪个账号余额最高」「模型有哪些」\n"
+            "   「今天任务跑完了吗」。助手只读不写，写操作请用命令。")
 
 
 def _cmd_accounts() -> str:
@@ -673,8 +678,12 @@ def _cmd_checkin() -> str:
     return "签到已提交：%s" % (d.get("status") or "已开始")
 
 
-def wecom_command_reply(cmd: str) -> str:
-    """命令 → 回复文本。企微与 Telegram 共用的**唯一**命令语义实现。"""
+def wecom_command_reply(cmd: str, session_id: Optional[str] = None) -> str:
+    """命令 → 回复文本。企微与 Telegram 共用的**唯一**命令语义实现。
+
+    ``session_id`` 用于智能助手的会话隔离（企微传 FromUserName、
+    Telegram 传 chat_id）—— 不同用户的多轮对话互不串味。
+    """
     text = (cmd or "").strip()
     if not text:
         return "（空消息）"
@@ -702,6 +711,8 @@ def wecom_command_reply(cmd: str) -> str:
 
     if low in ("help", "帮助", "?", "？", "菜单"):
         return _cmd_help()
+    if "助手" in text or low in ("assistant", "ai"):
+        return _cmd_assistant_help()
     try:
         if "账号" in text or orig in ("accounts", "balance"):
             return _cmd_accounts()
@@ -719,13 +730,67 @@ def wecom_command_reply(cmd: str) -> str:
             return _cmd_run()
     except Exception:
         return "数据读取失败，请稍后再试"
-    return "收到：%s\n（回复「帮助」查看可用指令）" % text[:60]
+    # 未命中任何命令 → 交给智能助手（自然语言问答）。
+    #
+    # 设计（2026-10-14 第二阶段）：**命令优先，LLM 兜底**。上面 9 个命令是
+    # 确定性路径（零延迟、不依赖模型可用性），永不被 LLM 故障拖累；
+    # 助手只接管未命中命令的自然语言。不可用时回落原兜底文案。
+    reply = _assistant_fallback(text, session_id)
+    if reply:
+        return reply
+    return "收到：%s\n（回复「帮助」查看可用指令，或直接提问）" % text[:60]
 
 
-def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Optional[str]:
+def _assistant_fallback(text: str, session_id: Optional[str] = None) -> str:
+    """未命中命令时交给智能助手；不可用/失败返回空串。
+
+    任何异常都吞掉返回空串 —— 助手是**增益功能**，绝不能让它把
+    原本正常的命令路由搞挂。
+    """
+    try:
+        try:
+            from gateway import assistant as _assistant
+        except ImportError:
+            import assistant as _assistant  # type: ignore
+    except ImportError:
+        return ""
+    try:
+        if not _assistant.ASSISTANT_ENABLED:
+            return ""
+        return _assistant.assistant_reply(session_id or "default", text) or ""
+    except Exception:
+        return ""
+
+
+def _cmd_assistant_help() -> str:
+    """智能助手用法说明（菜单 AB_ASSISTANT 与「助手」命令共用）。"""
+    try:
+        try:
+            from gateway import assistant as _assistant
+        except ImportError:
+            import assistant as _assistant  # type: ignore
+        st = _assistant.session_stats()
+        state = "已开启" if st.get("enabled") else "已关闭"
+        model = st.get("model") or "(自动挑选)"
+    except Exception:
+        state, model = "未知", "?"
+    return ("🤖 智能助手（%s）\n"
+            "  · 模型：%s\n"
+            "  · 直接用自然语言提问即可，例如：\n"
+            "    - 现在积分多少？\n"
+            "    - 哪个账号余额最高？\n"
+            "    - 模型有哪些能用？\n"
+            "    - 今天任务跑完了吗？\n"
+            "  · 助手只读不写：启动任务/签到/开关通知请用命令。\n"
+            "  · 支持多轮对话，同一会话内可连续追问。" % (state, model))
+
+
+def _wecom_interpret(msg_type: str, content: str, event_key: str = "",
+                     session_id: Optional[str] = None) -> Optional[str]:
     """把收到的消息翻译成回复文本（命令语义统一走 `wecom_command_reply`）。
 
     支持两种来源：文本消息（命令在 content）与菜单点击（命令在 event_key）。
+    ``session_id`` 透传给智能助手做会话隔离。
     """
     if event_key:
         content = MENU_KEY_TO_CMD.get(str(event_key).strip().upper(), "")
@@ -734,7 +799,7 @@ def _wecom_interpret(msg_type: str, content: str, event_key: str = "") -> Option
             return "未知菜单操作：%s" % str(event_key)[:40]
     if msg_type != "text":
         return "我是 AutoBuddy 网关助手。发「帮助」或点下方菜单查看我能做什么～"
-    return wecom_command_reply(content or "")
+    return wecom_command_reply(content or "", session_id=session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -892,6 +957,7 @@ WECOM_MENU_COMMANDS = [
     ("AB_NOTIFY_ON", "开启通知",  "通知"),
     ("AB_NOTIFY_OFF", "关闭通知", "通知"),
     ("AB_HELP",     "帮助",       "通知"),
+    ("AB_ASSISTANT", "智能助手",   "常用"),
 ]
 
 # 菜单按钮 key -> 交互命令（与文本命令同一套路由，点按钮等价于手打该命令）
@@ -906,6 +972,7 @@ MENU_KEY_TO_CMD = {
     "AB_NOTIFY_ON": "notify on",
     "AB_NOTIFY_OFF": "notify off",
     "AB_HELP": "help",
+    "AB_ASSISTANT": "助手",
 }
 
 
@@ -1110,7 +1177,8 @@ def _tg_run_polling(stop_event: Any) -> None:
                         chat_id = str(((call.get("message") or {}).get("chat") or {}).get("id") or "")
                         data = str(call.get("data") or "").strip()
                         if chat_id and data:
-                            reply = _wecom_interpret("text", MENU_KEY_TO_CMD.get(data.upper(), data.lower())) or "未知操作"
+                            reply = _wecom_interpret("text", MENU_KEY_TO_CMD.get(data.upper(), data.lower()),
+                                                     session_id=chat_id) or "未知操作"
                             _tg_reply(token, proxy, chat_id, reply)
                         continue
                     chat_id = str((msg.get("chat") or {}).get("id") or "")
@@ -1121,7 +1189,7 @@ def _tg_run_polling(stop_event: Any) -> None:
                     cmd_text = text
                     if text.startswith("/"):
                         cmd_text = text.split(maxsplit=1)[0][1:].split("@", 1)[0]
-                    reply = _wecom_interpret("text", cmd_text)
+                    reply = _wecom_interpret("text", cmd_text, session_id=chat_id)
                     if reply:
                         _tg_reply(token, proxy, chat_id, reply)
                 except Exception:
