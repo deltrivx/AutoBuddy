@@ -31,6 +31,28 @@
 
 ---
 
+## [v0.9.70] - 2026-10-14
+
+<!-- summary: 修复设置页看不到智能助手区块——首次加载入口 run() 漏注入助手 section -->
+
+### 修复
+
+- **设置页看不到智能助手区块**（用户反馈「我并未在设置看到智能助手区块」）：
+  设置页 section 注入有两条入口 —— `run()`（DOMContentLoaded **首次加载**）与
+  `wbRefreshApi()`（手动刷新）。v0.9.69 只把 `injectAssistant()` 加进了
+  `wbRefreshApi()`，漏了 `run()`，所以首次打开看不到，手动刷新后才出现。
+  - 已在 `run()` 补上，并保持两条入口顺序一致
+    （API 接入 → 模型巡检 → 智能助手 → 通知管理）。
+
+### 测试
+
+- `_test_assistant.py` 新增 5 项契约（136 → **141**）：首次加载入口
+  `run()` 注入助手、`run()` 四 section 齐全、刷新入口同样齐全、
+  两条入口顺序一致。
+  - 此前测试只断言 `"injectAssistant()" in SRC_WP`（字符串出现过即通过），
+    无法发现「只在其中一条入口调用」这类缺陷；现在按入口分别校验。
+- 全量 39 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
 ## [v0.9.69] - 2026-10-14
 
 <!-- summary: 设置页新增智能助手配置区——provider 注册表驱动，默认自带模型，也可配任意 OpenAI 兼容接口 -->
@@ -3945,7 +3967,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.69...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.70...HEAD
+[v0.9.70]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.69...v0.9.70
 [v0.9.69]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.68...v0.9.69
 [v0.9.68]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.67...v0.9.68
 [v0.9.67]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.66...v0.9.67

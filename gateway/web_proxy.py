@@ -5569,6 +5569,11 @@ COLLAPSE_SCRIPT = r"""
     wbPinAccountBlocks();
     injectApiAccess();
     injectModelHealth();
+    // ⚠️ 顺序要与 wbRefreshApi() 保持一致（API接入 → 巡检 → 助手 → 通知）。
+    // 2026-10-14 修复：这里原先漏了 injectAssistant()，只加进了
+    // wbRefreshApi()，导致**首次加载**（走 run()）看不到「智能助手」区块，
+    // 只有手动触发刷新后才出现 —— 用户实测「设置页没有智能助手区块」。
+    injectAssistant();
     injectNotify();
     injectProfile();
     injectAbout();

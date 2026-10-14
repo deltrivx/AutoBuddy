@@ -333,6 +333,53 @@ check("设置页刷新会重取助手配置", "injectAssistant()" in SRC_WP)
 check("通知区在助手区之后注入（DOM 顺序：API→巡检→助手→通知）",
       SRC_WP.index("injectAssistant();") < SRC_WP.index("injectNotify();"))
 
+# ⚠️ 2026-10-14 线上修复：助手区块首次加载不显示。
+# 根因：`injectAssistant()` 只加进了 `wbRefreshApi()`（刷新路径），
+# 漏了 `run()`（DOMContentLoaded 首次加载路径）—— 用户实测
+# 「设置页没有智能助手区块」，只有手动触发刷新后才出现。
+# 因此必须校验**两条入口**都注入了助手，且四个 section 顺序一致。
+_js = None
+try:
+    import re as _re0
+    _blocks = _re0.findall(r"<script[^>]*>(.*?)</script>", SRC_WP, _re0.S)
+    _js = "\n".join(_blocks)
+except Exception:
+    _js = SRC_WP
+
+
+def _entry_has_all_injects(body: str) -> bool:
+    return all(("inject%s();" % n) in body
+               for n in ("ApiAccess", "ModelHealth", "Assistant", "Notify"))
+
+
+# 入口 1：run() —— 定位 DOMContentLoaded 之前的那个函数体
+_run_idx = _js.index("window.addEventListener(\"DOMContentLoaded\"")
+_run_body = _js[:_run_idx]
+_run_tail = _run_body[_run_body.rindex("function run()"):]
+check("首次加载入口 run() 注入了助手（线上漏点）",
+      "injectAssistant();" in _run_tail,
+      "run() 内未见 injectAssistant()")
+check("首次加载入口 run() 四个 section 齐全", _entry_has_all_injects(_run_tail))
+
+# 入口 2：wbRefreshApi()
+_ref_idx = _js.index("function wbRefreshApi(")
+_ref_tail = _js[_ref_idx:]
+check("刷新入口 wbRefreshApi() 注入了助手",
+      "injectAssistant();" in _ref_tail)
+check("刷新入口 wbRefreshApi() 四个 section 齐全", _entry_has_all_injects(_ref_tail))
+
+# 两条入口的 section 顺序必须一致（否则刷新前后区块位置会跳）
+_order = ["injectApiAccess();", "injectModelHealth();",
+          "injectAssistant();", "injectNotify();"]
+
+
+def _order_ok(body: str) -> bool:
+    pos = [body.index(x) for x in _order if x in body]
+    return len(pos) == 4 and pos == sorted(pos)
+
+
+check("两条入口的 section 顺序一致", _order_ok(_run_tail) and _order_ok(_ref_tail))
+
 import shutil
 shutil.rmtree(tmp, ignore_errors=True)
 
