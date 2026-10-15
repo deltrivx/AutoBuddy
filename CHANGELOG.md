@@ -31,6 +31,32 @@
 
 ---
 
+## [v0.9.84] - 2026-10-15
+
+<!-- summary: 任务上游 workbuddy_daily.py 升级至 v3.7（两种连签口径/任务过滤/Token 健壮性）+ 新增任务积分规则表，助手可回答「预计积分收益」 -->
+
+### 新增
+
+- **任务积分规则表**（`gateway/task_credits.py`）：把实测得出的积分规则固化，
+  使助手能回答「执行完后预计多少积分收益」类问题。
+  - 签到：100 积分/天 × 连签天数（22 账号 × 5 样本点实测，规律完全吻合）
+  - 领奖：`Expert_lighthouse` / `RichMeow_Chat` 各 +100 积分 +5 能量（43 次实测）
+  - 服务端下发项（旅行/兑换/礼包）标注为不可预算
+  - 严格区分「可精确算」与「估算区间」，不把估算说成确定值
+- **助手新增 2 个工具**（30 → 32）：`get_credit_rules`、`estimate_credits`。
+
+### 变更
+
+- **任务上游 `workbuddy_daily.py` 从 v2.1 升级至 v3.7**（跨 6 个版本）：
+  - 新增：钉钉 / 青龙面板通知渠道
+  - 新增：任务白黑名单过滤（`--tasks` / `--skip-tasks`）
+  - 新增：两种连签口径区分（签到连签 vs 活跃连签）
+  - 新增：Token 健壮性校验（类型 / 完整性 / JWT 解析）
+  - 新增：签到诊断增强、手机号脱敏
+  - 移除：开学季活动代码（上游已归档，活动结束）
+  - 兼容性已核验：`--no-desktop` / `--query` / `--refresh` / `--gap` / `--only`
+    全部保留；环境变量与凭证文件格式均兼容
+
 ## [v0.9.83] - 2026-10-15
 
 <!-- summary: 企微链路根因修复（WECHAT_PROXY 纠正为 URL 重写）+ 回调改 MP 模式彻底解决 5 秒超时 + 智能助手补全至 30 只读工具/10 写操作 -->
@@ -4384,7 +4410,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.83...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.84...HEAD
+[v0.9.84]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.83...v0.9.84
 [v0.9.83]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.82...v0.9.83
 [v0.9.82]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.81...v0.9.82
 [v0.9.81]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.80...v0.9.81
