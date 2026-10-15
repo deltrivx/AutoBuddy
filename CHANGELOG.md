@@ -31,6 +31,56 @@
 
 ---
 
+## [v0.9.87] - 2026-10-16
+
+<!-- summary: 修复巡检/日报通知文案重复与假数据、移动端参考百度做全屏适配（viewport 禁缩放+延伸到刘海区+惯性滚动） -->
+
+### 修复
+
+- **通知标题语义重复（两处）**：
+  - 每日任务：标题「🎯 每日任务完成」+ 正文首行「🎯 每日任务执行完成」
+  - 模型巡检：标题「🔍 巡检结果」+ 正文首行「🔍 模型可用性巡检完成」
+  
+  两处都删掉正文那行重复标题，正文直接从数据开始（标题已说明是什么）。
+- **巡检通知「本轮检测：? 个组合」永远是问号**：`build_health_done()` 读的是
+  `result["checked"]`，但 `model_health.summarize()` 实际返回的字段叫
+  **`combos`**（见 `gateway/model_health.py`），所以永远取不到值。
+  改为读 `combos` 并兼容旧字段名；顺带补上「参与账号」一行。
+- **日报「昨日消耗合计」是假数据**：原实现把 `checkin + task`
+  （**获得**的积分）当成「消耗」报出去，于是「昨日签到 0 + 任务 3000」
+  被写成「昨日消耗 3000」—— 数字恰好一样，语义完全相反（那是挣的，不是花的）。
+  现改为从**官方底层**取真实按日消耗：
+  `GET http://127.0.0.1:57890/api/credits/stats` → `accounts[].daily[]`
+  中 `date == 昨日` 的 `usage` 之和（与页面「官方积分消耗」图表同源）。
+  实测 2026-10-15 真实消耗 8,590.68（原报 3,000）。
+  取不到时显示 `—` 而非 0，避免把「没数据」误读成「没消耗」。
+
+### 变更
+
+- **移动端全屏适配**（参考 `www.baidu.com` 移动端做法）：
+  - **viewport 服务端改写**：官方只有 `width=device-width, initial-scale=1.0`，
+    允许双指缩放、且没有 `viewport-fit=cover`。改为
+    `width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0,
+    user-scalable=no, viewport-fit=cover`（百度同款禁缩放 + 延伸到刘海区）。
+    在响应阶段改写而非 JS 注入 —— viewport 必须首屏渲染前就位，
+    事后用 JS 改会触发一次可见的重排/缩放跳动。
+  - **safe-area 适配**：顶栏 `padding-top` 与主内容区/用户球 `padding-bottom`
+    改用 `max(Npx, env(safe-area-inset-*))`，让开 iPhone 刘海与 Home 条
+  - **原生 App 手感**：`-webkit-tap-highlight-color: transparent` 去掉点击蓝框、
+    `-webkit-touch-callout: none` 禁掉长按系统菜单、`user-select: none`
+    防止误选中文字（输入框/文本域显式放回可选中，否则填不了 API Key）
+  - **滚动优化**：`100dvh` 动态视口（地址栏显隐不再把内容顶出可见区）、
+    `-webkit-overflow-scrolling: touch` iOS 惯性、
+    `overscroll-behavior: contain` 掐断滚动链、`touch-action: pan-y`
+  - **横屏兜底**：横屏时 safe-area 可能为 0，`max()` 兜 16px 下限避免贴边
+- **每日任务子标题更新**：原文案含「开学季活动」，但上游 v3.x 已把开学季
+  代码归档移除。按 vendor v3.7 真实能力改写为：每日签到、旅行、抽奖、盲盒、
+  Buddy、连签兑换、补签卡、礼包补偿、徽章共 8 类任务，附积分/用量/成长
+  查询与自动领奖（内置 WorkBuddy-Daily v3.7 脚本）。
+- 版本号 `0.9.86` → `0.9.87`。
+
+---
+
 ## [v0.9.86] - 2026-10-16
 
 <!-- summary: 主界面重新设计为左右分离 + 背景磨砂样式（含移动端竖屏底部导航适配）、联网搜索引擎改为前端可自选配置（6 种引擎、密钥不再内置）、设置页账号资料置顶、主题入口挪到侧边栏左下角 -->
@@ -4501,7 +4551,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.86...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.87...HEAD
+[v0.9.87]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.86...v0.9.87
 [v0.9.86]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.85...v0.9.86
 [v0.9.85]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.84...v0.9.85
 [v0.9.84]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.83...v0.9.84

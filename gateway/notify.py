@@ -2007,13 +2007,24 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
     models_info:       {"total": n, "autoDiscovered": m, "disabled": k, "manual": j}
     """
     d = str(yesterday_credits.get("date") or "昨日")
+    # 昨日真实消耗：由调用方从官方底层 credits/stats 的 accounts[].daily[]
+    # 按日聚合得到（None = 没取到，与真实的 0 必须区分开）。
+    # ⚠️ 原实现这里报的是 checkin + task（**获得**的积分），
+    # 标签却写「昨日消耗合计」—— 语义完全反了，用户 2026-10-16 报
+    # 「昨日签到 0 / 任务 3000 / 消耗合计 3000，消耗数据是假的」。
+    used = yesterday_credits.get("used")
+    used_txt = "—" if used is None else _fmt_num(used)
+    # 昨日签到为 0 时不静默显示 0 —— 那一轮很可能压根没跑（无 checkin 记录），
+    # 报个 0 会让人以为「签到了但没给分」。明确区分「真 0」与「无记录」。
+    checkin = yesterday_credits.get("checkin")
+    checkin_txt = "—" if checkin is None else _fmt_num(checkin)
     lines = [
         "📅 报告日期：%s（凌晨 0 点推送）" % d,
         "",
         "💰 积分四项",
-        "  · 昨日签到积分：%s" % _fmt_num(yesterday_credits.get("checkin")),
+        "  · 昨日签到积分：%s" % checkin_txt,
         "  · 昨日任务积分：%s" % _fmt_num(yesterday_credits.get("task")),
-        "  · 昨日消耗合计：%s" % _fmt_num(yesterday_credits.get("total")),
+        "  · 昨日消耗合计：%s" % used_txt,
         "  · 累计任务积分：%s" % _fmt_num(yesterday_credits.get("totalCredits")),
         "  · 账号池剩余积分：%s" % _fmt_num(yesterday_credits.get("remaining")),
         "",
@@ -2106,8 +2117,13 @@ def build_task_done(task_credits: float, total: float,
 
     同②：`total` 是台账累计（非账号池余额），故称「累计任务积分」。
     """
+    # ⚠️ 2026-10-16 修复标题重复：原实现标题是「🎯 每日任务完成」，
+    # 正文第一行又叫「🎯 每日任务执行完成」，推送出来是
+    #   🎯 每日任务完成
+    #   🎯 每日任务执行完成
+    # 用户反馈「语义重复，保留一个即可」。这里删掉正文那行
+    # （标题已经说清是什么，正文直接从数据开始）。
     lines = [
-        "🎯 每日任务执行完成",
         "  · 本次任务积分：%s" % _fmt_num(task_credits),
         "  · 累计任务积分：%s" % _fmt_num(total),
     ]
@@ -2120,22 +2136,38 @@ def build_task_done(task_credits: float, total: float,
 
 
 def build_health_done(result: Dict[str, Any], models_info: Dict[str, Any]) -> tuple:
-    """④ 巡检结束：结果摘要 + 当前可用模型。"""
-    checked = (result or {}).get("checked")
+    """④ 巡检结束：结果摘要 + 当前可用模型。
+
+    ⚠️ 2026-10-16 修两处（用户反馈）：
+      1) 标题与正文重复 —— 原标题「🔍 巡检结果」+ 正文首行
+         「🔍 模型可用性巡检完成」，推送出来两行都带 🔍。
+         保留标题那行，正文直接从数据开始。
+      2) 「本轮检测：? 个组合」的问号 —— 这里读的是
+         result["checked"，但 model_health.summarize() 实际返回的字段叫
+         **combos**（见 gateway/model_health.py 的 summarize），
+         checked 永远取不到 → 永远是 None → 永远显示问号。
+         改为读 combos，并兼容老字段名 checked 以防口径变动。
+    """
+    combos = (result or {}).get("combos")
+    if combos is None:
+        combos = (result or {}).get("checked")
+    accounts = (result or {}).get("accounts")
     disabled = (result or {}).get("disabled") or []
     enabled = (result or {}).get("enabled") or []
     lines = [
-        "🔍 模型可用性巡检完成",
-        "  · 本轮检测：%s 个组合" % (checked if checked is not None else "?"),
-        "  · 新禁用：%s · 恢复启用：%s" % (len(disabled), len(enabled)),
-        "",
-        "🤖 当前模型",
-        "  · 可用总数：%s（自动发现 %s）" % (
-            models_info.get("total", "?"), models_info.get("autoDiscovered", "?")),
-        "  · 轮检禁用：%s · 手动禁用：%s" % (
-            models_info.get("disabled", "?"), models_info.get("manual", "?")),
+        "  · 本轮检测：%s 个组合" % (
+            "{:,}".format(int(combos)) if isinstance(combos, (int, float)) else "?"),
     ]
-    return ("🔍 巡检结果", lines)
+    if isinstance(accounts, (int, float)):
+        lines.append("  · 参与账号：%s 个" % "{:,}".format(int(accounts)))
+    lines.append("  · 新禁用：%s · 恢复启用：%s" % (len(disabled), len(enabled)))
+    lines.append("")
+    lines.append("🤖 当前模型")
+    lines.append("  · 可用总数：%s（自动发现 %s）" % (
+        models_info.get("total", "?"), models_info.get("autoDiscovered", "?")))
+    lines.append("  · 轮检禁用：%s · 手动禁用：%s" % (
+        models_info.get("disabled", "?"), models_info.get("manual", "?")))
+    return ("🔍 模型可用性巡检完成", lines)
 
 
 def build_model_change(added: List[str], removed: List[str],

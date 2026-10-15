@@ -51,9 +51,14 @@ ICON_PATH = Path("/app/icon.png")
 
 COLLAPSE_SCRIPT = r"""
 <style>
+  /* ⚠️ 这里**不能**再强制 position: relative ——
+     新设计把 aside 改成 position: sticky 的顶部横条（见下面「顶栏」块），
+     而旧规则 `position: relative !important` 特异性 (0,0,1) + !important
+     与 sticky 那条同级，后声明者胜；但两条分散在文件里、顺序脆弱，
+     实测出现过面板 absolute 锚点错乱（面板跑到右上角 y=-73）。
+     结论：旧规则只保留 transition，position 完全交给新设计那一条管。 */
   aside {
     transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    position: relative !important;
   }
   #wb-collapse-btn {
     position: absolute;
@@ -728,6 +733,14 @@ COLLAPSE_SCRIPT = r"""
     border-bottom: 1px solid var(--border, rgba(120, 120, 120, 0.2));
   }
   @media (min-width: 640px) { .wb-api-row { margin: 0 20px; } }
+  /* 卡片内「游离说明文字」的缩进：必须与 .wb-api-row 用**同一套**左右边距，
+     否则它作为 card 直接子节点时会比字段行凸出 16/20px。
+     搜索引擎区的引擎说明（desc + 申请地址）用它。 */
+  .wb-sr-note {
+    margin: 0 16px 8px;
+  }
+  @media (min-width: 640px) { .wb-sr-note { margin: 0 20px 8px; } }
+  @media (max-width: 560px) { .wb-sr-note { margin: 0 12px 8px; } }
   .wb-api-row:last-child { border-bottom: 0; }
   .wb-api-row-stack { flex-direction: column; align-items: stretch; }
   /* 窄屏下横排会把左边的说明文字压成一条竖线（实测 13px 宽），
@@ -1008,260 +1021,450 @@ COLLAPSE_SCRIPT = r"""
     white-space: nowrap;
   }
 
-  /* ==================================================================
-     主界面重新设计（2026-10-16）
-     参考图：左侧窄边栏（磨砂半透明 + 暖色高亮）+ 右侧主内容区。
-     用户诉求：「内容不变只是改前端 UI 设计」+「做好移动端竖屏适配」。
 
-     实现要点：
-       1) 侧边栏 backdrop-filter 磨砂，内容区可透出底色形成层次；
-       2) 主内容区卡片统一圆角/间距/细边框，视觉与侧边栏分离；
-       3) 强调色沿用官方 --primary，不引入第二套配色；
-       4) 窄屏（<=720px）侧边栏改为**底部横向导航条**，避免竖屏被挤成一条线；
-       5) 所有 !important 都只用于覆盖官方内联宽度，改动面最小。
+  /* ==================================================================
+     主界面重新设计 v2（2026-10-16 第二版）
+     用户反馈：「之前关于UI界面设计回滚，重新设计给我一个全新方案，
+     目前方案还是沿用的上游的」。
+
+     所以这一版**彻底抛弃上游的左侧 220px 固定纵栏**这个范式，改成：
+       顶部横条导航（毛玻璃）+ 全宽内容区 + 主题控件在右上角
+
+     布局变换靠 flex 方向翻转实现（官方容器是 flex row: aside + main，
+     改成 column 后 aside 变横条、main 吃满全宽），DOM 一行不动，
+     所以不影响 React 渲染，也不会被 hydration 覆盖。
+
+     设计要点：
+       1) 顶栏毛玻璃 + 底部细边框，滚动时内容从栏下透出，层次分明
+       2) 导航横向排布，选中态用主色淡底 + 主色文字（不再靠左侧竖条）
+       3) 主题三段控件放顶栏右上角（用户明确要求）
+       4) 内容区限宽 1240px 居中，宽屏不拉满、窄屏吃满
+       5) 移动端（<=860px）顶栏保留品牌+主题，导航收成可横向滚条的
+          第二行；<=560px 时品牌名隐藏只留图标，保证 5 个入口放得下
      ================================================================== */
-  /* —— 1. 侧边栏磨砂 —— */
-  aside {
-    background: color-mix(in oklab, var(--sidebar, #1b1e27) 82%, transparent) !important;
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
-    backdrop-filter: blur(18px) saturate(140%);
-    border-right: 1px solid var(--sidebar-border, rgba(120,120,120,0.18)) !important;
+
+  /* —— 1. 容器翻转：row → column，aside 从纵栏变横条 —— */
+  body > div#root > div,
+  div.flex.h-screen {
+    flex-direction: column !important;
   }
-  /* 主内容区留白与最大宽度：宽屏不拉太满，窄屏吃满 */
+
+  /* —— 2. 顶栏（原 aside 变成它）—— */
+  aside {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    flex: 0 0 auto !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 4px !important;
+    padding: 0 14px !important;
+    height: 54px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--sidebar-border, rgba(120,120,120,0.16)) !important;
+    /* 毛玻璃：内容滚动时从栏下透出 */
+    background: color-mix(in oklab, var(--sidebar, #1b1e27) 78%, transparent) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(20px) saturate(150%);
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 9000 !important;
+    overflow: visible !important;
+  }
+
+  /* 品牌区：横条左侧，不再占一整块 */
+  aside > div:first-child {
+    flex: 0 0 auto !important;
+    padding: 0 10px 0 2px !important;
+    margin-right: 6px !important;
+    border-right: 1px solid var(--sidebar-border, rgba(120,120,120,0.16)) !important;
+    height: 26px !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+
+  /* 导航：横向、可滚动、吃掉剩余宽度 */
+  aside nav {
+    flex: 1 1 auto !important;
+    flex-direction: row !important;
+    gap: 2px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none !important;
+    height: 100% !important;
+    align-items: center !important;
+    padding: 0 !important;
+    min-width: 0 !important;
+  }
+  aside nav::-webkit-scrollbar { display: none !important; }
+
+  /* 导航项：图标+文字横排，选中态用主色淡底 */
+  aside nav a {
+    flex: 0 0 auto !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 7px !important;
+    height: 34px !important;
+    padding: 0 11px !important;
+    border-radius: 9px !important;
+    font-size: 13px !important;
+    white-space: nowrap !important;
+    color: var(--muted-foreground, #64748b) !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+  }
+  aside nav a:hover {
+    background: var(--accent, rgba(120,120,120,0.1)) !important;
+    color: var(--foreground, #0f172a) !important;
+  }
+  /* 官方选中态是 bg-foreground/[0.06] + text-foreground，
+     这里统一改成主色淡底 + 主色文字，和整体强调色一致 */
+  aside nav a.bg-foreground\/\[0\.06\],
+  aside nav a[class*="bg-foreground"] {
+    background: color-mix(in oklab, var(--primary, #3b82f6) 14%, transparent) !important;
+    color: var(--primary, #3b82f6) !important;
+    font-weight: 600 !important;
+  }
+  aside nav a svg { width: 16px !important; height: 16px !important; flex-shrink: 0 !important; }
+  aside nav a span.wb-nav-label { display: inline !important; }
+
+  /* —— 2.5 让旧的「收拢态」规则在新顶栏下失效 ——
+     ⚠️ 这条不是可选优化，是必须的：
+     initCollapse() 在窄屏（<=720px）或用户手动收拢时会给 aside 加
+     .wb-collapsed 类，而旧规则 `aside.wb-collapsed { width: 68px !important }`
+     特异性 (0,1,1) 高于上面 `aside { width: 100% !important }` 的 (0,0,1)，
+     特异性更高者胜 —— 于是顶栏在移动端只剩 68px 宽、导航被压成一条。
+     （v0.9.86 第一版设计就栽在这里，实测 nav clientWidth 只有 9px。）
+     这里补一条同等特异性的规则把它拉回全宽，并恢复被隐藏的文字。 */
+  aside.wb-collapsed {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+  aside.wb-collapsed div.min-w-0 { display: flex !important; }
+  aside.wb-collapsed nav a {
+    justify-content: flex-start !important;
+    padding: 0 11px !important;
+  }
+  aside.wb-collapsed nav a span.wb-nav-label { display: inline !important; }
+  aside.wb-collapsed nav a:hover::after { content: none !important; }
+
+  /* —— 3. 主题三段控件：顶栏右上角 —— */
+  #wb-theme-switch {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
+    margin-left: 8px !important;
+    padding: 3px !important;
+    border-radius: 10px !important;
+    background: var(--muted, rgba(120,120,120,0.12)) !important;
+    border: 1px solid var(--border, rgba(120,120,120,0.14)) !important;
+  }
+  #wb-theme-switch .wb-ts-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 30px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 7px !important;
+    background: transparent !important;
+    color: var(--muted-foreground, #64748b) !important;
+    cursor: pointer !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+  }
+  #wb-theme-switch .wb-ts-btn:hover {
+    background: var(--accent, rgba(120,120,120,0.1)) !important;
+    color: var(--foreground, #0f172a) !important;
+  }
+  #wb-theme-switch .wb-ts-btn.wb-ts-on {
+    background: var(--primary, #3b82f6) !important;
+    color: var(--primary-foreground, #ffffff) !important;
+  }
+  #wb-theme-switch .wb-ts-btn svg { width: 14px !important; height: 14px !important; }
+
+  /* —— 3.5 收纳入口 = 左上角 logo（2026-10-16 第二次调整）——
+     用户：「取消右上角收纳按钮，改为收纳到左上角logo图标，也就是说
+     logo收纳五个选项卡，然后原本选项卡直接清除」。
+
+     实现：品牌区整块（#wb-brand-trigger）变成可点击，不加新按钮。
+     5 个导航项已永久收纳进 logo（用户 2026-10-16），logo 是**唯一**入口，
+     所以给它一个常驻的淡底 + 主色描边，让用户一眼看出「这里能点」。
+     （不再分收纳/展开态 —— 没有展开态了。） */
+  /* 用户 2026-10-16：「logo右侧文字为何有个框，取消了」。
+     logo 仍然是唯一入口（可点、可键盘操作），但**不要那个淡底+描边的框** ——
+     它把品牌区包起来，视觉上像多了一块斑。只保留极轻的 hover 反馈暗示可点。 */
+  #wb-brand-trigger {
+    transition: background 0.15s ease;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 9px !important;
+  }
+  #wb-brand-trigger:hover {
+    background: var(--accent, rgba(120,120,120,0.07)) !important;
+  }
+  /* ⚠️ 5 个导航项**永久收纳**，不再有「展开态」。
+     用户 2026-10-16：「你都收纳了，为何五个选项卡还在外面」——
+     要的是：选项卡彻底不在顶栏出现，左上角 logo 是唯一入口，
+     点 logo 才弹出那 5 项（面板居中）。
+     因此这里不再区分 .wb-nav-collapsed，直接无条件隐藏 nav。 */
+  aside nav { display: none !important; }
+  /* nav 已永久隐藏（display:none 不占 flex 空间），主题会停在品牌旁边。
+     必须显式 margin-left:auto 把它推到最右。
+     （实测踩过：PC 上 theme x=170 而展开态在 x=1323，视觉重心全乱。） */
+  aside #wb-theme-switch { margin-left: auto !important; }
+
+  /* —— 3.6 收纳面板（点 logo 弹出的下拉）——
+     absolute 浮层，不参与文档流，不会把内容顶下去。
+     PC 端从 logo 下方垂下来（左对齐），移动端收窄为宽度受限的下拉。 */
+  #wb-nav-panel {
+    display: none;
+    position: absolute !important;
+    /* 用户 2026-10-16 澄清：「我说的是收纳框**里面文字**居中，
+       不是收纳框居中」。所以框本身回到左上角 logo 下方垂出，
+      _centered_ 的是每一项里的文字（见下面 .wb-nav-panel-item）。 */
+    left: 10px !important;
+    right: auto !important;
+    transform: none !important;
+    top: calc(100% + 8px) !important;
+    z-index: 9500 !important;
+    /* 用户 2026-10-16：「收纳框两边过宽适当缩短左右距离」。
+       原 min-width 190 / max 340 太宽松；收到 168 / 260，
+       同时把自身 padding 从 5px 压到 4px。 */
+    min-width: 168px !important;
+    max-width: min(78vw, 260px) !important;
+    padding: 4px !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--border, rgba(120,120,120,0.18)) !important;
+    /* 与顶栏同款毛玻璃，浮层有连续感 */
+    background: color-mix(in oklab, var(--popover, var(--card, #ffffff)) 92%, transparent) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(20px) saturate(150%);
+    box-shadow: 0 10px 34px rgba(0,0,0,0.18) !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+  }
+  #wb-nav-panel.wb-nav-panel-open { display: flex !important; }
+  #wb-nav-panel .wb-nav-panel-item {
+    display: flex !important;
+    /* 用户 2026-10-16：「收纳框里面文字居中」。
+       图标 + 文字作为整体水平居中，不是默认的左对齐。 */
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    padding: 9px 8px !important;
+    text-align: center !important;
+    border-radius: 9px !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    color: var(--foreground, #0f172a) !important;
+    text-decoration: none !important;
+    cursor: pointer !important;
+    transition: background 0.14s ease !important;
+  }
+  #wb-nav-panel .wb-nav-panel-item:hover {
+    background: var(--accent, rgba(120,120,120,0.1)) !important;
+  }
+  #wb-nav-panel .wb-nav-panel-item svg {
+    width: 16px !important; height: 16px !important; flex-shrink: 0 !important;
+  }
+  #wb-nav-panel .wb-nav-panel-item.wb-nav-panel-active {
+    background: color-mix(in oklab, var(--primary, #3b82f6) 14%, transparent) !important;
+    color: var(--primary, #3b82f6) !important;
+    font-weight: 600 !important;
+  }
+  #wb-nav-panel .wb-nav-panel-empty {
+    padding: 10px 12px !important;
+    font-size: 12px !important;
+    color: var(--muted-foreground, #64748b) !important;
+  }
+
+  /* 旧的折叠按钮在新顶栏里没意义（顶栏本来就是最小高度），隐藏 */
+  #wb-collapse-btn { display: none !important; }
+
+  /* —— 4. 内容区：吃满全宽 + 限宽居中 —— */
   main {
-    background: var(--background, #0f1117);
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    background: var(--background, #0f1117) !important;
   }
   main > div, main > section {
-    max-width: 1180px;
-    margin-left: auto;
-    margin-right: auto;
+    max-width: 1240px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
   }
-  /* —— 2. 卡片分离感：细边框 + 大圆角 + 更柔的阴影 —— */
+
+  /* —— 5. 卡片：与顶栏同一套语言（圆角 + 细边框 + 柔阴影）—— */
   .wb-api-card {
-    border-radius: 16px;
-    border: 1px solid var(--border, rgba(120,120,120,0.18));
-    background: color-mix(in oklab, var(--card, #ffffff) 92%, transparent);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.06);
-  }
-  /* 设置页小标题（外观 / API 接入 …）与卡片拉开层次 */
-  [id^="settings-"] {
-    scroll-margin-top: 16px;
+    border-radius: 14px !important;
+    border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
+    background: var(--card, #ffffff) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 6px 20px rgba(0,0,0,0.05) !important;
   }
   h2[id^="settings-"] {
-    font-size: 13px !important;
+    font-size: 12.5px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.03em !important;
     color: var(--muted-foreground, #64748b) !important;
-    text-transform: none;
-    padding: 0 2px;
   }
-  /* 主按钮统一到官方主色 */
   .wb-api-btn-primary {
     background: var(--primary, #3b82f6) !important;
     color: var(--primary-foreground, #ffffff) !important;
     border-color: transparent !important;
   }
-  .wb-api-btn-primary:hover {
-    filter: brightness(1.06);
-  }
-  /* 开关「已开启」态用主色，和整体强调色统一 */
   .wb-api-btn-on {
-    background: color-mix(in oklab, var(--primary, #3b82f6) 16%, transparent) !important;
-    border-color: color-mix(in oklab, var(--primary, #3b82f6) 45%, transparent) !important;
+    background: color-mix(in oklab, var(--primary, #3b82f6) 15%, transparent) !important;
+    border-color: color-mix(in oklab, var(--primary, #3b82f6) 42%, transparent) !important;
     color: var(--primary, #3b82f6) !important;
   }
 
-  /* —— 3. 侧边栏底部：主题切换（2026-10-16 用户要求挪到这里）—— */
-  #wb-theme-dock {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: auto;
-    padding: 10px 4px 2px;
-    border-top: 1px solid var(--sidebar-border, rgba(120,120,120,0.16));
-  }
-  #wb-theme-dock .wb-theme-title {
-    font-size: 11px;
-    color: var(--muted-foreground, #64748b);
-    padding: 0 4px 4px;
-    width: 100%;
-  }
-  #wb-theme-dock .wb-theme-btns {
-    display: flex;
-    gap: 4px;
-    width: 100%;
-    padding: 0 2px;
-  }
-  #wb-theme-dock .wb-theme-btn {
-    flex: 1 1 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    height: 30px;
-    padding: 0 6px;
-    border-radius: 9px;
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--muted-foreground, #64748b);
-    font-size: 11.5px;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
-  }
-  #wb-theme-dock .wb-theme-btn:hover {
-    background: var(--accent, rgba(120,120,120,0.1));
-    color: var(--foreground, #0f172a);
-  }
-  #wb-theme-dock .wb-theme-btn.wb-theme-active {
-    background: var(--primary, #3b82f6);
-    border-color: transparent;
-    color: var(--primary-foreground, #ffffff);
-    font-weight: 600;
-  }
-  #wb-theme-dock .wb-theme-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
-  /* 收拢态只留图标，文字隐藏 */
-  aside.wb-collapsed #wb-theme-dock .wb-theme-title,
-  aside.wb-collapsed #wb-theme-dock .wb-theme-btn span { display: none !important; }
-  aside.wb-collapsed #wb-theme-dock .wb-theme-btns { flex-direction: column; }
-  aside.wb-collapsed #wb-theme-dock .wb-theme-btn { height: 32px; }
-
-  /* —— 4. 移动端竖屏（<=720px）：侧边栏改为底部横向导航条 ——
-     官方 aside 是 220px 固定纵栏，在 430px 屏上会吃掉一半宽度。
-     这里把它改成贴底的横向条：图标在上、文字在下，横向可滚动，
-     彻底避免「竖屏内容被挤成一条竖线」。 */
-  @media (max-width: 720px) {
+  /* —— 6. 移动端（<=860px）：导航收成第二行，主题留在第一行右侧 —— */
+  @media (max-width: 860px) {
     aside {
-      position: fixed !important;
+      height: auto !important;
+      flex-wrap: wrap !important;
+      padding: 6px 10px !important;
+      row-gap: 4px !important;
+    }
+    aside > div:first-child { border-right: 0 !important; margin-right: auto !important; }
+    aside nav {
+      order: 3 !important;
+      flex: 1 0 100% !important;
+      height: 40px !important;
+      border-top: 1px solid var(--sidebar-border, rgba(120,120,120,0.14)) !important;
+      padding-top: 3px !important;
+    }
+    /* 主题与收纳按钮同在第二行右侧。
+       ⚠️ 必须给收纳按钮也设 order: 2 —— 不设的话它是默认 order:0，
+       会排到 order:2 的主题**前面**去（实测 togglerAfterTheme=false，
+       第二行右侧（收纳入口已改为左上角 logo，不再有独立按钮）。 */
+    #wb-theme-switch { order: 2 !important; margin-left: auto !important; }
+    aside nav a { height: 32px !important; padding: 0 9px !important; font-size: 12.5px !important; }
+    aside nav a svg { width: 15px !important; height: 15px !important; }
+    /* 顶栏两行后，sticky 仍有效；内容区不再需要额外底部留白 */
+    main, body > div { padding-bottom: 0 !important; }
+    /* 右下角用户球避开顶栏（fixed 定位时顶栏在上方） */
+    #wb-user-orb { bottom: 16px !important; right: 12px !important; }
+  }
+
+  /* —— 6.5 移动端全屏适配基础（<=860px），参考 www.baidu.com 移动端 ——
+     百度移动端的三条核心做法，全部搬过来：
+       1) viewport 禁缩放：width=device-width + minimum-scale=maximum-scale=1.0
+          + user-scalable=no（服务端已改写 meta，见 _wb_fix_viewport）
+       2) viewport-fit=cover：页面延伸到刘海/圆角区，吃满整屏；
+          再用 env(safe-area-inset-*) 把**内容**从刘海与 Home 条下面让开，
+          避免顶部被刘海压住、底部被 Home 条压住
+       3) 去掉点击蓝框：-webkit-tap-highlight-color: transparent，
+          并禁掉 iOS 上长按弹出的系统菜单，交互更像原生 App
+     另外补两条移动端常见瑕疵：
+       - text-size-adjust: 100%：防止横屏时 Chrome 自动放大正文
+       - overscroll-behavior: none on html：掐断整页 rubber-band，
+          只让 main 自己滚（否则下拉刷新会把整个页面拽动） */
+  @media (max-width: 860px) {
+    html {
+      text-size-adjust: 100% !important;
+      -webkit-text-size-adjust: 100% !important;
+      overscroll-behavior: none !important;
+    }
+    body {
+      -webkit-tap-highlight-color: transparent !important;
+      overscroll-behavior: none !important;
+      /* 禁掉长按弹出系统菜单（移动端网页常见「保存图片/拷贝」弹窗） */
+      -webkit-touch-callout: none !important;
+      -webkit-user-select: none !important;
+      user-select: none !important;
+    }
+    /* 输入框/文本区必须能选能粘 —— 上面一刀切禁了 user-select，
+       这里把可编辑元素放回来，否则设置页填不了 API Key。 */
+    input, textarea, select, [contenteditable="true"] {
+      -webkit-user-select: auto !important;
+      user-select: auto !important;
+      -webkit-touch-callout: default !important;
+    }
+    /* 顶栏让开 iPhone 刘海：padding-top 用 safe-area 上限 */
+    aside {
+      padding-top: max(6px, env(safe-area-inset-top, 0px)) !important;
+    }
+    /* 底部留出 Home 条高度；横屏时 safe-area-inset-bottom 可能是 0 或 21px，
+       用 max() 兜一个 16px 下限，避免横屏贴边。 */
+    main {
+      padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)) !important;
+    }
+    /* 右下角用户球也要避开 Home 条 */
+    #wb-user-orb {
+      bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 16px)) !important;
+    }
+    /* 收纳面板别被刘海裁掉 */
+    #wb-nav-panel {
+      top: calc(100% + max(6px, env(safe-area-inset-top, 0px))) !important;
+    }
+  }
+
+  /* —— 7. 移动端全屏滑动（<=860px）——
+     用户 2026-10-16：「做好移动端页面全屏滑动效果」。
+
+     现状（实测）：官方容器是 h-screen + overflow-hidden，滚动交给
+     main 的 overflow-y:auto。手机上这么用有三个毛病：
+       1) 地址栏显隐会改变 visual viewport 高度，h-screen 用的是
+          layout viewport，于是顶栏/底部会被顶出可见区
+       2) main 里滚动会「链式穿透」到 body（rubber-band 时整页跟着抖）
+       3) 滚动没有惯性收尾，快速一滑就停下，手感生硬
+
+     改法（全部 CSS，不引 JS）：
+       - 容器高度改用 100dvh（动态视口，跟着地址栏收缩）
+       - main 加 -webkit-overflow-scrolling: touch 恢复 iOS 惯性
+       - overscroll-behavior: contain 掐断滚动链，只让 main 滚
+       - 顶栏 position: sticky + top:0，滑动时始终吸附在顶部
+       - 顶部/底部加渐隐遮罩，提示「这里还能滚」，滑到底不再突兀 */
+  @media (max-width: 860px) {
+    body > div#root > div,
+    div.flex.h-screen {
+      height: 100dvh !important;
+      max-height: 100dvh !important;
+    }
+    main {
+      height: auto !important;
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      -webkit-overflow-scrolling: touch !important;
+      overscroll-behavior-y: contain !important;
+      scroll-behavior: smooth !important;
+      touch-action: pan-y !important;
+    }
+    /* 内容区留出顶栏吸附位：sticky 需要 main 有可滚动余量 */
+    main > div, main > section { padding-bottom: 24px !important; }
+    /* 底部渐隐：提示还有内容，滑到底不突兀 */
+    main::after {
+      content: "";
+      position: sticky !important;
+      bottom: 0 !important;
       left: 0 !important;
       right: 0 !important;
-      bottom: 0 !important;
-      top: auto !important;
-      width: 100% !important;
-      max-width: 100% !important;
-      height: auto !important;
-      flex-direction: row !important;
-      align-items: center !important;
-      padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)) !important;
-      border-right: 0 !important;
-      border-top: 1px solid var(--sidebar-border, rgba(120,120,120,0.18)) !important;
-      border-radius: 0 !important;
-      z-index: 9000 !important;
-      overflow: visible !important;
-    }
-    /* ⚠️ 关键：必须用 aside.wb-collapsed（与折叠态同等特异性）再覆盖一次。
-       折叠态规则 `aside.wb-collapsed { width: 68px !important }` 特异性是 (0,1,1)，
-       上面的 `aside { width: 100% !important }` 只有 (0,0,1) —— 特异性更低，
-       所以 68px 会赢。实测后果：侧边栏在竖屏只剩 68px 宽、nav 被压到 9px，
-       5 个导航项全挤成一团。这里补一条同等特异性的规则把它拉回全宽。 */
-    aside.wb-collapsed {
-      width: 100% !important;
-      max-width: 100% !important;
-      padding-left: 8px !important;
-      padding-right: 8px !important;
-    }
-    /* 收拢态的「隐藏文字」规则在底部条里要反过来：底部条本来就只放得下
-       图标+小字，文字必须留着，否则用户看到的是一排无标签的图标。 */
-    aside.wb-collapsed div.min-w-0 { display: none !important; }
-    aside.wb-collapsed nav a {
-      justify-content: center !important;
-      padding: 6px 10px !important;
-    }
-    aside.wb-collapsed nav a span.wb-nav-label { display: block !important; }
-    /* 收拢态隐藏的主题 dock 文字也要恢复（同理） */
-    aside.wb-collapsed #wb-theme-dock .wb-theme-title { display: none !important; }
-    /* 品牌区隐藏：底部条没地方放 logo+名称 */
-    aside > div:first-child { display: none !important; }
-    /* 导航横向排列、可滚动 */
-    aside nav {
-      flex-direction: row !important;
-      flex: 1 1 auto !important;
-      gap: 2px !important;
-      overflow-x: auto !important;
-      overflow-y: hidden !important;
-      scrollbar-width: none !important;
-      padding-bottom: 0 !important;
-    }
-    aside nav::-webkit-scrollbar { display: none !important; }
-    aside nav a {
-      flex: 0 0 auto !important;
-      flex-direction: column !important;
-      gap: 3px !important;
-      padding: 6px 10px !important;
-      border-radius: 10px !important;
-      font-size: 10.5px !important;
-      min-width: 56px !important;
-      align-items: center !important;
-      justify-content: center !important;
-    }
-    aside nav a svg { width: 17px !important; height: 17px !important; }
-    aside nav a span.wb-nav-label {
       display: block !important;
-      font-size: 10px !important;
-      line-height: 1.2 !important;
-      max-width: 56px !important;
-      overflow: hidden !important;
-      text-overflow: ellipsis !important;
-      white-space: nowrap !important;
+      height: 28px !important;
+      margin-top: -28px !important;
+      pointer-events: none !important;
+      background: linear-gradient(to top,
+        var(--background, #0f1117) 0%,
+        color-mix(in oklab, var(--background, #0f1117) 60%, transparent) 45%,
+        transparent 100%);
     }
-    /* 折叠按钮在底部条里没意义，隐藏（竖屏本来就是横向条） */
-    #wb-collapse-btn { display: none !important; }
-    /* 主题 dock：竖屏放在导航右侧，三个按钮仍可点 */
-    /* 底部导航条右侧的 dock：**横排**。
-       竖排是桌面端侧边栏的形态（高度充裕）；底部条只有约 62px 高，
-       竖排会把三个按钮各压到 ~15px，实测点不中。
-       横排 + 固定 30px 宽，三个按钮占 ~102px，剩下的给导航滚动。 */
-    #wb-theme-dock {
-      flex-direction: row !important;
-      align-items: center !important;
-      margin-top: 0 !important;
-      margin-left: 6px !important;
-      padding: 0 !important;
-      border-top: 0 !important;
-      border-left: 1px solid var(--sidebar-border, rgba(120,120,120,0.16)) !important;
-      flex-shrink: 0 !important;
-      gap: 2px !important;
-    }
-    #wb-theme-dock .wb-theme-title { display: none !important; }
-    #wb-theme-dock .wb-theme-btns {
-      flex-direction: row !important;
-      gap: 2px !important;
-      width: auto !important;
-      padding: 0 !important;
-    }
-    #wb-theme-dock .wb-theme-btn {
-      height: 32px !important;
-      width: 30px !important;
-      min-width: 30px !important;
-      padding: 0 !important;
-      flex: 0 0 auto !important;
-    }
-    #wb-theme-dock .wb-theme-btn span { display: none !important; }
-    /* 主内容区底部留出导航条高度，否则最后一项被挡住 */
-    main, body > div {
-      padding-bottom: 76px !important;
-    }
-    /* 磨砂在底部条上仍生效，但圆角清零（贴边） */
-    aside {
-      -webkit-backdrop-filter: blur(18px) saturate(140%);
-      backdrop-filter: blur(18px) saturate(140%);
-    }
-    /* 设置页横排在窄屏改纵排（已有 560px 规则，这里补 720px 一致） */
-    .wb-api-row {
-      flex-direction: column !important;
-      align-items: stretch !important;
-      gap: 8px !important;
-    }
-    .wb-api-row > * { max-width: 100% !important; }
-    /* 右下角用户球避开底部导航条 */
-    #wb-user-orb { bottom: 84px !important; right: 12px !important; }
   }
 
-  /* 极窄屏（<=380px）：导航文字再缩一档，保证 5 个图标+文字放得下 */
-  @media (max-width: 380px) {
-    aside nav a { min-width: 48px !important; padding: 5px 6px !important; }
-    aside nav a span.wb-nav-label { font-size: 9px !important; max-width: 48px !important; }
-    #wb-theme-dock .wb-theme-btn { width: 26px !important; height: 26px !important; }
+  /* 极窄屏（<=560px）：品牌名隐藏只留图标，5 个入口仍放得下 */
+  @media (max-width: 560px) {
+    aside > div:first-child div.min-w-0 { display: none !important; }
+    aside nav a { padding: 0 8px !important; gap: 5px !important; }
+    aside nav a span.wb-nav-label { font-size: 11.5px !important; }
+    #wb-theme-switch .wb-ts-btn { width: 27px !important; height: 24px !important; }
   }
 </style>
 <script>
@@ -2298,20 +2501,20 @@ COLLAPSE_SCRIPT = r"""
     };
     aside.appendChild(btn);
 
-    // 主题切换 dock：用户 2026-10-16 要求「主题按照截图设计到左下角，
-    // 就不用单独在设置里」。这里在侧边栏底部注入三段式控件
-    // （系统 / 浅色 / 深色），与官方 appearance-theme 共用同一份状态，
-    // 所以设置页里那个官方主题控件会被隐藏，两处不会各说各话。
-    wbInitThemeDock(aside);
+    // 主题三段控件挂到顶栏右上角（用户 2026-10-16 明确要求）。
+    // 顶栏就是 aside 本身（新设计把它从左侧纵栏变成了顶部横条），
+    // 所以直接 append 到 aside 末尾即可排在品牌 + 导航之后。
+    wbInitThemeSwitch(aside);
   }
 
-  /* ---------- 主题切换（侧边栏左下角，2026-10-16）----------
+  /* ---------- 主题切换（顶栏右上角，2026-10-16）----------
      与官方机制完全兼容（实测确认）：
        localStorage["appearance-theme"] ∈ {system, light, dark}
        html.classList.toggle("dark", <是否为深色>)
      手动改这两个值后，官方的 React 受控组件不会回弹
      （实测：改完等 2 秒按钮文字与 html class 都保持）。
-     这样两处 UI 指向同一状态，不会出现「设置页说浅色、侧边栏说深色」。 */
+     因此侧边栏/顶栏这个开关与设置页那个官方主题控件
+     读写同一份状态，两处不会各说各话。 */
   var WB_THEME_LS_KEY = "appearance-theme";
 
   function wbThemeCurrent() {
@@ -2331,35 +2534,27 @@ COLLAPSE_SCRIPT = r"""
     if (persist) {
       try { localStorage.setItem(WB_THEME_LS_KEY, mode); } catch (e) {}
     }
-    // 同步 dock 里的高亮态
-    var dock = document.getElementById("wb-theme-dock");
-    if (dock) {
+    var box = document.getElementById("wb-theme-switch");
+    if (box) {
       Array.prototype.slice.call(
-        dock.querySelectorAll(".wb-theme-btn")).forEach(function (b) {
+        box.querySelectorAll(".wb-ts-btn")).forEach(function (b) {
         var on = b.getAttribute("data-theme") === mode;
-        b.classList.toggle("wb-theme-active", on);
+        b.classList.toggle("wb-ts-on", on);
         b.setAttribute("aria-pressed", on ? "true" : "false");
       });
     }
   }
 
-  function wbInitThemeDock(aside) {
-    if (!aside || document.getElementById("wb-theme-dock")) return;
-
-    var dock = document.createElement("div");
-    dock.id = "wb-theme-dock";
-
-    var title = document.createElement("div");
-    title.className = "wb-theme-title";
-    title.textContent = "界面主题";
-    dock.appendChild(title);
+  function wbInitThemeSwitch(aside) {
+    if (!aside || document.getElementById("wb-theme-switch")) return;
 
     var box = document.createElement("div");
-    box.className = "wb-theme-btns";
-    dock.appendChild(box);
+    box.id = "wb-theme-switch";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "界面主题");
 
     var MODES = [
-      { id: "system", label: "系统", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>' },
+      { id: "system", label: "跟随系统", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>' },
       { id: "light", label: "浅色", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>' },
       { id: "dark", label: "深色", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' }
     ];
@@ -2367,12 +2562,12 @@ COLLAPSE_SCRIPT = r"""
     MODES.forEach(function (m) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "wb-theme-btn";
+      b.className = "wb-ts-btn";
       b.setAttribute("data-theme", m.id);
       b.setAttribute("aria-pressed", "false");
       b.title = m.id === "system" ? "跟随系统外观"
         : (m.id === "light" ? "始终浅色" : "始终深色");
-      b.innerHTML = m.svg + "<span>" + m.label + "</span>";
+      b.innerHTML = m.svg;
       b.onclick = function (e) {
         e.stopPropagation();
         wbThemeApply(m.id, true);
@@ -2380,8 +2575,13 @@ COLLAPSE_SCRIPT = r"""
       box.appendChild(b);
     });
 
-    aside.appendChild(dock);
+    aside.appendChild(box);
     wbThemeApply(wbThemeCurrent(), false);
+
+    // 收纳按钮：放在主题切换**后面**（顶栏最右），双端统一。
+    // 用户 2026-10-16：「在右上角主题切换后面加一个收纳按钮，
+    // 将5个选项卡收纳进去，双端统一」。
+    wbInitNavToggler(aside);
 
     // 系统外观变化时，只有当前处于「系统」模式才跟着变
     try {
@@ -2394,35 +2594,206 @@ COLLAPSE_SCRIPT = r"""
     } catch (e) {}
   }
 
-  // 隐藏设置页里那个官方主题控件（主题已挪到侧边栏左下角）。
-  // 只隐藏 UI，不动官方状态机 —— 侧边栏 dock 与它读写同一份
-  // localStorage，设置页那个就算留着也不会和 dock 冲突，
-  // 但用户明确要求「不用单独在设置里」，所以隐藏更符合诉求。
-  function wbHideOfficialThemeRow() {
-    var btn = document.getElementById("appearance-theme");
-    if (!btn) return;
+  /* ---------- 顶栏收纳按钮（2026-10-16）----------
+     把 5 个导航项收进一个下拉面板，顶栏只留品牌 + 收纳按钮 + 主题。
 
-    // 1) 隐藏含主题选择器的那一行（官方的行容器）
-    var node = btn;
-    for (var i = 0; i < 6 && node; i++) {
-      var label = node.querySelector ? node.querySelector("label") : null;
-      if (label && (label.textContent || "").trim() === "主题") {
-        node.style.display = "none";
-        break;
+     设计取舍：
+       - **双端统一**：PC 与移动端用同一个按钮、同一个面板、同一套交互，
+         不用两套代码路径（移动端原来靠横向滚动，现在也能收纳）
+       - 状态存 localStorage，刷新后保持
+       - 面板是 absolute 浮层，不参与文档流，不会把内容顶下去
+       - 点击面板外自动关闭；Esc 关闭
+       - 收纳态下顶栏高度从 54px 降到 46px（品牌 + 右侧控件）
+  */
+  var WB_NAV_COLLAPSED_KEY = "wb_nav_collapsed";
+
+  function wbNavCollapsed() {
+    try { return localStorage.getItem(WB_NAV_COLLAPSED_KEY) === "true"; }
+    catch (e) { return false; }
+  }
+
+  /* 收纳态生效：给 aside 加 .wb-nav-collapsed（CSS 负责隐藏 nav、
+     把顶栏压成一行），并同步 logo 的 aria 状态。 */
+  function wbApplyNavCollapsed(on) {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    aside.classList.toggle("wb-nav-collapsed", !!on);
+    var brand = document.getElementById("wb-brand-trigger");
+    if (brand) {
+      brand.classList.toggle("wb-brand-on", !!on);
+      brand.title = on ? "导航已收纳 · 点击展开" : "收纳 / 展开导航";
+    }
+    // 收纳时必须关掉已打开的面板
+    if (on) wbCloseNavPanel();
+  }
+
+  function wbCloseNavPanel() {
+    var panel = document.getElementById("wb-nav-panel");
+    if (panel) panel.classList.remove("wb-nav-panel-open");
+    var brand = document.getElementById("wb-brand-trigger");
+    if (brand) brand.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", wbNavPanelOutside);
+    document.removeEventListener("keydown", wbNavPanelEsc);
+  }
+
+  function wbNavPanelOutside(e) {
+    var panel = document.getElementById("wb-nav-panel");
+    var brand = document.getElementById("wb-brand-trigger");
+    if (panel && !panel.contains(e.target)
+        && brand && !brand.contains(e.target)) {
+      wbCloseNavPanel();
+    }
+  }
+
+  function wbNavPanelEsc(e) {
+    if (e.key === "Escape") wbCloseNavPanel();
+  }
+
+  /* 收纳入口 = 左上角 logo（用户 2026-10-16 第二次调整）：
+     「取消右上角收纳按钮，改为收纳到左上角logo图标，也就是说logo收纳
+     五个选项卡，然后原本选项卡直接清除」。
+
+     因此这里**不再创建独立按钮**，而是把品牌区整块变成可点击：
+       - 默认态（未收纳）：logo 就是普通品牌展示，点击可展开面板看看入口
+       - 收纳态：5 个导航项全部收起，只留 logo，点 logo 弹出面板
+     logo 上加 aria/role，键盘与读屏都能用。 */
+  function wbInitNavToggler(aside) {
+    if (!aside || document.getElementById("wb-nav-panel")) return;
+    var brand = aside.querySelector("div:first-child");
+    if (!brand) return;
+
+    brand.id = "wb-brand-trigger";
+    brand.setAttribute("role", "button");
+    brand.setAttribute("tabindex", "0");
+    brand.setAttribute("aria-expanded", "false");
+    brand.setAttribute("aria-haspopup", "menu");
+    brand.title = "收纳 / 展开导航";
+    brand.style.cursor = "pointer";
+
+    var panel = document.createElement("div");
+    panel.id = "wb-nav-panel";
+    panel.setAttribute("role", "menu");
+    aside.appendChild(panel);
+
+    function rebuildPanel() {
+      var nav = aside.querySelector("nav");
+      if (!nav) return;
+      panel.innerHTML = "";
+      var links = Array.prototype.slice.call(nav.querySelectorAll("a"));
+      if (!links.length) {
+        var empty = document.createElement("div");
+        empty.className = "wb-nav-panel-empty";
+        empty.textContent = "暂无导航项";
+        panel.appendChild(empty);
+        return;
       }
-      node = node.parentElement;
+      links.forEach(function (a) {
+        var item = document.createElement("a");
+        item.className = "wb-nav-panel-item";
+        item.href = a.getAttribute("href") || "#";
+        item.setAttribute("role", "menuitem");
+        item.innerHTML = a.innerHTML;
+        // 选中态：aria-current="page" 是官方唯一可靠信号。
+        // ⚠️ 不能用 className.indexOf("bg-foreground") —— 未选中项**全都**带
+        // hover:bg-foreground/[0.04]，会把 5 项全判成 active（踩过）。
+        var isCur = a.getAttribute("aria-current") === "page"
+          || String(a.className).indexOf("bg-foreground/[0.06]") >= 0;
+        if (isCur) {
+          item.classList.add("wb-nav-panel-active");
+          item.setAttribute("aria-current", "page");
+        }
+        item.addEventListener("click", function () { wbCloseNavPanel(); });
+        panel.appendChild(item);
+      });
     }
 
-    // 2) 隐藏「外观」小标题 —— 主题行已隐藏，标题留着是个空壳。
-    //    官方把它渲染成 h2#settings-appearance，包在一个 DIV.px-1 里。
+    function togglePanel(e) {
+      e.stopPropagation();
+      var isOpen = panel.classList.contains("wb-nav-panel-open");
+      if (isOpen) {
+        wbCloseNavPanel();
+        return;
+      }
+      rebuildPanel();
+      panel.classList.add("wb-nav-panel-open");
+      brand.setAttribute("aria-expanded", "true");
+      setTimeout(function () {
+        document.addEventListener("click", wbNavPanelOutside);
+        document.addEventListener("keydown", wbNavPanelEsc);
+      }, 0);
+    }
+
+    brand.addEventListener("click", togglePanel);
+    brand.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        togglePanel(e);
+      }
+    });
+
+    wbApplyNavCollapsed(wbNavCollapsed());
+
+    try {
+      var nav = aside.querySelector("nav");
+      if (nav) {
+        new MutationObserver(function () {
+          if (panel.classList.contains("wb-nav-panel-open")) rebuildPanel();
+        }).observe(nav, {childList: true, subtree: true});
+      }
+    } catch (e) {}
+  }
+
+
+  /* 隐藏设置页里的官方「主题」项（用户 2026-10-16 反馈：
+     「设置页主题取消，和右上角重复」）。
+
+     主题已挪到顶栏右上角，两处指向同一份 localStorage，
+     设置页那一项留着就是重复入口，且会让用户以为有两个状态。
+
+     只隐藏 DOM，**不动官方状态机** —— 万一以后想放回来，
+     把这里 return 掉即可，官方 React 组件仍是活的。
+
+     官方 DOM（实测）：
+       容器 SECTION（无 id）→ h2#settings-appearance「外观」
+         → 内含 label「主题」的那一行（#appearance-theme 触发器在里面）
+     因此要隐藏两处：主题行 + 「外观」标题（标题留着是空壳）。 */
+  function wbHideSettingsTheme() {
+    var btn = document.getElementById("appearance-theme");
+    if (btn) {
+      // 往上找含 label「主题」的那一行
+      var node = btn;
+      for (var i = 0; i < 6 && node; i++) {
+        var label = node.querySelector ? node.querySelector("label") : null;
+        if (label && (label.textContent || "").trim() === "主题") {
+          node.style.display = "none";
+          break;
+        }
+        node = node.parentElement;
+      }
+    }
+    // 「外观」整个 SECTION 都要收掉。
+    // ⚠️ 只隐藏 DIV.px-1（标题的父节点）不够 —— 官方 DOM 是
+    //   SECTION.min-w-0.space-y-2.5  ← 就是这个空壳留在页面上
+    //     └─ DIV.px-1
+    //          └─ h2#settings-appearance
+    // 隐藏 DIV.px-1 后 SECTION 内容为空，但仍占据布局：实测它塌成
+    // **2px 高的横条**（y=198, h=2）卡在「账号资料」上方，
+    // 用户 2026-10-16 反馈「设置页面账号资料上方有遗留横向」。
+    // 因此这里一路向上找到 SECTION 本身，整块隐藏。
     var title = document.getElementById("settings-appearance");
     if (title) {
-      var wrap = title.parentElement;
-      // 只有该容器里**仅剩**标题时才隐藏整块，避免误伤其他内容
-      if (wrap && wrap.children.length <= 1) {
-        wrap.style.display = "none";
+      var node = title;
+      var sec = null;
+      for (var i = 0; i < 5 && node; i++) {
+        if (node.tagName === "SECTION") { sec = node; break; }
+        node = node.parentElement;
+      }
+      if (sec) {
+        sec.style.display = "none";
       } else {
-        title.style.display = "none";
+        // 兜底：没找到 SECTION 就按老办法隐藏标题的父节点
+        var wrap = title.parentElement;
+        if (wrap) wrap.style.display = "none";
       }
     }
   }
@@ -4730,6 +5101,10 @@ COLLAPSE_SCRIPT = r"""
       // ---- 3.5 通用设置（照 MoviePilot 智能助手设置项逐项对齐，注册表驱动）----
       settingsReg.forEach(function (f) {
         if (f.key === "enabled") return;      // 总开关已在顶部单独渲染
+        // webSearch 不在通用渲染里出：它必须与下面的「搜索引擎」下拉合并成
+        // **一个**控件（用户 2026-10-16：「设置页出现两个搜索引擎，取消一个，
+        // 用哪个配置哪个」）。合并后的下拉带 off 选项，放在 3.6 块里渲染。
+        if (f.key === "webSearch") return;
         var box2 = wbEl("div", null);
         box2.style.cssText = "min-width:260px;";
         if (f.type === "bool") {
@@ -4777,33 +5152,55 @@ COLLAPSE_SCRIPT = r"""
       // 只落在用户自己的配置文件里。
       var searchReg = data.searchRegistry || [];
       if (searchReg.length) {
-        var srHead = wbEl("div", "wb-api-label", "联网搜索引擎");
-        srHead.style.cssText = "margin-top:10px;";
-        card.appendChild(srHead);
-
-        var srDesc = wbEl("div", "wb-api-desc",
-          "开启联网搜索后助手用哪个引擎检索。密钥只保存在本机配置文件中，"
-          + "不进仓库、不回传；留空且已配置过 = 保持不变，明确提交空串 = 清除。");
-        srDesc.style.cssText = "margin-bottom:8px;";
-        card.appendChild(srDesc);
+        // ⚠️ 这里**不再**单独渲染「联网搜索引擎」小标题。
+        // 用户 2026-10-16 反馈：设置页同时出现「联网搜索引擎」和「搜索引擎」
+        // 两个重复项。前者就是这个 srHead，后者是下面那行 fieldRow 的标签。
+        // 保留 fieldRow 的「搜索引擎」（它和同行其他行一样有左右对齐的标签+控件），
+        // 删掉这个游离的小标题，说明文字改为挂到「搜索引擎」那行的 desc 上。
 
         // 引擎下拉
+        // ⚠️ 必须包一层 min-width:260px 的盒子、让 select width:100%，
+        // 与 LLM 区「接口地址」行用同一套规格（实测那行控件左=1100 右=1360 宽=260）。
+        // 早期直接把 select 丢进行里 + max-width:320px，flex 下它按**内容宽度**
+        // 收缩成 203px，比同卡其他行窄 57px，视觉上左右参差不齐。
         var srSel = wbEl("select", "wb-api-input");
-        srSel.style.cssText = "max-width:320px;";
+        srSel.style.cssText = "width:100%;";
+        // 合并后的唯一入口：off（关闭）+ 各引擎。
+        // ⚠️ 这一个 select 同时驱动 state.webSearch 与 state.searchProvider，
+        // 后端语义：webSearch="off" 表示关闭，非 off 时以 searchProvider 为准。
+        // 因此 onChange 里两个状态必须同步改，否则会出现
+        // 「下拉显示 bing、实际还在用 tavily」的错位。
+        var offOpt = document.createElement("option");
+        offOpt.value = "off";
+        offOpt.textContent = "关闭（不联网检索）";
+        if (String(state.webSearch) === "off") offOpt.selected = true;
+        srSel.appendChild(offOpt);
         searchReg.forEach(function (sp) {
           var opt = document.createElement("option");
           opt.value = sp.key;
           opt.textContent = sp.name + (sp.supports_api_key ? "" : "（无需密钥）");
-          if (String(state.searchProvider) === sp.key) opt.selected = true;
+          // 选中判定：webSearch 非 off 时看 searchProvider
+          if (String(state.webSearch) !== "off"
+              && String(state.searchProvider) === sp.key) opt.selected = true;
           srSel.appendChild(opt);
         });
         srSel.onchange = function () {
-          state.searchProvider = srSel.value;
+          var v = srSel.value;
+          if (v === "off") {
+            state.webSearch = "off";
+          } else {
+            state.webSearch = v;
+            state.searchProvider = v;
+          }
           renderSearchFields();
         };
         var srSelRow = wbEl("div", null);
+        srSelRow.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:260px;";
         srSelRow.appendChild(srSel);
-        card.appendChild(fieldRow("搜索引擎", "默认 Tavily；国内直连可选博查，自建可选 SearXNG。", srSelRow));
+        card.appendChild(fieldRow("联网搜索",
+          "选一个引擎，或选「关闭」完全禁用联网检索。默认 Tavily；国内直连可选博查，"
+          + "自建可选 SearXNG（无需密钥）。密钥只保存在本机配置文件中，不进仓库、不回传；"
+          + "留空且已配置过 = 保持不变，明确提交空串 = 清除。", srSelRow));
 
         // 每个引擎自己的配置容器（切引擎时只重渲染它）
         var srFields = wbEl("div", null);
@@ -4817,10 +5214,15 @@ COLLAPSE_SCRIPT = r"""
           if (!sp) return;
           var slot = (searchCfg && searchCfg[sp.key]) || {};
 
-          if (sp.desc) {
-            var d = wbEl("div", "wb-api-desc");
-            d.textContent = sp.desc + (sp.docs ? "　申请：" + sp.docs : "");
-            d.style.cssText = "margin-bottom:6px;";
+          // 引擎说明 + 申请地址。
+          // ⚠️ 必须包一层 .wb-sr-note（与 .wb-api-row 同一套左右缩进），
+          // 不能直接 appendChild 到 srFields —— 那样它是 card 的直接子节点，
+          // 左右各少 16/20px 缩进，实测比下面的字段行凸出一截，
+          // 用户反馈「这行文字也左右未对齐」。
+          if (sp.desc || sp.docs) {
+            var d = wbEl("div", "wb-api-desc wb-sr-note");
+            d.textContent = (sp.desc || "")
+              + (sp.docs ? "　申请：" + sp.docs : "");
             srFields.appendChild(d);
           }
 
@@ -4872,8 +5274,23 @@ COLLAPSE_SCRIPT = r"""
               };
               kBox.appendChild(kClear);
             }
+            // 「测试搜索引擎」按钮：填完密钥立刻验证，不必等保存。
+            // ⚠️ 必须放在这里（kBox 内，紧跟「清除已保存的密钥」之后），
+            // 而不是 card 下：
+            //   - card 下  = 独占一行、左右凸出，用户反馈「占满一行」
+            //   - kBox 内  = 与清除按钮同一套盒子、同一套 margin-top:6px
+            // 未配置密钥时也有这个按钮（清除按钮只在已配置时出现），
+            // 所以用户第一次填完就能立刻测。
+            kBox.appendChild(makeSrTestBtn(sp));
             srFields.appendChild(fieldRow(
               sp.api_key_label || "API Key", sp.api_key_hint || "", kBox));
+          } else {
+            // 不需要密钥的引擎（如 SearXNG）：没有 API Key 行可挂，
+            // 就把测试按钮单独放一行，保持与其他行同样的左右缩进。
+            var tBox = wbEl("div", null);
+            tBox.style.cssText = "min-width:260px;";
+            tBox.appendChild(makeSrTestBtn(sp));
+            srFields.appendChild(fieldRow("连通性", "用当前地址发一次探针检索，验证配置是否正确。", tBox));
           }
 
           // 附加字段（如 Google CSE 的 cx）
@@ -4889,39 +5306,41 @@ COLLAPSE_SCRIPT = r"""
             srFields.appendChild(fieldRow(ef.label, ef.desc || "", eBox));
           });
         }
-        renderSearchFields();
-
-        // 「测试搜索引擎」按钮：填完密钥立刻验证，不必等保存。
+        // 「测试搜索引擎」按钮工厂。
         // 走独立端点 /api/assistant/search-test（不落盘，测试无副作用）。
-        var srTest = wbEl("button", "wb-api-btn", "测试搜索引擎");
-        srTest.style.cssText = "margin-top:8px;";
-        srTest.onclick = function () {
-          srTest.disabled = true;
-          srTest.textContent = "测试中…";
-          var probeCfg = collect();
-          fetch("/api/assistant/search-test", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ config: probeCfg })
-          })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-              srTest.disabled = false;
-              srTest.textContent = "测试搜索引擎";
-              if (d && d.ok) {
-                wbToast("连通正常（" + (d.durationMs || 0) + "ms）："
-                  + (d.title || "已拿到结果"), "ok");
-              } else {
-                wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
-              }
+        function makeSrTestBtn(sp) {
+          var b = wbEl("button", "wb-api-btn", "测试搜索引擎");
+          b.style.cssText = "margin-top:6px;";
+          b.onclick = function () {
+            b.disabled = true;
+            b.textContent = "测试中…";
+            var probeCfg = collect();
+            fetch("/api/assistant/search-test", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ config: probeCfg })
             })
-            .catch(function () {
-              srTest.disabled = false;
-              srTest.textContent = "测试搜索引擎";
-              wbToast("请求失败，请重试", "err");
-            });
-        };
-        card.appendChild(srTest);
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                b.disabled = false;
+                b.textContent = "测试搜索引擎";
+                if (d && d.ok) {
+                  wbToast("连通正常（" + (d.durationMs || 0) + "ms）："
+                    + (d.title || "已拿到结果"), "ok");
+                } else {
+                  wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
+                }
+              })
+              .catch(function () {
+                b.disabled = false;
+                b.textContent = "测试搜索引擎";
+                wbToast("请求失败，请重试", "err");
+              });
+          };
+          return b;
+        }
+
+        renderSearchFields();
       }
     }
 
@@ -5426,7 +5845,7 @@ COLLAPSE_SCRIPT = r"""
         '<div class="wb-daily-head">' +
           '<div>' +
             '<h1 class="wb-daily-h1">每日任务</h1>' +
-            '<p class="wb-daily-sub">WorkBuddy 成长中心自动化：积分与成长查询、成长任务、互动玩法、开学季活动与自动领奖（内置 WorkBuddy-Daily 脚本，账号池国内版账号只读共用凭据）。</p>' +
+            '<p class="wb-daily-sub">WorkBuddy 成长中心自动化：每日签到、旅行、抽奖、盲盒、Buddy、连签兑换、补签卡、礼包补偿、徽章共 8 类任务，附积分/用量/成长查询与自动领奖（内置 WorkBuddy-Daily v3.7 脚本，账号池国内版账号只读共用凭据）。</p>' +
           '</div>' +
         '</div>' +
 
@@ -6340,8 +6759,8 @@ COLLAPSE_SCRIPT = r"""
     wbCiyuanRename();
     wbCheckAuth();
     initCollapse();
-    // 主题已挪到侧边栏左下角，设置页里那个官方主题项要藏掉
-    wbHideOfficialThemeRow();
+    // 主题已挪到顶栏右上角，设置页那个官方主题项要藏掉（重复入口）
+    wbHideSettingsTheme();
     sanitizeMacUI();
     wbTransformNoBuddyBadges();
     enforceTitle();
@@ -6580,6 +6999,42 @@ TEXT_REPLACEMENTS = [
 
 # 已告警过的「未命中」串，避免每次请求都刷屏。
 _MISS_WARNED: set = set()
+
+
+# 移动端全屏适配：把官方 viewport 改成「禁缩放 + 延伸到刘海区」。
+# 参考 www.baidu.com 移动端：width=device-width + minimum/maximum-scale=1.0
+# + user-scalable=no；额外加 viewport-fit=cover，让页面能吃满 iPhone
+# 刘海/圆角区域，再靠 CSS 的 env(safe-area-inset-*) 把内容让开。
+_WB_VIEWPORT = (
+    'width=device-width, initial-scale=1.0, minimum-scale=1.0, '
+    'maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
+)
+
+
+def _wb_fix_viewport(content: bytes) -> bytes:
+    """改写 HTML 里的 viewport meta（幂等，改不到就注入一条）。"""
+    try:
+        head = content[:4096]
+        low = head.lower()
+        i = low.find(b'<meta name="viewport"')
+        if i >= 0:
+            j = head.find(b">", i)
+            if j > 0:
+                # 原样保留其它 meta，只替换这一个标签
+                return content[:i] + (
+                    '<meta name="viewport" content="%s" />' % _WB_VIEWPORT
+                ).encode("utf-8") + content[j + 1:]
+            return content
+        # 没有 viewport：注入到 <head> 之后
+        k = low.find(b"<head>")
+        if k >= 0:
+            k2 = k + len(b"<head>")
+            return content[:k2] + (
+                '<meta name="viewport" content="%s" />' % _WB_VIEWPORT
+            ).encode("utf-8") + content[k2:]
+        return content
+    except Exception:
+        return content
 
 
 def clean_mac_content(content: bytes, is_js: bool = False) -> bytes:
@@ -9182,6 +9637,17 @@ async def proxy_all(request: Request, path: str):
         if is_html:
             res_headers["content-type"] = "text/html; charset=utf-8"
             content = clean_mac_content(content)
+            # 移动端全屏适配（2026-10-16，参考 www.baidu.com 移动端做法）：
+            #   官方 viewport 只有 width=device-width, initial-scale=1.0 ——
+            #   允许用户双指缩放，且没有 viewport-fit=cover，iPhone 刘海/圆角
+            #   区域会被当成安全区之外，顶栏贴不到屏幕最上沿。
+            # 百度移动端用的是：
+            #   width=device-width,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no
+            # 这里再加 viewport-fit=cover（让页面延伸到刘海区），配合 CSS 里的
+            # env(safe-area-inset-*) 把内容从刘海/Home 条下面让开。
+            # 用响应改写而不是 JS 注入：viewport 必须**首屏渲染前**就位，
+            # 事后用 JS 改会触发一次可见的重排/缩放跳动。
+            content = _wb_fix_viewport(content)
             if b"</body>" in content:
                 content = content.replace(b"</body>", f"{COLLAPSE_SCRIPT}</body>".encode("utf-8"))
             # 注入脚本与文案替换都发生在响应阶段，而 assets 文件名带 hash 不会变。

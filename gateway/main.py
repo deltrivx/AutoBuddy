@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.86"
+VERSION_DEFAULT = "0.9.87"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -483,9 +483,19 @@ def _collect_models_info() -> Dict[str, Any]:
 
 
 def _collect_daily_report() -> tuple:
-    """组装日报内容（只读本地数据，不做网络调用）。失败时返回占位内容。"""
+    """组装日报内容。失败时返回占位内容。"""
     # 昨日积分（wb-daily 的 credit 汇总按天给）
+    # ⚠️ 2026-10-16 修复（用户反馈「昨日消耗合计：3,000」是假数据）：
+    # 原实现把 checkin + task（**获得**的积分）当成「消耗合计」报出去，
+    # 于是「昨日签到 0 + 昨日任务 3000」被写成「昨日消耗 3000」——
+    # 数字恰好一样，但语义完全相反（那是挣的，不是花的）。
+    # 现在消耗改从**官方底层**取真实按日 usage：
+    #   GET http://127.0.0.1:57890/api/credits/stats
+    #     → accounts[].daily[] = [{date, usage}, ...]
+    # 昨日本网消耗 = 所有账号 daily 中 date == 昨日 的 usage 之和
+    # （实测 2026-10-15 为 8,590.68，与页面「官方积分消耗」图表同源）。
     y_checkin = y_task = y_total = 0.0
+    y_used = None                      # None = 取不到（区别于真实的 0）
     y_date = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
     try:
         import db as _db
@@ -499,6 +509,23 @@ def _collect_daily_report() -> tuple:
         total_credits = float(summ.get("totalCredits") or 0)
     except Exception:
         total_credits = 0.0
+    # 昨日真实消耗（官方底层 loopback，与页面图表同源；失败不影响日报其余部分）
+    try:
+        import urllib.request as _urq
+        _raw = _urq.urlopen("http://127.0.0.1:57890/api/credits/stats", timeout=8).read()
+        _cs = json.loads(_raw.decode("utf-8", "replace"))
+        _acc = _cs.get("accounts") or []
+        _sum = 0.0
+        _hit = False
+        for _a in _acc:
+            for _row in (_a.get("daily") or []):
+                if str(_row.get("date") or "") == y_date:
+                    _sum += float(_row.get("usage") or 0)
+                    _hit = True
+        if _hit:
+            y_used = _sum
+    except Exception:
+        pass
     # 账号池剩余（实时快照）
     remaining = 0.0
     try:
@@ -540,7 +567,7 @@ def _collect_daily_report() -> tuple:
         pass
     title, lines = _notify_mod.build_daily_report(
         {"date": y_date, "checkin": y_checkin, "task": y_task, "total": y_total,
-         "totalCredits": total_credits, "remaining": remaining},
+         "used": y_used, "totalCredits": total_credits, "remaining": remaining},
         {"keyCount": key_count, "todayCalls": today_calls, "totalCalls": total_calls},
         models_info)
     lines.append("")
@@ -2764,7 +2791,45 @@ async def chat_completions(request: Request):
 
     if requested_stream:
         req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
-        res = await client.send(req, stream=True)
+        # ⚠️ 2026-10-16 修复（日志里刷 httpx.ReadTimeout + 一大坨 ASGI 堆栈，
+        # 最后返回 500）：
+        # 上游建连/首字节超时时 client.send 会抛 httpx.ReadTimeout/ConnectError，
+        # 原来没有任何捕获，直接冒到 FastAPI 顶层 → 500 + 几十行堆栈刷屏。
+        # 这里显式捕获：返回 **504 Gateway Timeout**（语义正确：我们自己的网关没问题，
+        # 是上游不回包），并给一句人话 error 字段，客户端能直接展示。
+        # 同时释放账号槽位，避免超时后账号被一直占着。
+        try:
+            res = await client.send(req, stream=True)
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout,
+                httpx.ConnectError, httpx.ReadError) as _te:
+            lprint("upstream", "上游请求失败(%s): %s"
+                   % (type(_te).__name__, str(_te)[:120]))
+            await client.aclose()
+            _release_account_slot(served_account_id)
+            # 超时也算一次失败：让该账号进冷却，后续自动轮询跳过它
+            try:
+                _note_upstream_result(served_account_id, 504,
+                                      "upstream timeout: %s" % type(_te).__name__,
+                                      rid=rid, headers=None)
+            except Exception:
+                pass
+            # 失败即解绑：这个号本轮证明不可用，下次换号
+            try:
+                session_sticky.unbind(session_key)
+            except Exception:
+                pass
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": "上游模型服务响应超时（%s），请稍后重试或切换模型。"
+                                   % type(_te).__name__,
+                        "type": "upstream_timeout",
+                        "code": 504,
+                    }
+                }, ensure_ascii=False).encode("utf-8"),
+                status_code=504,
+                headers={"Content-Type": "application/json"},
+            )
 
         # 换号重试：上游在**还没吐出任何正文**时就拒绝，且错误形状指向
         # 「该账号不支持该模型」→ 拉黑这个组合 + 换个账号再试。
@@ -2861,7 +2926,38 @@ async def chat_completions(request: Request):
         )
     else:
         req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
-        res = await client.send(req, stream=True)
+        # 与流式路径同一套超时兜底（见上面的详细注释）：
+        # 非流式同样不能把 httpx.ReadTimeout 冒到顶层变成 500 + 堆栈。
+        try:
+            res = await client.send(req, stream=True)
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout,
+                httpx.ConnectError, httpx.ReadError) as _te:
+            lprint("upstream", "上游请求失败(%s): %s"
+                   % (type(_te).__name__, str(_te)[:120]))
+            await client.aclose()
+            _release_account_slot(served_account_id)
+            try:
+                _note_upstream_result(served_account_id, 504,
+                                      "upstream timeout: %s" % type(_te).__name__,
+                                      rid=rid, headers=None)
+            except Exception:
+                pass
+            try:
+                session_sticky.unbind(session_key)
+            except Exception:
+                pass
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": "上游模型服务响应超时（%s），请稍后重试或切换模型。"
+                                   % type(_te).__name__,
+                        "type": "upstream_timeout",
+                        "code": 504,
+                    }
+                }, ensure_ascii=False).encode("utf-8"),
+                status_code=504,
+                headers={"Content-Type": "application/json"},
+            )
         # 非流式路径同样做「模型不可用 → 拉黑 + 换号重试」,
         # 判定与流式一致:只在响应体尚未转发时重试。
         while res.status_code != 200:
@@ -3425,22 +3521,26 @@ def run_model_health_check(overrides: Optional[Dict[str, Any]] = None) -> Dict[s
                   f"probeDefect={summary['counts'].get('probe_defect')} "
                   f"authFailed={len(summary.get('authFailed') or [])} "
                   f"aborted={summary.get('aborted')}")
-            # 场景通知：巡检结束（用户 2026-10-13 需求）。异步发送，不阻塞巡检返回。
+            # 场景通知：巡检结束（用户 2026-10-13 需求）。不阻塞巡检返回。
             # 失败只记日志 —— 通知是附属能力，绝不能影响巡检主流程。
+            #
+            # ⚠️ 2026-10-16 修复（日志里刷了几千行
+            #    "notice schedule failed: no running event loop"）：
+            # 原先写成 `asyncio.get_running_loop().create_task(...)`，
+            # 但 run_model_health_check() 是**同步**函数 ——
+            #   · 定时巡检走 asyncio.to_thread(...) → 工作线程，无事件循环
+            #   · 手动触发是 def 路由 → FastAPI 线程池，同样无事件循环
+            # 所以 get_running_loop() 每次都抛 RuntimeError，
+            # 巡检结束通知**一次都没发出去过**。
+            # send_scene() 本身也是同步函数（内部 httpx.Client 同步请求），
+            # 因此直接在当前线程调用即可：不阻塞事件循环（本来就不在循环里），
+            # 也不需要 create_task。
             try:
-                _summary_snapshot = dict(summary)
-
-                async def _send_health_notice(s=_summary_snapshot):
-                    try:
-                        _mi = _collect_models_info()
-                        _t, _lines = _notify_mod.build_health_done(s, _mi)
-                        _notify_mod.send_scene("health_done", _t, _lines)
-                    except Exception as _e:
-                        lprint("health", f"notice failed: {_e}")
-
-                asyncio.get_running_loop().create_task(_send_health_notice())
+                _mi = _collect_models_info()
+                _t, _lines = _notify_mod.build_health_done(summary, _mi)
+                _notify_mod.send_scene("health_done", _t, _lines)
             except Exception as _e:
-                lprint("health", f"notice schedule failed: {_e}")
+                lprint("health", f"notice failed: {_e}")
             return summary
         except Exception as e:
             _HEALTH_RUNTIME["lastError"] = f"{type(e).__name__}: {e}"
