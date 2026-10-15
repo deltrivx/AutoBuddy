@@ -44,11 +44,12 @@ def check(name, cond, extra=""):
 
 print("[1] 框架：渠道注册表")
 check("注册表含企业微信", any(c["key"] == "wecom" for c in notify.CHANNELS))
-check("企微字段含 corpid/secret/agentid/touser + 回调三件 + 代理 + 智能机器人三件",
+check("企微字段含 corpid/secret/agentid/touser + 回调三件 + 代理 + 智能机器人三件 + 模式/管理员",
       {f["key"] for f in notify.CHANNELS[0]["fields"]}
       == {"corpid", "secret", "agentid", "touser",
           "cb_token", "cb_aes_key", "cb_url", "proxy",
-          "bot_id", "bot_secret", "bot_chat_id"})
+          "bot_id", "bot_secret", "bot_chat_id",
+          "mode", "admins"})  # mode/admins 于 2026-10-15 对齐 MP 的 WECHAT_MODE/WECHAT_ADMINS 新增
 check("secret 字段有标记", any(f.get("secret") for f in notify.CHANNELS[0]["fields"]))
 
 print("\n[2] 配置读写与脱敏")
@@ -106,8 +107,11 @@ check("secret 明文不落测试断言外的日志（文件里允许——是存
 
 print("\n[8] 企微流程源码契约（对齐 MoviePilot）")
 SRC = (ROOT / "gateway" / "notify.py").read_text(encoding="utf-8")
-check("gettoken 端点", "/cgi-bin/gettoken" in SRC)
-check("message/send 端点", "/cgi-bin/message/send" in SRC)
+check("gettoken 端点", "cgi-bin/gettoken" in SRC)
+# 2026-10-15：proxy 语义从「HTTP 代理」改为「URL 重写（urljoin）」后，
+# 端点字面量不再带前导斜杠（由 _adapt_request_url 负责拼接）。
+check("message/send 端点", "cgi-bin/message/send" in SRC)
+check("URL 重写辅助函数存在", "_adapt_request_url" in SRC)
 check("默认域 qyapi.weixin.qq.com", "qyapi.weixin.qq.com" in SRC)
 check("AgentId 非数字友好报错", "AgentId 必须是纯数字" in SRC)
 check("touser 缺省 @all", '"@all"' in SRC)

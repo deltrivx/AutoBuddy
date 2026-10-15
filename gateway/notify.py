@@ -57,14 +57,8 @@ CHANNELS: List[Dict[str, Any]] = [
              "placeholder": "43 位加密密钥（企微后台生成）"},
             {"key": "cb_url", "label": "回调 URL", "secret": False,
              "placeholder": "公网可达地址，如 http://<VPS>:10083/api/notify/wecom/callback/<随机段>"},
-            # 渠道级代理（对齐 MoviePilot 的 WECHAT_PROXY）：企微主动推送
-            # （日报/任务通知/助手延后答复）走这里指定的出口。
-            # 2026-10-15 实测：容器直连出口是 NAT 池（112.194.50.154/.151/.1），
-            # VPS 固定 IP 107.172.90.165 与内网代理 18.140.235.192 都不在企微
-            # 可信 IP 名单里，全部 errcode=60020。配好后台可信 IP 后，
-            # 这里填对应代理即可，与 Telegram 的 proxy 语义一致。
-            {"key": "proxy", "label": "代理（仅本通道）", "secret": False,
-             "placeholder": "留空=直连；如 http://192.168.31.10:7890"},
+            # 渠道级代理见下方「代理地址（URL 重写）」——语义是 base_url 替换，
+            # 不是 HTTP 代理（详注在那个字段旁）。
             # 智能机器人（WebSocket 长连接）—— 对齐 MoviePilot 的
             # `app/modules/wechat/wechatbot.py`：它的「MP影视助手」就是靠这条
             # 链路收发消息，**出站连接不校验来源 IP**。

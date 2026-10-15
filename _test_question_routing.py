@@ -126,8 +126,8 @@ _ro_code = _re0.sub(r'""".*?"""', '', _ro_body, flags=_re0.S)   # 去 docstring
 _ro_code = "\n".join(l for l in _ro_code.splitlines()
                      if not l.lstrip().startswith("#"))          # 去行注释
 check("_readonly_fallback 执行代码不含写操作",
-      "_cmd_run" not in _ro_code and "_cmd_checkin" not in _ro_code,
-      f"code:\n{_ro_code}")
+      "_cmd_run()" not in _ro_code and "_cmd_checkin()" not in _ro_code,
+      f"code:\n{_ro_code}")  # 带括号精确匹配：避免 _cmd_checkin_status（只读）被误判为写操作 _cmd_checkin()
 check("_readonly_fallback 任务疑问只走 _cmd_daily",
       "_cmd_daily()" in _ro_code)
 check("疑问句标记包含「吗/呢/多少/是否/有没有」等",

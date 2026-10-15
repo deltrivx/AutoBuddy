@@ -31,6 +31,53 @@
 
 ---
 
+## [v0.9.83] - 2026-10-15
+
+<!-- summary: 企微链路根因修复（WECHAT_PROXY 纠正为 URL 重写）+ 回调改 MP 模式彻底解决 5 秒超时 + 智能助手补全至 30 只读工具/10 写操作 -->
+
+### 新增
+
+- **智能助手工具补全**（17 → 30 只读 + 6 → 10 写操作，覆盖五大功能域）：
+  - 任务域 7 个：`get_task_runs` / `get_task_detail` / `get_task_accounts` /
+    `get_task_catalog` / `get_task_config` / `get_task_health` / `get_task_items`
+  - 账号与系统域 5 个：`get_account_health` / `get_account_models` /
+    `get_token_stats` / `get_reqlog` / `get_notify_config`
+  - 写操作 4 个（均走两段式确认）：`notify_test` / `notify_menu` /
+    `account_audit` / `gateway_selftest`
+- **智能助手设置页**：新增注册表驱动的通用配置项（对齐 MoviePilot 智能助手设置），
+  含上下文档 Token 上限、温度、思考深度、输出语言、User-Agent、啰嗦模式、联网搜索。
+- **联网搜索**：接入 Tavily，密钥走环境变量（不回传前端、不落盘明文）。
+- **企微主动推送出口**：`notify.push_text_to_wecom()`。
+
+### 变更
+
+- **企微回调改为 MP 模式**：回调立即返回空响应，业务处理移交后台线程完成后
+  主动推送。彻底解决企微「接收消息服务器」5 秒硬限制 —— 复杂问题（联网搜索 +
+  多轮推理，实测 13 秒）也能正常回答。
+- **企微代理语义纠正**：`proxy` 从「HTTP 代理（CONNECT 隧道）」纠正为
+  「URL 重写（urljoin 替换 base_url）」，逐行对齐 MoviePilot 的 `WECHAT_PROXY`
+  实现。此前用 CONNECT 隧道会被 VPS 转发器拒绝（501）。
+- 命令路由改为「特异优先」：越具体的意图（凭据/有效期）排在笼统关键词
+  （账号/积分）之前，避免复合语义被抢走。
+- `assistant_reply()` 新增 `timeout` 参数。
+
+### 修复
+
+- **「任务跑完了吗」误报「暂无记录」**：`_cmd_daily()` 原读 `/api/wb-daily/jobs`
+  （内存态，容器重启即丢），改用 `runs`（SQLite 落库）。
+- **「账号凭据还有多久过期」答成账号余额**：换数据源到 `/api/wb-daily/accounts`
+  （原查的 account-pool 无有效期字段），并调整路由优先级。
+- **`get_request_stats` 只输出光杆标题**：改读 `summary` 子对象。
+- **`get_token_stats` 输出原始列表**：`requests`/`sessions` 是列表，取长度而非直接拼接。
+- **企微渠道字段注册表 `proxy` 重复**：清理重复定义。
+- 统计窗口内无请求时如实说明，不再当作错误。
+
+### 移除
+
+- 为绕过企微 5 秒限制而加的临时补丁：本地直答前置、快路径探测、
+  `_FAST_REPLY_BUDGET` 预算机制、`assistant_reply` 的 deadline 制。
+  MP 模式下不再需要 —— 回调不等待结果。
+
 ## [v0.9.82] - 2026-10-15
 
 <!-- summary: 参考MP的wechatbot.py新增企业微信智能机器人WebSocket通道——出站长连接不校验来源IP，解决HTTP通道errcode=60020导致通知全阻塞 -->
@@ -4337,7 +4384,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.82...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.83...HEAD
+[v0.9.83]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.82...v0.9.83
 [v0.9.82]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.81...v0.9.82
 [v0.9.81]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.80...v0.9.81
 [v0.9.80]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.79...v0.9.80

@@ -99,10 +99,14 @@ check("延后入口有异常兜底（绝不拖累回调）",
 
 print("\n[3] 企微回调接线（web_proxy.py）")
 
-check("回调传 allow_defer=True",
-      "_notify.wecom_command_reply, cmd, from_user or None, True" in SRC_WP)
-check("回调注释说明 5 秒硬限制根因",
-      "5 秒内" in SRC_WP or "5 秒硬限制" in SRC_WP)
+check("回调改 MP 模式（立即返回 + 后台处理，不再传 allow_defer）",
+      "_wecom_handle_async" in SRC_WP
+      and "threading.Thread(" in SRC_WP
+      and "wecom_command_reply(cmd, session_id, False)" in SRC_WP)
+check("后台处理明确传 allow_defer=False（已是后台，无需再回执）",
+      "wecom_command_reply(cmd, session_id, False)" in SRC_WP)
+check("回调注释说明 MP 模式根因",
+      "MP 模式" in SRC_WP or "submit_message_to_host" in SRC_WP)
 
 print("\n[4] 行为验证（真实函数，不联网）")
 

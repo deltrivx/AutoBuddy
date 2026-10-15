@@ -88,11 +88,18 @@ check("写操作带 estimate（耗时预估）",
 check("待确认提示含影响与预计",
       "op.get(\"impact\")" in SRC_AS and "op.get(\"estimate\")" in SRC_AS)
 
-# 危险操作排除
-check("不碰登录/改密", "auth/login" not in SRC_AS and "auth/password" not in SRC_AS)
-check("不碰导入导出", "api/import" not in SRC_AS and "export-accounts" not in SRC_AS)
-check("不碰删除全部 Key", "delete-all" not in SRC_AS)
-check("不碰账号删除", "api/delete" not in SRC_AS)
+# 危险操作排除。
+# 2026-10-15 修订：断言原本扫全文，而 assistant.py 新增的「边界说明」注释块里
+# 引用了这些端点名（为了说清楚「为什么不给工具」）。注释不是代码，直接用
+# 全文匹配会误报。改为**剥除注释后**再扫，才是真正有效的判据。
+import re as _re_wc
+_SRC_AS_CODE = _re_wc.sub(r'#[^\n]*', '', SRC_AS)          # 去行注释
+_SRC_AS_CODE = _re_wc.sub(r'""".*?"""', '', _SRC_AS_CODE, flags=_re_wc.S)  # 去 docstring
+
+check("不碰登录/改密", "auth/login" not in _SRC_AS_CODE and "auth/password" not in _SRC_AS_CODE)
+check("不碰导入导出", "api/import" not in _SRC_AS_CODE and "export-accounts" not in _SRC_AS_CODE)
+check("不碰删除全部 Key", "delete-all" not in _SRC_AS_CODE)
+check("不碰账号删除", "api/delete" not in _SRC_AS_CODE)
 
 print("\n[2] 集成契约（notify.py）")
 

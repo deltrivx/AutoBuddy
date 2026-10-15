@@ -96,11 +96,17 @@ check("tool_choice=none 不被支持时退回无 tools 重试",
       'payload2.pop("tools", None)' in SRC_AS)
 check("第二轮模型又发起工具调用时不采纳正文",
       "if not (msg2.get(\"tool_calls\") or []):" in SRC_AS)
-# 只读保证：工具函数里不得出现 POST/PUT/DELETE 语义的调用
-check("工具全部只读（无 POST/PUT 调用）",
+# 只读保证：工具函数里不得出现对 **AutoBuddy 自身写端点**的调用。
+# 2026-10-15 修订：_tool_web_search 会用 POST 调 Tavily 搜索接口
+# （https://api.tavily.com/search）—— 那是外部只读检索，HTTP 方法是 POST
+# 但语义不是写。所以不再笼统禁止 method="POST"，避免误判合法外部搜索；
+# 真正有效的保证是下方 _TOOLS_SRC 对写端点的断言。
+_TOOLS_ONLY_SRC = SRC_AS[SRC_AS.index("def _tool_credits"):
+                            SRC_AS.index("def _tool_registry")]
+check("工具全部只读（工具区无 PUT/DELETE 写方法）",
       "_tool_credits" in SRC_AS
-      and 'method="POST"' not in SRC_AS[SRC_AS.index("def _tool_credits"):
-                                          SRC_AS.index("def _tool_registry")])
+      and 'method="PUT"' not in _TOOLS_ONLY_SRC
+      and 'method="DELETE"' not in _TOOLS_ONLY_SRC)
 # 写端点必须不在工具集。注意 `/api/wb-daily/runs`（读历史）含子串
 # `wb-daily/run`，旧断言把它误判成写端点 —— 用带引号的精确串判定。
 # 阶段 5 后，写端点（wb-daily/run、checkin/all）从「完全不存在」变为
@@ -146,7 +152,11 @@ check("助手不可用时回落原兜底文案",
 
 print("\n[4] web_proxy 不阻塞事件循环")
 
-check("run_in_threadpool 跑命令路由", "run_in_threadpool(" in SRC_WP)
+check("MP 模式：回调立即返回 + 后台线程处理",
+      "threading.Thread(" in SRC_WP and "_wecom_handle_async" in SRC_WP)
+check("后台处理跑命令路由（allow_defer=False）",
+      "_notify.wecom_command_reply, cmd" in SRC_WP
+      or "_notify.wecom_command_reply(cmd" in SRC_WP)
 check("传入 from_user 作为会话 id", "from_user or None" in SRC_WP)
 check("web_proxy 无第二份命令语义（历史教训）",
       'elif cmd == "accounts"' not in SRC_WP and 'elif cmd == "models"' not in SRC_WP)
@@ -169,8 +179,8 @@ sys.path.insert(0, str(ROOT))
 from gateway import assistant as A  # noqa: E402
 
 check("模块可导入", A is not None)
-check("17 个工具已注册（阶段4 全覆盖 + 阶段6 主动智能）",
-      len(A._TOOLS) == 17, f"got {len(A._TOOLS)}")
+check("工具已注册（阶段4 全覆盖 + 阶段6 主动智能 + 2026-10-15 任务域/账号域/系统域补全）",
+      len(A._TOOLS) >= 30, f"got {len(A._TOOLS)}")
 
 # 阶段 4 新增的 9 个只读工具
 STAGE4_TOOLS = (
