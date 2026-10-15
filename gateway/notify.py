@@ -65,6 +65,23 @@ CHANNELS: List[Dict[str, Any]] = [
             # 这里填对应代理即可，与 Telegram 的 proxy 语义一致。
             {"key": "proxy", "label": "代理（仅本通道）", "secret": False,
              "placeholder": "留空=直连；如 http://192.168.31.10:7890"},
+            # 智能机器人（WebSocket 长连接）—— 对齐 MoviePilot 的
+            # `app/modules/wechat/wechatbot.py`：它的「MP影视助手」就是靠这条
+            # 链路收发消息，**出站连接不校验来源 IP**。
+            #
+            # 为什么需要它：上面的自建应用走 HTTP `cgi-bin/message/send`，
+            # 要求出口 IP 在企微「可信 IP」名单内；我们的容器出口是 NAT 池
+            # （112.194.50.154/.151/.1），实测 errcode=60020 —— 日报、任务
+            # 通知、助手延后答复全部发不出。
+            #
+            # 凭据在企微后台 → 应用管理 → 对应的「智能机器人」页，
+            # 与自建应用的 CorPID/Secret **不是**同一组。
+            {"key": "bot_id", "label": "机器人 ID", "secret": False,
+             "placeholder": "智能机器人的 bot_id"},
+            {"key": "bot_secret", "label": "机器人 Secret", "secret": True,
+             "placeholder": "智能机器人的 secret"},
+            {"key": "bot_chat_id", "label": "默认会话 ID", "secret": False,
+             "placeholder": "留空 = 发给最近互动过的用户"},
         ],
     },
     {
@@ -186,6 +203,11 @@ def public_view() -> Dict[str, Any]:
         ready = bool(view.get("corpid")
                      and (view.get("secret") or {}).get("has_value")
                      and view.get("agentid"))
+        if c["key"] == "wecom":
+            # 智能机器人（WebSocket）就绪也算「可用」—— 它不依赖可信 IP，
+            # 是当前实际能打通的主通道。
+            if (view.get("bot_id") or "").strip() and (view.get("bot_secret") or {}).get("has_value"):
+                ready = True
         if c["key"] == "telegram":
             ready = bool((view.get("bot_token") or {}).get("has_value")
                          and view.get("chat_id"))
@@ -240,6 +262,23 @@ def update_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 # 发送：按渠道分发。这里先实现企业微信（MoviePilot 同款流程）。
 # ---------------------------------------------------------------------------
 def _send_wecom(ch_cfg: Dict[str, Any], text: str) -> Dict[str, Any]:
+    """企业微信发送：优先「智能机器人」WebSocket 通道，HTTP 应用消息兜底。
+
+    为什么 bot 优先（2026-10-15 实测）：HTTP 通道要求出口 IP 在企微
+    可信 IP 名单内，容器 NAT 池出口全部 errcode=60020；而 WebSocket 是
+    出站长连接，不校验来源 IP —— MP 的助手正是靠它正常工作。
+    """
+    if _wcbot is not None:
+        try:
+            bot = _wcbot.current_bot()
+            if bot is not None and bot.get_state():
+                touser = str(ch_cfg.get("touser") or "").strip() or None
+                if bot.send_msg(text=text, userid=touser):
+                    return {"ok": True}
+                return {"ok": False,
+                        "error": "智能机器人发送失败（详见容器日志 wecom-bot）"}
+        except Exception as e:
+            return {"ok": False, "error": "智能机器人通道异常：%s" % str(e)[:120]}
     corpid = str(ch_cfg.get("corpid") or "").strip()
     secret = str(ch_cfg.get("secret") or "").strip()
     agentid = str(ch_cfg.get("agentid") or "").strip()
@@ -334,6 +373,14 @@ def telegram_get_me(ch_cfg: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "error": "请求异常：%s" % str(e)[:120]}
 
+
+try:
+    from gateway import wecom_bot as _wcbot
+except ImportError:
+    try:
+        import wecom_bot as _wcbot  # type: ignore
+    except ImportError:
+        _wcbot = None
 
 _SENDERS = {"wecom": _send_wecom, "telegram": _send_telegram}
 
@@ -1512,6 +1559,49 @@ def _tg_run_polling(stop_event: Any) -> None:
         except Exception:
             failures += 1
             stop_event.wait(min(3 * 2 ** (failures - 1), 60))
+
+
+def start_wecom_bot() -> bool:
+    """启动企业微信「智能机器人」长连接（幂等；配置就绪才真跑）。
+
+    与 Telegram 长轮询同构：出站连接、不需要公网入口、不需要可信 IP。
+    收到消息时交给 wecom_command_reply 处理（与企微 HTTP 回调、
+    Telegram 共用同一套命令语义），回复经 WebSocket 发回。
+    """
+    if _wcbot is None:
+        return False
+    try:
+        cfg = _load().get("channels", {}).get("wecom") or {}
+        if not (str(cfg.get("bot_id") or "").strip()
+                and str(cfg.get("bot_secret") or "").strip()):
+            return False
+
+        def _on_message(sender: str, text: str) -> None:
+            # 与企微 HTTP 回调、Telegram 共用同一套命令/助手语义。
+            # 注意：这里是 WS 线程，不能 await；wecom_command_reply 是同步的。
+            try:
+                reply = wecom_command_reply(text, session_id=sender)
+                if reply:
+                    bot = _wcbot.current_bot()
+                    if bot is not None:
+                        bot.send_msg(text=reply, userid=sender)
+            except Exception as e:
+                print("[wecom-bot] 处理消息异常: %s" % str(e)[:120])
+
+        bot = _wcbot.start_bot(cfg, on_message=_on_message)
+        return bot is not None
+    except Exception as e:
+        print("[wecom-bot] 启动失败: %s" % str(e)[:120])
+        return False
+
+
+def stop_wecom_bot() -> None:
+    """停止智能机器人长连接（配置变更/容器退出时调用）。"""
+    if _wcbot is not None:
+        try:
+            _wcbot.stop_bot()
+        except Exception:
+            pass
 
 
 def start_telegram_polling() -> bool:

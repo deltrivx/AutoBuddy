@@ -8373,4 +8373,10 @@ if __name__ == "__main__":
         _notify.start_telegram_polling()
     except Exception:
         pass
+    # 企业微信智能机器人：WebSocket 长连接（出站，不需要可信 IP）。
+    # 配置了 bot_id/bot_secret 才真跑；未配则静默跳过。
+    try:
+        _notify.start_wecom_bot()
+    except Exception:
+        pass
     uvicorn.run(app, host="0.0.0.0", port=port)

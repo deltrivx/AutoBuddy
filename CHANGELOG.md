@@ -31,6 +31,43 @@
 
 ---
 
+## [v0.9.82] - 2026-10-15
+
+<!-- summary: 参考MP的wechatbot.py新增企业微信智能机器人WebSocket通道——出站长连接不校验来源IP，解决HTTP通道errcode=60020导致通知全阻塞 -->
+
+### 新增
+
+- **企业微信智能机器人 WebSocket 通道**（参考 MoviePilot
+  `app/modules/wechat/wechatbot.py`）：其「MP影视助手」正是靠这条链路收发消息，
+  **出站连接不校验来源 IP**；而 HTTP `cgi-bin/message/send` 要求出口 IP 在
+  企微「可信 IP」名单内，实测三条候选出口（容器 NAT 池 112.194.50.154、
+  内网代理 18.140.235.192、VPS 107.172.90.165）**全部** errcode=60020，
+  导致日报、任务通知、助手延后答复全部发不出。
+  - 协议对齐 MP：`aibot_subscribe` 订阅、`aibot_msg_callback` 收消息
+    （text/voice/mixed/quote 提取、去 @提及、忽略群聊）、`aibot_send_msg`
+    发 markdown（单条 4000 字节分片，UTF-8 续字节安全）、`ping` 心跳 30s、
+    `req_id` ACK 配对（10s 超时）、重连退避 [1,2,5,10,30,60]；
+  - `notify.CHANNELS` 增加 `bot_id` / `bot_secret` / `bot_chat_id`
+    （bot_secret 走 secret 语义：GET 不回明文、空串清除、不提交保留）；
+  - `_send_wecom()` **bot 优先、HTTP 兜底**；`public_view()` ready 判定纳入 bot；
+  - `web_proxy` 启动即恢复长连接；Dockerfile 增加 `websocket-client`。
+
+### 测试
+
+- 新增 `_test_wecom_bot.py`（**43** 项）：模块契约、渠道接入、启动/依赖接线、
+  行为验证（超长中文分片不切断字符、markdown 拼接、chatid 前缀归一、
+  凭据为空不启动、恰好等于上限不拆片）。
+- 过程中测试抓出并修掉两个真 bug：`\\n` 双重转义导致分片/markdown 里是
+  字面量 `\n`；`@\\S+` 双重转义导致 @提及未去除。
+- 同步更新 `_test_notify.py` 字段枚举（加入 bot 三件套）。
+- 全量 47 个测试文件全绿；Python 语法 + 内嵌 JS `node --check` 通过。
+
+### 升级说明
+
+- 重建容器即可；未配置 bot 凭据时行为与之前完全一致（仍走 HTTP 通道）。
+- 需在企微后台「智能机器人」页取 bot_id / bot_secret 填入设置页
+  （与自建应用的 CorPID/Secret 不是同一组）。
+
 ## [v0.9.81] - 2026-10-15
 
 <!-- summary: 补齐企微渠道级代理（对齐MoviePilot的WECHAT_PROXY）+ 推送失败可读日志 + 助手人格化回复 -->
@@ -4300,7 +4337,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.81...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.82...HEAD
+[v0.9.82]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.81...v0.9.82
 [v0.9.81]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.80...v0.9.81
 [v0.9.80]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.79...v0.9.80
 [v0.9.79]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.78...v0.9.79

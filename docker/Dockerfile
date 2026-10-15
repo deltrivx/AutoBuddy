@@ -47,6 +47,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     httpx \
     requests \
     pycryptodome \
+    websocket-client \
     \
     && rm -rf /root/.cache/pip
 

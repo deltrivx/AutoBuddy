@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.81](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.81)
+**当前稳定版：** [v0.9.82](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.82)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v0.9.82](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.82) | 2026-10-15 | 参考MP的wechatbot.py新增企业微信智能机器人WebSocket通道——出站长连接不校验来源IP，解决HTTP通道errcode=60020导致通知全阻塞 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.82.md) |
 | [v0.9.81](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.81) | 2026-10-15 | 补齐企微渠道级代理（对齐MoviePilot的WECHAT_PROXY）+ 推送失败可读日志 + 助手人格化回复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.81.md) |
 | [v0.9.80](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.80) | 2026-10-15 | 修正统计页回归测试——兼容「线上已被替换」状态（修复生效后旧文案不存在，规则命中0属预期） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.80.md) |
 | [v0.9.79](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.79) | 2026-10-15 | 修复统计页加载失败/卡死——签到接口上游劣化到5~9秒拖垮整页，改stale-while-revalidate；旧品牌名workbuddy-switch改AutoBuddy | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.79.md) |
@@ -174,7 +175,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.81    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:0.9.82    # 锁定版本
 ```
 
 ## 部署产物
