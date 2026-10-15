@@ -172,6 +172,118 @@ PROVIDERS: List[Dict[str, Any]] = [
 _PROVIDER_BY_KEY = {p["key"]: p for p in PROVIDERS}
 
 
+# ---------------------------------------------------------------------------
+# 联网搜索引擎注册表（2026-10-16 用户需求）
+#
+# 用户原话：「搜索引擎作为可选项，前端添加 UI 配置，用户自行配置搜索引擎，
+# 也可以用其他的，而不是把我的 key 写死到仓库里，因为这是开源的」
+#
+# 因此密钥**一律不进仓库**：每个引擎的 api_key 存在用户自己的
+# assistant_config.json 里（与 LLM provider 的 secret 语义完全一致：
+# GET 不回明文、不提交=保留、空串=清除、有值=覆盖）。
+#
+# 设计对齐 PROVIDERS：
+#   - default_base_url + base_url_presets：预设地址，省得手打
+#   - supports_api_key：是否需要密钥
+#   - extra_fields：个别引擎要的附加参数（如 Google CSE 的 cx）
+#   - desc / docs：设置页上的说明与申请地址
+#
+# 每个引擎的请求/响应格式不同，由 _SEARCH_ADAPTERS 里的适配函数归一化成
+# 统一的 (answer, [{title, url, content}])，工具层不关心差异。
+# ---------------------------------------------------------------------------
+SEARCH_PROVIDERS: List[Dict[str, Any]] = [
+    {
+        "key": "tavily",
+        "name": "Tavily",
+        "desc": "专为 AI 设计的搜索 API，返回摘要+结果，开箱即用。默认选项。",
+        "default_base_url": "https://api.tavily.com",
+        "base_url_presets": [
+            {"id": "tavily", "label": "Tavily 官方", "value": "https://api.tavily.com"},
+        ],
+        "base_url_editable": True,
+        "supports_api_key": True,
+        "api_key_label": "API Key",
+        "api_key_hint": "留空且已配置过 = 保持不变；填值 = 覆盖；明确提交空串 = 清除",
+        "docs": "https://tavily.com（免费额度 1000 次/月）",
+    },
+    {
+        "key": "serper",
+        "name": "Serper（Google 结果）",
+        "desc": "返回 Google 真实搜索结果，含知识图谱与相关问题；延迟低。",
+        "default_base_url": "https://google.serper.dev",
+        "base_url_presets": [
+            {"id": "serper", "label": "Serper 官方", "value": "https://google.serper.dev"},
+        ],
+        "base_url_editable": True,
+        "supports_api_key": True,
+        "api_key_label": "API Key",
+        "api_key_hint": "请求头 X-API-KEY 使用的密钥",
+        "docs": "https://serper.dev（免费 2500 次）",
+    },
+    {
+        "key": "bing",
+        "name": "Bing Web Search",
+        "desc": "微软必应网页搜索，Azure 门户申请，结果稳定。",
+        "default_base_url": "https://api.bing.microsoft.com/v7.0",
+        "base_url_presets": [
+            {"id": "bing", "label": "Bing v7 官方", "value": "https://api.bing.microsoft.com/v7.0"},
+        ],
+        "base_url_editable": True,
+        "supports_api_key": True,
+        "api_key_label": "Subscription Key",
+        "api_key_hint": "请求头 Ocp-Apim-Subscription-Key 使用的密钥",
+        "docs": "https://www.microsoft.com/bing/apis/bing-web-search-api",
+    },
+    {
+        "key": "google_cse",
+        "name": "Google Custom Search",
+        "desc": "Google 官方自定义搜索，需要 API Key 与搜索引擎 ID（cx）两项。",
+        "default_base_url": "https://www.googleapis.com/customsearch/v1",
+        "base_url_presets": [
+            {"id": "google_cse", "label": "Google CSE 官方", "value": "https://www.googleapis.com/customsearch/v1"},
+        ],
+        "base_url_editable": True,
+        "supports_api_key": True,
+        "api_key_label": "API Key",
+        "api_key_hint": "Google Cloud 控制台申请的 API Key",
+        "extra_fields": [
+            {"key": "cx", "label": "搜索引擎 ID（cx）", "type": "text",
+             "desc": "在 cse.google.com 创建搜索引擎后获得，形如 0123456789abcdef:hijk。"},
+        ],
+        "docs": "https://developers.google.com/custom-search/v1/overview",
+    },
+    {
+        "key": "bocha",
+        "name": "博查搜索",
+        "desc": "国内可直连的搜索 API，中文结果好，无需特殊网络环境。",
+        "default_base_url": "https://api.bochaai.com/v1",
+        "base_url_presets": [
+            {"id": "bocha", "label": "博查官方", "value": "https://api.bochaai.com/v1"},
+        ],
+        "base_url_editable": True,
+        "supports_api_key": True,
+        "api_key_label": "API Key",
+        "api_key_hint": "请求头 Authorization: Bearer <key> 使用的密钥",
+        "docs": "https://open.bochaai.com",
+    },
+    {
+        "key": "searxng",
+        "name": "SearXNG（自建）",
+        "desc": "自托管元搜索，聚合 Google/Bing/DDG 等来源，无需申请密钥。",
+        "default_base_url": "http://127.0.0.1:8080",
+        "base_url_presets": [
+            {"id": "local", "label": "本机实例", "value": "http://127.0.0.1:8080"},
+        ],
+        "base_url_editable": True,
+        "supports_api_key": False,
+        "extra_fields": [],
+        "docs": "https://docs.searxng.org（需在 settings.yml 开启 JSON 格式）",
+    },
+]
+
+_SEARCH_BY_KEY = {p["key"]: p for p in SEARCH_PROVIDERS}
+
+
 def _blank_config() -> Dict[str, Any]:
     """配置默认值。
 
@@ -180,7 +292,10 @@ def _blank_config() -> Dict[str, Any]:
         systemPrompt / providers
       - 新补 6 项：maxContextK / temperature / reasoningEffort /
         outputLanguage / userAgent / verbose
-      - 联网搜索：webSearch（off|tavily）
+      - 联网搜索（2026-10-16 重构）：webSearch 语义改为
+        "off" | <searchProvider 的 key>；searchProvider 选引擎，
+        searchProviders 存每个引擎的 base_url / api_key / extra。
+        密钥**一律不进仓库**（开源项目），只落在用户自己的配置文件中。
     """
     return {
         "enabled": True,
@@ -194,7 +309,17 @@ def _blank_config() -> Dict[str, Any]:
         "outputLanguage": "zh-CN",        # 强制输出语言
         "userAgent": "",                  # 空 = SDK 默认
         "verbose": False,                 # 啰嗦模式（MP 同名）
-        "webSearch": "off",               # off | tavily
+        # —— 联网搜索（引擎可自选，密钥自备）——
+        "webSearch": "off",               # off | tavily | serper | bing | ...
+        "searchProvider": "tavily",       # 当前选用的搜索引擎
+        "searchProviders": {
+            p["key"]: {
+                "base_url": p.get("default_base_url") or "",
+                "api_key": "",
+                "extra": {f["key"]: "" for f in (p.get("extra_fields") or [])},
+            }
+            for p in SEARCH_PROVIDERS
+        },
         "providers": {
             "gateway": {"base_url": GATEWAY_BASE, "api_key": ""},
             "openai": {"base_url": "https://api.openai.com/v1", "api_key": ""},
@@ -211,11 +336,23 @@ def _load_config() -> Dict[str, Any]:
                 raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     cfg.update({k: v for k, v in raw.items() if k in cfg})
-                    provs = raw.get("providers")
-                    if isinstance(provs, dict):
+                    # 嵌套结构要深合并：直接 update 会把整块替换掉，
+                    # 导致新增引擎字段（extra）在旧配置文件里缺失。
+                    for nest in ("providers", "searchProviders"):
+                        provs = raw.get(nest)
+                        if not isinstance(provs, dict):
+                            continue
                         for k, v in provs.items():
-                            if k in cfg["providers"] and isinstance(v, dict):
-                                cfg["providers"][k].update(v)
+                            if k not in cfg[nest] or not isinstance(v, dict):
+                                continue
+                            slot = cfg[nest][k]
+                            slot.update({kk: vv for kk, vv in v.items() if kk in slot})
+                            # extra 是三层嵌套，同样要逐键合并
+                            extra = v.get("extra")
+                            if isinstance(extra, dict):
+                                base = slot.setdefault("extra", {})
+                                if isinstance(base, dict):
+                                    base.update(extra)
         except Exception:
             pass
         return cfg
@@ -228,9 +365,11 @@ def _save_config(patch: Dict[str, Any]) -> Dict[str, Any]:
         body = patch or {}
         for k in ("enabled", "provider", "model", "systemPrompt",
                   "maxContextK", "temperature", "reasoningEffort",
-                  "outputLanguage", "userAgent", "verbose", "webSearch"):
+                  "outputLanguage", "userAgent", "verbose", "webSearch",
+                  "searchProvider"):
             if k in body:
                 cfg[k] = body[k]
+        # LLM provider（原有）
         provs = body.get("providers")
         if isinstance(provs, dict):
             for pk, pv in provs.items():
@@ -244,6 +383,27 @@ def _save_config(patch: Dict[str, Any]) -> Dict[str, Any]:
                     if v is None:
                         continue          # 保留
                     slot[k] = str(v or "").strip()
+        # 搜索引擎 provider（2026-10-16 新增，secret 语义与上面完全一致）
+        sprovs = body.get("searchProviders")
+        if isinstance(sprovs, dict):
+            for pk, pv in sprovs.items():
+                if pk not in cfg["searchProviders"] or not isinstance(pv, dict):
+                    continue
+                slot = cfg["searchProviders"][pk]
+                for k in ("base_url", "api_key"):
+                    if k not in pv:
+                        continue          # 未提交 → 保留
+                    v = pv[k]
+                    if v is None:
+                        continue          # 保留
+                    slot[k] = str(v or "").strip()
+                extra = pv.get("extra")
+                if isinstance(extra, dict):
+                    base = slot.setdefault("extra", {})
+                    if isinstance(base, dict):
+                        for ek, ev in extra.items():
+                            if ek in base and ev is not None:
+                                base[ek] = str(ev or "").strip()
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=1),
@@ -308,9 +468,13 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
      "desc": "强制助手使用所选语言回复，默认 zh-CN。"},
     {"key": "userAgent", "label": "User-Agent", "type": "text",
      "desc": "OpenAI 兼容接口请求使用的 User-Agent，留空则使用默认值。"},
+    # 联网搜索：2026-10-16 起引擎可自选（密钥由用户在下方自行配置，
+    # 不再内置任何他人 key）。选项由 SEARCH_PROVIDERS 动态生成 ——
+    # 以后加引擎只需改注册表，这里不用动。
     {"key": "webSearch", "label": "联网搜索", "type": "select",
-     "desc": "助手可调用 Tavily 实时联网检索；关闭则只用内置只读工具。",
-     "options": ["off", "tavily"]},
+     "desc": "开启后助手可实时联网检索；关闭则只用内置只读工具。"
+             "选好引擎后请在下方填写该引擎的地址与 API Key。",
+     "options": ["off"] + [p["key"] for p in SEARCH_PROVIDERS]},
 ]
 
 
@@ -324,9 +488,26 @@ def public_view() -> Dict[str, Any]:
             "base_url": str(slot.get("base_url") or p.get("default_base_url") or ""),
             "api_key": {"has_value": bool(str(slot.get("api_key") or "").strip())},
         }
+    # 搜索引擎（2026-10-16）：注册表 + 每个引擎的 base_url / 密钥就绪状态 /
+    # 附加字段当前值。密钥同样只回 has_value。
+    search_out: Dict[str, Any] = {}
+    for p in SEARCH_PROVIDERS:
+        slot = (cfg.get("searchProviders") or {}).get(p["key"]) or {}
+        extra_out: Dict[str, Any] = {}
+        slot_extra = slot.get("extra") if isinstance(slot.get("extra"), dict) else {}
+        for f in (p.get("extra_fields") or []):
+            extra_out[f["key"]] = str(slot_extra.get(f["key"]) or "")
+        search_out[p["key"]] = {
+            "base_url": str(slot.get("base_url") or p.get("default_base_url") or ""),
+            "api_key": {"has_value": bool(str(slot.get("api_key") or "").strip())},
+            "extra": extra_out,
+        }
     return {
         "registry": PROVIDERS,
         "settings": SETTING_FIELDS,
+        "searchRegistry": SEARCH_PROVIDERS,
+        # 兼容字段：老前端只认 tavily.has_value，保留但语义改为
+        # 「当前选中的搜索引擎密钥是否就绪」。
         "tavily": {"has_value": bool(TAVILY_API_KEY)},
         "config": {
             "enabled": bool(cfg.get("enabled", True)),
@@ -340,7 +521,9 @@ def public_view() -> Dict[str, Any]:
             "userAgent": str(cfg.get("userAgent") or ""),
             "verbose": bool(cfg.get("verbose")),
             "webSearch": str(cfg.get("webSearch") or "off"),
+            "searchProvider": str(cfg.get("searchProvider") or "tavily"),
             "providers": provs_out,
+            "searchProviders": search_out,
         },
         "runtime": session_stats(),
     }
@@ -1417,14 +1600,179 @@ def _tool_estimate_credits(args: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _tool_web_search(args: Dict[str, Any]) -> str:
-    """联网搜索（Tavily）。照 MoviePilot 的「联网搜索」项新增。
+def _search_credential() -> Dict[str, Any]:
+    """当前选用的搜索引擎及其配置（base_url + api_key + extra）。
 
-    密钥不落盘、不回传：只用运行时环境里的 TAVILY_API_KEY。
-    仅当设置页 webSearch=tavily 时该工具才会注册给模型。
+    密钥来源优先级（与 LLM provider 完全一致）：
+      1. 配置文件里的 searchProviders[<engine>].api_key（用户在设置页填的）
+      2. 环境变量 / .env.local 里的 TAVILY_API_KEY —— 仅 Tavily 生效，
+         这是给「部署时已配好 key 的老用户」的向后兼容，
+         新用户一律走设置页，不再需要碰环境变量。
     """
-    if not TAVILY_API_KEY:
-        return "联网搜索未启用（缺少 TAVILY_API_KEY）。"
+    cfg = _load_config()
+    ws = str(cfg.get("webSearch") or "off").strip()
+    if ws == "off":
+        return {"ok": False, "reason": "联网搜索未启用"}
+    key = str(cfg.get("searchProvider") or ws or "tavily").strip()
+    spec = _SEARCH_BY_KEY.get(key)
+    if not spec:
+        return {"ok": False, "reason": "未知搜索引擎：%s" % key}
+    slot = (cfg.get("searchProviders") or {}).get(key) or {}
+    base = str(slot.get("base_url") or "").strip() or spec.get("default_base_url") or ""
+    api_key = str(slot.get("api_key") or "").strip()
+    # 向后兼容：老部署可能只设了环境变量
+    if not api_key and key == "tavily":
+        api_key = TAVILY_API_KEY
+    extra = slot.get("extra") if isinstance(slot.get("extra"), dict) else {}
+    return {
+        "ok": True, "key": key, "spec": spec, "base_url": base.rstrip("/"),
+        "api_key": api_key, "extra": extra or {},
+        "name": spec.get("name") or key,
+    }
+
+
+def _search_http(url: str, payload: Optional[Dict[str, Any]] = None,
+                 headers: Optional[Dict[str, str]] = None, timeout: int = 20
+                 ) -> Optional[Dict[str, Any]]:
+    """统一 HTTP 出口：POST JSON 或 GET，返回解析后的 dict（失败返回 None）。"""
+    import urllib.request
+    import urllib.error
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    h = {"Content-Type": "application/json"}
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, data=body, headers=h,
+                                 method="POST" if body else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+    except Exception:
+        return None
+
+
+def _search_adapt_tavily(cr: Dict[str, Any], query: str, n: int,
+                         topic: str) -> Optional[Dict[str, Any]]:
+    d = _search_http(cr["base_url"] + "/search",
+                     {"api_key": cr["api_key"], "query": query, "max_results": n,
+                      "topic": topic, "include_answer": True})
+    if not isinstance(d, dict):
+        return None
+    return {"answer": d.get("answer"), "results": d.get("results")}
+
+
+def _search_adapt_serper(cr: Dict[str, Any], query: str, n: int,
+                         topic: str) -> Optional[Dict[str, Any]]:
+    endpoint = "/news" if topic == "news" else "/search"
+    d = _search_http(cr["base_url"] + endpoint,
+                     {"q": query, "num": n, "hl": "zh-CN"},
+                     {"X-API-KEY": cr["api_key"]})
+    if not isinstance(d, dict):
+        return None
+    results = []
+    for it in (d.get("organic") or [])[:n]:
+        if isinstance(it, dict):
+            results.append({"title": it.get("title"), "url": it.get("link"),
+                            "content": it.get("snippet")})
+    ans = d.get("answerBox") or {}
+    answer = ans.get("answer") or ans.get("snippet") if isinstance(ans, dict) else None
+    return {"answer": answer, "results": results}
+
+
+def _search_adapt_bing(cr: Dict[str, Any], query: str, n: int,
+                       topic: str) -> Optional[Dict[str, Any]]:
+    import urllib.parse
+    qs = urllib.parse.urlencode({"q": query, "count": n, "mkt": "zh-CN"})
+    d = _search_http(cr["base_url"] + "/search?" + qs, None,
+                     {"Ocp-Apim-Subscription-Key": cr["api_key"]})
+    if not isinstance(d, dict):
+        return None
+    results = []
+    for it in ((d.get("webPages") or {}).get("value") or [])[:n]:
+        if isinstance(it, dict):
+            results.append({"title": it.get("name"), "url": it.get("url"),
+                            "content": it.get("snippet")})
+    return {"answer": None, "results": results}
+
+
+def _search_adapt_google_cse(cr: Dict[str, Any], query: str, n: int,
+                             topic: str) -> Optional[Dict[str, Any]]:
+    import urllib.parse
+    cx = str(cr["extra"].get("cx") or "").strip()
+    if not cx:
+        return None
+    qs = urllib.parse.urlencode({"key": cr["api_key"], "cx": cx, "q": query,
+                                 "num": n})
+    d = _search_http(cr["base_url"] + "?" + qs, None, None)
+    if not isinstance(d, dict):
+        return None
+    results = [{"title": it.get("title"), "url": it.get("link"),
+                "content": it.get("snippet")}
+               for it in (d.get("items") or [])[:n] if isinstance(it, dict)]
+    return {"answer": None, "results": results}
+
+
+def _search_adapt_bocha(cr: Dict[str, Any], query: str, n: int,
+                        topic: str) -> Optional[Dict[str, Any]]:
+    d = _search_http(cr["base_url"] + "/web-search",
+                     {"query": query, "count": n, "summary": True},
+                     {"Authorization": "Bearer " + cr["api_key"]})
+    if not isinstance(d, dict):
+        return None
+    data = d.get("data") if isinstance(d.get("data"), dict) else d
+    pages = (data or {}).get("webPages") or (data or {}).get("value") or []
+    results = [{"title": it.get("name") or it.get("title"), "url": it.get("url"),
+                "content": it.get("summary") or it.get("snippet")}
+               for it in pages[:n] if isinstance(it, dict)]
+    return {"answer": (data or {}).get("answer"), "results": results}
+
+
+def _search_adapt_searxng(cr: Dict[str, Any], query: str, n: int,
+                          topic: str) -> Optional[Dict[str, Any]]:
+    import urllib.parse
+    qs = urllib.parse.urlencode({"q": query, "format": "json",
+                                 "language": "zh-CN", "safesearch": 0})
+    d = _search_http(cr["base_url"] + "/search?" + qs, None, None)
+    if not isinstance(d, dict):
+        return None
+    results = [{"title": it.get("title"), "url": it.get("url"),
+                "content": it.get("content")}
+               for it in (d.get("results") or [])[:n] if isinstance(it, dict)]
+    answers = d.get("answers") or []
+    answer = answers[0] if answers else None
+    return {"answer": answer, "results": results}
+
+
+_SEARCH_ADAPTERS = {
+    "tavily": _search_adapt_tavily,
+    "serper": _search_adapt_serper,
+    "bing": _search_adapt_bing,
+    "google_cse": _search_adapt_google_cse,
+    "bocha": _search_adapt_bocha,
+    "searxng": _search_adapt_searxng,
+}
+
+
+def _tool_web_search(args: Dict[str, Any]) -> str:
+    """联网搜索（搜索引擎可在设置页自选，密钥由用户自行配置）。
+
+    2026-10-16 重构：原先写死 Tavily + 依赖环境变量 TAVILY_API_KEY，
+    与「开源项目不该内置他人 key」的诉求冲突。现在：
+      - 设置页「联网搜索」下拉选引擎（Tavily / Serper / Bing /
+        Google CSE / 博查 / SearXNG）
+      - 每个引擎的 base_url 与 API Key 都在设置页填写，
+        只落在用户自己的 assistant_config.json，绝不进仓库
+      - 环境变量 TAVILY_API_KEY 仍被识别，仅为兼容老部署
+    """
+    cr = _search_credential()
+    if not cr.get("ok"):
+        return "%s：请在设置页「智能助手 → 联网搜索」里启用并填写密钥。" % cr.get("reason")
+    if cr["spec"].get("supports_api_key") and not cr["api_key"]:
+        return "尚未填写 %s 的 API Key：请在设置页「智能助手 → 联网搜索」里补配置。" % cr["name"]
     query = str((args or {}).get("query") or "").strip()[:400]
     if not query:
         return "请提供搜索关键词。"
@@ -1436,22 +1784,17 @@ def _tool_web_search(args: Dict[str, Any]) -> str:
     topic = str((args or {}).get("topic") or "general").strip().lower()
     if topic not in ("general", "news", "finance"):
         topic = "general"
-    body = json.dumps({
-        "api_key": TAVILY_API_KEY,
-        "query": query,
-        "max_results": n,
-        "topic": topic,
-        "include_answer": True,
-    }).encode("utf-8")
+
+    adapt = _SEARCH_ADAPTERS.get(cr["key"])
+    if not adapt:
+        return "搜索引擎 %s 尚未实现适配器。" % cr["name"]
     try:
-        import urllib.request
-        req = urllib.request.Request(
-            TAVILY_ENDPOINT, data=body, method="POST",
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            d = json.loads(r.read().decode("utf-8", "replace"))
+        d = adapt(cr, query, n, topic)
     except Exception as e:
         return "联网搜索失败（%s）：%s" % (type(e).__name__, str(e)[:120])
+    if not d:
+        return "联网搜索失败（%s 未返回可用结果）：请检查设置页里该引擎的地址与密钥。" % cr["name"]
+
     lines: List[str] = []
     ans = str(d.get("answer") or "").strip()
     if ans:
@@ -1466,8 +1809,6 @@ def _tool_web_search(args: Dict[str, Any]) -> str:
     if not lines:
         return "联网搜索无结果：%s" % query
     return "\n".join(lines)
-
-
 # ---------------------------------------------------------------------------
 # 工具边界说明（2026-10-15 用户确认）
 #
@@ -1554,13 +1895,20 @@ _TOOLS: Dict[str, tuple] = {
 
 
 def _enabled_tool_names() -> List[str]:
-    """当前配置下可用的工具名。web_search 仅在开启联网搜索且密钥就绪时启用。"""
+    """当前配置下可用的工具名。
+
+    web_search 仅在「联网搜索已启用 且 所选搜索引擎的密钥就绪」时才注册。
+    2026-10-16 起改为多引擎：启用条件由 _search_credential() 统一判定，
+    不再写死 Tavily（密钥可由用户在设置页自行配置）。
+    """
     names = list(_TOOLS.keys())
     try:
-        rt = _runtime()
+        cr = _search_credential()
     except Exception:
-        rt = {}
-    if str(rt.get("webSearch") or "off") != "tavily" or not TAVILY_API_KEY:
+        cr = {}
+    if not cr.get("ok"):
+        names = [n for n in names if n != "web_search"]
+    elif cr.get("spec", {}).get("supports_api_key") and not cr.get("api_key"):
         names = [n for n in names if n != "web_search"]
     return names
 

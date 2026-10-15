@@ -1007,6 +1007,262 @@ COLLAPSE_SCRIPT = r"""
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* ==================================================================
+     主界面重新设计（2026-10-16）
+     参考图：左侧窄边栏（磨砂半透明 + 暖色高亮）+ 右侧主内容区。
+     用户诉求：「内容不变只是改前端 UI 设计」+「做好移动端竖屏适配」。
+
+     实现要点：
+       1) 侧边栏 backdrop-filter 磨砂，内容区可透出底色形成层次；
+       2) 主内容区卡片统一圆角/间距/细边框，视觉与侧边栏分离；
+       3) 强调色沿用官方 --primary，不引入第二套配色；
+       4) 窄屏（<=720px）侧边栏改为**底部横向导航条**，避免竖屏被挤成一条线；
+       5) 所有 !important 都只用于覆盖官方内联宽度，改动面最小。
+     ================================================================== */
+  /* —— 1. 侧边栏磨砂 —— */
+  aside {
+    background: color-mix(in oklab, var(--sidebar, #1b1e27) 82%, transparent) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    border-right: 1px solid var(--sidebar-border, rgba(120,120,120,0.18)) !important;
+  }
+  /* 主内容区留白与最大宽度：宽屏不拉太满，窄屏吃满 */
+  main {
+    background: var(--background, #0f1117);
+  }
+  main > div, main > section {
+    max-width: 1180px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* —— 2. 卡片分离感：细边框 + 大圆角 + 更柔的阴影 —— */
+  .wb-api-card {
+    border-radius: 16px;
+    border: 1px solid var(--border, rgba(120,120,120,0.18));
+    background: color-mix(in oklab, var(--card, #ffffff) 92%, transparent);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.06);
+  }
+  /* 设置页小标题（外观 / API 接入 …）与卡片拉开层次 */
+  [id^="settings-"] {
+    scroll-margin-top: 16px;
+  }
+  h2[id^="settings-"] {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
+    color: var(--muted-foreground, #64748b) !important;
+    text-transform: none;
+    padding: 0 2px;
+  }
+  /* 主按钮统一到官方主色 */
+  .wb-api-btn-primary {
+    background: var(--primary, #3b82f6) !important;
+    color: var(--primary-foreground, #ffffff) !important;
+    border-color: transparent !important;
+  }
+  .wb-api-btn-primary:hover {
+    filter: brightness(1.06);
+  }
+  /* 开关「已开启」态用主色，和整体强调色统一 */
+  .wb-api-btn-on {
+    background: color-mix(in oklab, var(--primary, #3b82f6) 16%, transparent) !important;
+    border-color: color-mix(in oklab, var(--primary, #3b82f6) 45%, transparent) !important;
+    color: var(--primary, #3b82f6) !important;
+  }
+
+  /* —— 3. 侧边栏底部：主题切换（2026-10-16 用户要求挪到这里）—— */
+  #wb-theme-dock {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    padding: 10px 4px 2px;
+    border-top: 1px solid var(--sidebar-border, rgba(120,120,120,0.16));
+  }
+  #wb-theme-dock .wb-theme-title {
+    font-size: 11px;
+    color: var(--muted-foreground, #64748b);
+    padding: 0 4px 4px;
+    width: 100%;
+  }
+  #wb-theme-dock .wb-theme-btns {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    padding: 0 2px;
+  }
+  #wb-theme-dock .wb-theme-btn {
+    flex: 1 1 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 30px;
+    padding: 0 6px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted-foreground, #64748b);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    white-space: nowrap;
+  }
+  #wb-theme-dock .wb-theme-btn:hover {
+    background: var(--accent, rgba(120,120,120,0.1));
+    color: var(--foreground, #0f172a);
+  }
+  #wb-theme-dock .wb-theme-btn.wb-theme-active {
+    background: var(--primary, #3b82f6);
+    border-color: transparent;
+    color: var(--primary-foreground, #ffffff);
+    font-weight: 600;
+  }
+  #wb-theme-dock .wb-theme-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+  /* 收拢态只留图标，文字隐藏 */
+  aside.wb-collapsed #wb-theme-dock .wb-theme-title,
+  aside.wb-collapsed #wb-theme-dock .wb-theme-btn span { display: none !important; }
+  aside.wb-collapsed #wb-theme-dock .wb-theme-btns { flex-direction: column; }
+  aside.wb-collapsed #wb-theme-dock .wb-theme-btn { height: 32px; }
+
+  /* —— 4. 移动端竖屏（<=720px）：侧边栏改为底部横向导航条 ——
+     官方 aside 是 220px 固定纵栏，在 430px 屏上会吃掉一半宽度。
+     这里把它改成贴底的横向条：图标在上、文字在下，横向可滚动，
+     彻底避免「竖屏内容被挤成一条竖线」。 */
+  @media (max-width: 720px) {
+    aside {
+      position: fixed !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      top: auto !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+      border-right: 0 !important;
+      border-top: 1px solid var(--sidebar-border, rgba(120,120,120,0.18)) !important;
+      border-radius: 0 !important;
+      z-index: 9000 !important;
+      overflow: visible !important;
+    }
+    /* ⚠️ 关键：必须用 aside.wb-collapsed（与折叠态同等特异性）再覆盖一次。
+       折叠态规则 `aside.wb-collapsed { width: 68px !important }` 特异性是 (0,1,1)，
+       上面的 `aside { width: 100% !important }` 只有 (0,0,1) —— 特异性更低，
+       所以 68px 会赢。实测后果：侧边栏在竖屏只剩 68px 宽、nav 被压到 9px，
+       5 个导航项全挤成一团。这里补一条同等特异性的规则把它拉回全宽。 */
+    aside.wb-collapsed {
+      width: 100% !important;
+      max-width: 100% !important;
+      padding-left: 8px !important;
+      padding-right: 8px !important;
+    }
+    /* 收拢态的「隐藏文字」规则在底部条里要反过来：底部条本来就只放得下
+       图标+小字，文字必须留着，否则用户看到的是一排无标签的图标。 */
+    aside.wb-collapsed div.min-w-0 { display: none !important; }
+    aside.wb-collapsed nav a {
+      justify-content: center !important;
+      padding: 6px 10px !important;
+    }
+    aside.wb-collapsed nav a span.wb-nav-label { display: block !important; }
+    /* 收拢态隐藏的主题 dock 文字也要恢复（同理） */
+    aside.wb-collapsed #wb-theme-dock .wb-theme-title { display: none !important; }
+    /* 品牌区隐藏：底部条没地方放 logo+名称 */
+    aside > div:first-child { display: none !important; }
+    /* 导航横向排列、可滚动 */
+    aside nav {
+      flex-direction: row !important;
+      flex: 1 1 auto !important;
+      gap: 2px !important;
+      overflow-x: auto !important;
+      overflow-y: hidden !important;
+      scrollbar-width: none !important;
+      padding-bottom: 0 !important;
+    }
+    aside nav::-webkit-scrollbar { display: none !important; }
+    aside nav a {
+      flex: 0 0 auto !important;
+      flex-direction: column !important;
+      gap: 3px !important;
+      padding: 6px 10px !important;
+      border-radius: 10px !important;
+      font-size: 10.5px !important;
+      min-width: 56px !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    aside nav a svg { width: 17px !important; height: 17px !important; }
+    aside nav a span.wb-nav-label {
+      display: block !important;
+      font-size: 10px !important;
+      line-height: 1.2 !important;
+      max-width: 56px !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+    }
+    /* 折叠按钮在底部条里没意义，隐藏（竖屏本来就是横向条） */
+    #wb-collapse-btn { display: none !important; }
+    /* 主题 dock：竖屏放在导航右侧，三个按钮仍可点 */
+    /* 底部导航条右侧的 dock：**横排**。
+       竖排是桌面端侧边栏的形态（高度充裕）；底部条只有约 62px 高，
+       竖排会把三个按钮各压到 ~15px，实测点不中。
+       横排 + 固定 30px 宽，三个按钮占 ~102px，剩下的给导航滚动。 */
+    #wb-theme-dock {
+      flex-direction: row !important;
+      align-items: center !important;
+      margin-top: 0 !important;
+      margin-left: 6px !important;
+      padding: 0 !important;
+      border-top: 0 !important;
+      border-left: 1px solid var(--sidebar-border, rgba(120,120,120,0.16)) !important;
+      flex-shrink: 0 !important;
+      gap: 2px !important;
+    }
+    #wb-theme-dock .wb-theme-title { display: none !important; }
+    #wb-theme-dock .wb-theme-btns {
+      flex-direction: row !important;
+      gap: 2px !important;
+      width: auto !important;
+      padding: 0 !important;
+    }
+    #wb-theme-dock .wb-theme-btn {
+      height: 32px !important;
+      width: 30px !important;
+      min-width: 30px !important;
+      padding: 0 !important;
+      flex: 0 0 auto !important;
+    }
+    #wb-theme-dock .wb-theme-btn span { display: none !important; }
+    /* 主内容区底部留出导航条高度，否则最后一项被挡住 */
+    main, body > div {
+      padding-bottom: 76px !important;
+    }
+    /* 磨砂在底部条上仍生效，但圆角清零（贴边） */
+    aside {
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      backdrop-filter: blur(18px) saturate(140%);
+    }
+    /* 设置页横排在窄屏改纵排（已有 560px 规则，这里补 720px 一致） */
+    .wb-api-row {
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: 8px !important;
+    }
+    .wb-api-row > * { max-width: 100% !important; }
+    /* 右下角用户球避开底部导航条 */
+    #wb-user-orb { bottom: 84px !important; right: 12px !important; }
+  }
+
+  /* 极窄屏（<=380px）：导航文字再缩一档，保证 5 个图标+文字放得下 */
+  @media (max-width: 380px) {
+    aside nav a { min-width: 48px !important; padding: 5px 6px !important; }
+    aside nav a span.wb-nav-label { font-size: 9px !important; max-width: 48px !important; }
+    #wb-theme-dock .wb-theme-btn { width: 26px !important; height: 26px !important; }
+  }
 </style>
 <script>
 (function() {
@@ -2041,6 +2297,134 @@ COLLAPSE_SCRIPT = r"""
       applyCollapsed(collapsed);
     };
     aside.appendChild(btn);
+
+    // 主题切换 dock：用户 2026-10-16 要求「主题按照截图设计到左下角，
+    // 就不用单独在设置里」。这里在侧边栏底部注入三段式控件
+    // （系统 / 浅色 / 深色），与官方 appearance-theme 共用同一份状态，
+    // 所以设置页里那个官方主题控件会被隐藏，两处不会各说各话。
+    wbInitThemeDock(aside);
+  }
+
+  /* ---------- 主题切换（侧边栏左下角，2026-10-16）----------
+     与官方机制完全兼容（实测确认）：
+       localStorage["appearance-theme"] ∈ {system, light, dark}
+       html.classList.toggle("dark", <是否为深色>)
+     手动改这两个值后，官方的 React 受控组件不会回弹
+     （实测：改完等 2 秒按钮文字与 html class 都保持）。
+     这样两处 UI 指向同一状态，不会出现「设置页说浅色、侧边栏说深色」。 */
+  var WB_THEME_LS_KEY = "appearance-theme";
+
+  function wbThemeCurrent() {
+    var v = "";
+    try { v = localStorage.getItem(WB_THEME_LS_KEY) || ""; } catch (e) {}
+    return (v === "light" || v === "dark") ? v : "system";
+  }
+
+  function wbThemeApply(mode, persist) {
+    var dark;
+    if (mode === "light" || mode === "dark") {
+      dark = mode === "dark";
+    } else {
+      dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    document.documentElement.classList.toggle("dark", dark);
+    if (persist) {
+      try { localStorage.setItem(WB_THEME_LS_KEY, mode); } catch (e) {}
+    }
+    // 同步 dock 里的高亮态
+    var dock = document.getElementById("wb-theme-dock");
+    if (dock) {
+      Array.prototype.slice.call(
+        dock.querySelectorAll(".wb-theme-btn")).forEach(function (b) {
+        var on = b.getAttribute("data-theme") === mode;
+        b.classList.toggle("wb-theme-active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+  }
+
+  function wbInitThemeDock(aside) {
+    if (!aside || document.getElementById("wb-theme-dock")) return;
+
+    var dock = document.createElement("div");
+    dock.id = "wb-theme-dock";
+
+    var title = document.createElement("div");
+    title.className = "wb-theme-title";
+    title.textContent = "界面主题";
+    dock.appendChild(title);
+
+    var box = document.createElement("div");
+    box.className = "wb-theme-btns";
+    dock.appendChild(box);
+
+    var MODES = [
+      { id: "system", label: "系统", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>' },
+      { id: "light", label: "浅色", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>' },
+      { id: "dark", label: "深色", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' }
+    ];
+
+    MODES.forEach(function (m) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "wb-theme-btn";
+      b.setAttribute("data-theme", m.id);
+      b.setAttribute("aria-pressed", "false");
+      b.title = m.id === "system" ? "跟随系统外观"
+        : (m.id === "light" ? "始终浅色" : "始终深色");
+      b.innerHTML = m.svg + "<span>" + m.label + "</span>";
+      b.onclick = function (e) {
+        e.stopPropagation();
+        wbThemeApply(m.id, true);
+      };
+      box.appendChild(b);
+    });
+
+    aside.appendChild(dock);
+    wbThemeApply(wbThemeCurrent(), false);
+
+    // 系统外观变化时，只有当前处于「系统」模式才跟着变
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      var onSysChange = function () {
+        if (wbThemeCurrent() === "system") wbThemeApply("system", false);
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onSysChange);
+      else if (mq.addListener) mq.addListener(onSysChange);
+    } catch (e) {}
+  }
+
+  // 隐藏设置页里那个官方主题控件（主题已挪到侧边栏左下角）。
+  // 只隐藏 UI，不动官方状态机 —— 侧边栏 dock 与它读写同一份
+  // localStorage，设置页那个就算留着也不会和 dock 冲突，
+  // 但用户明确要求「不用单独在设置里」，所以隐藏更符合诉求。
+  function wbHideOfficialThemeRow() {
+    var btn = document.getElementById("appearance-theme");
+    if (!btn) return;
+
+    // 1) 隐藏含主题选择器的那一行（官方的行容器）
+    var node = btn;
+    for (var i = 0; i < 6 && node; i++) {
+      var label = node.querySelector ? node.querySelector("label") : null;
+      if (label && (label.textContent || "").trim() === "主题") {
+        node.style.display = "none";
+        break;
+      }
+      node = node.parentElement;
+    }
+
+    // 2) 隐藏「外观」小标题 —— 主题行已隐藏，标题留着是个空壳。
+    //    官方把它渲染成 h2#settings-appearance，包在一个 DIV.px-1 里。
+    var title = document.getElementById("settings-appearance");
+    if (title) {
+      var wrap = title.parentElement;
+      // 只有该容器里**仅剩**标题时才隐藏整块，避免误伤其他内容
+      if (wrap && wrap.children.length <= 1) {
+        wrap.style.display = "none";
+      } else {
+        title.style.display = "none";
+      }
+    }
   }
 
   function enforceTitle() {
@@ -4027,6 +4411,10 @@ COLLAPSE_SCRIPT = r"""
     var tavilyReady = !!(data.tavily && data.tavily.has_value);
     var cfg = data.config || {};
     var provs = cfg.providers || {};
+    // 联网搜索引擎（2026-10-16）：注册表 + 每个引擎的当前配置。
+    // searchCfg[key].api_key 是 {has_value: bool}，绝不含明文。
+    var searchReg = data.searchRegistry || [];
+    var searchCfg = cfg.searchProviders || {};
     var curKey = cfg.provider || (reg[0] && reg[0].key) || "gateway";
     var cur = reg.filter(function (p) { return p.key === curKey; })[0] || reg[0] || {};
 
@@ -4135,10 +4523,32 @@ COLLAPSE_SCRIPT = r"""
       outputLanguage: cfg.outputLanguage || "zh-CN",
       userAgent: cfg.userAgent || "",
       verbose: !!cfg.verbose,
-      webSearch: cfg.webSearch || "off"
+      webSearch: cfg.webSearch || "off",
+      // 联网搜索引擎选择（2026-10-16）
+      searchProvider: cfg.searchProvider || "tavily"
     };
     // 每个 provider 各自记住「本次编辑中的草稿」，切回来时恢复。
     var draft = {};
+
+    // 搜索引擎的编辑草稿：key -> {base_url, api_key, extra:{}}。
+    // api_key 故意**不预填**（后端不回明文），只有用户真输入了才提交，
+    // 这样「不提交 = 保留原密钥」的语义天然成立。
+    var searchDraft = {};
+    // 用户显式点了「清除密钥」的引擎集合 —— 只有命中才提交空串，
+    // 否则「不提交」就等于保留，与后端的 secret 语义对齐。
+    var searchClearKey = {};
+    (searchReg.length ? searchReg : []).forEach(function (sp) {
+      var slot = searchCfg[sp.key] || {};
+      var extra = {};
+      (sp.extra_fields || []).forEach(function (ef) {
+        extra[ef.key] = (slot.extra && slot.extra[ef.key]) || "";
+      });
+      searchDraft[sp.key] = {
+        base_url: slot.base_url || sp.default_base_url || "",
+        api_key: "",
+        extra: extra
+      };
+    });
 
     // ---- 4. 操作：测试连通性 + 保存 ----
     // ⚠️ actRow/actMain/actBox 必须声明在**外层作用域**：
@@ -4358,6 +4768,161 @@ COLLAPSE_SCRIPT = r"""
         }
         box.appendChild(fieldRow(f.label, f.desc || "", box2));
       });
+
+      // ---- 3.6 联网搜索引擎配置（2026-10-16）----
+      // 用户诉求：「搜索引擎作为可选项，前端添加 UI 配置，用户自行配置搜索引擎，
+      // 也可以用其他的，而不是把我的 key 写死到仓库里，因为这是开源的」。
+      // 因此这里做成注册表驱动：引擎下拉 + 每个引擎自己的 base_url /
+      // API Key / 附加字段（如 Google CSE 的 cx），全部由用户填写，
+      // 只落在用户自己的配置文件里。
+      var searchReg = data.searchRegistry || [];
+      if (searchReg.length) {
+        var srHead = wbEl("div", "wb-api-label", "联网搜索引擎");
+        srHead.style.cssText = "margin-top:10px;";
+        card.appendChild(srHead);
+
+        var srDesc = wbEl("div", "wb-api-desc",
+          "开启联网搜索后助手用哪个引擎检索。密钥只保存在本机配置文件中，"
+          + "不进仓库、不回传；留空且已配置过 = 保持不变，明确提交空串 = 清除。");
+        srDesc.style.cssText = "margin-bottom:8px;";
+        card.appendChild(srDesc);
+
+        // 引擎下拉
+        var srSel = wbEl("select", "wb-api-input");
+        srSel.style.cssText = "max-width:320px;";
+        searchReg.forEach(function (sp) {
+          var opt = document.createElement("option");
+          opt.value = sp.key;
+          opt.textContent = sp.name + (sp.supports_api_key ? "" : "（无需密钥）");
+          if (String(state.searchProvider) === sp.key) opt.selected = true;
+          srSel.appendChild(opt);
+        });
+        srSel.onchange = function () {
+          state.searchProvider = srSel.value;
+          renderSearchFields();
+        };
+        var srSelRow = wbEl("div", null);
+        srSelRow.appendChild(srSel);
+        card.appendChild(fieldRow("搜索引擎", "默认 Tavily；国内直连可选博查，自建可选 SearXNG。", srSelRow));
+
+        // 每个引擎自己的配置容器（切引擎时只重渲染它）
+        var srFields = wbEl("div", null);
+        srFields.id = "wb-asst-search-fields";
+        card.appendChild(srFields);
+
+        function renderSearchFields() {
+          srFields.innerHTML = "";
+          var sp = null;
+          searchReg.forEach(function (x) { if (x.key === state.searchProvider) sp = x; });
+          if (!sp) return;
+          var slot = (searchCfg && searchCfg[sp.key]) || {};
+
+          if (sp.desc) {
+            var d = wbEl("div", "wb-api-desc");
+            d.textContent = sp.desc + (sp.docs ? "　申请：" + sp.docs : "");
+            d.style.cssText = "margin-bottom:6px;";
+            srFields.appendChild(d);
+          }
+
+          // 地址
+          if (sp.default_base_url) {
+            var bIn = wbEl("input", "wb-api-input");
+            bIn.type = "text";
+            bIn.value = slot.base_url || sp.default_base_url || "";
+            bIn.style.cssText = "width:100%;";
+            bIn.oninput = function () { searchDraft[sp.key].base_url = bIn.value; };
+            var bBox = wbEl("div", null);
+            bBox.style.cssText = "min-width:260px;";
+            bBox.appendChild(bIn);
+            srFields.appendChild(fieldRow("接口地址", sp.default_base_url, bBox));
+          }
+
+          // API Key（需要密钥的引擎才显示）
+          if (sp.supports_api_key) {
+            var kIn = wbEl("input", "wb-api-input");
+            kIn.type = "password";
+            kIn.placeholder = (slot.api_key && slot.api_key.has_value)
+              ? "已配置 · 留空表示不变，输入新值则覆盖"
+              : "尚未配置 · 请填写";
+            kIn.style.cssText = "width:100%;";
+            kIn.oninput = function () { searchDraft[sp.key].api_key = kIn.value; };
+            var kBox = wbEl("div", null);
+            kBox.style.cssText = "min-width:260px;";
+            kBox.appendChild(kIn);
+            var kState = wbEl("div", "wb-api-desc");
+            kState.textContent = (slot.api_key && slot.api_key.has_value)
+              ? "当前状态：已配置"
+              : "当前状态：未配置";
+            kBox.appendChild(kState);
+            // 「清除密钥」按钮：只在已配置时出现。点了之后本次保存会
+            // **显式提交空串**（后端据此清除），而不是「不提交 = 保留」。
+            if (slot.api_key && slot.api_key.has_value) {
+              var kClear = wbEl("button", "wb-api-btn", "清除已保存的密钥");
+              kClear.style.cssText = "margin-top:6px;";
+              kClear.onclick = function () {
+                if (!window.confirm("确定清除「" + sp.name + "」已保存的密钥？\n"
+                    + "清除后需重新填写才能使用联网搜索。")) return;
+                searchClearKey[sp.key] = true;
+                searchDraft[sp.key].api_key = "";
+                kIn.value = "";
+                kIn.placeholder = "尚未配置 · 请填写";
+                kState.textContent = "当前状态：将在保存后清除";
+                kClear.disabled = true;
+                kClear.textContent = "已标记清除（保存后生效）";
+              };
+              kBox.appendChild(kClear);
+            }
+            srFields.appendChild(fieldRow(
+              sp.api_key_label || "API Key", sp.api_key_hint || "", kBox));
+          }
+
+          // 附加字段（如 Google CSE 的 cx）
+          (sp.extra_fields || []).forEach(function (ef) {
+            var eIn = wbEl("input", "wb-api-input");
+            eIn.type = "text";
+            eIn.value = (slot.extra && slot.extra[ef.key]) || "";
+            eIn.style.cssText = "width:100%;";
+            eIn.oninput = function () { searchDraft[sp.key].extra[ef.key] = eIn.value; };
+            var eBox = wbEl("div", null);
+            eBox.style.cssText = "min-width:260px;";
+            eBox.appendChild(eIn);
+            srFields.appendChild(fieldRow(ef.label, ef.desc || "", eBox));
+          });
+        }
+        renderSearchFields();
+
+        // 「测试搜索引擎」按钮：填完密钥立刻验证，不必等保存。
+        // 走独立端点 /api/assistant/search-test（不落盘，测试无副作用）。
+        var srTest = wbEl("button", "wb-api-btn", "测试搜索引擎");
+        srTest.style.cssText = "margin-top:8px;";
+        srTest.onclick = function () {
+          srTest.disabled = true;
+          srTest.textContent = "测试中…";
+          var probeCfg = collect();
+          fetch("/api/assistant/search-test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: probeCfg })
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              srTest.disabled = false;
+              srTest.textContent = "测试搜索引擎";
+              if (d && d.ok) {
+                wbToast("连通正常（" + (d.durationMs || 0) + "ms）："
+                  + (d.title || "已拿到结果"), "ok");
+              } else {
+                wbToast("测试失败：" + ((d && d.error) || "未知原因"), "err");
+              }
+            })
+            .catch(function () {
+              srTest.disabled = false;
+              srTest.textContent = "测试搜索引擎";
+              wbToast("请求失败，请重试", "err");
+            });
+        };
+        card.appendChild(srTest);
+      }
     }
 
     function collect() {
@@ -4381,6 +4946,29 @@ COLLAPSE_SCRIPT = r"""
       if (prov.base_url_editable !== false) pv.base_url = state.base_url;
       if (prov.supports_api_key && state.api_key) pv.api_key = state.api_key;
       payload.providers[selKey] = pv;
+
+      // —— 联网搜索引擎（2026-10-16）——
+      // 语义与 LLM provider 的 secret 完全一致：
+      //   api_key 为空串 = 本次不提交该键（后端保留原值）
+      //   只有用户真输入了才带上 = 覆盖
+      //   要清除密钥需要显式传空串 —— 这里由 searchClearKey 集合标记
+      payload.searchProvider = state.searchProvider;
+      var spv = {};
+      Object.keys(searchDraft).forEach(function (k) {
+        var d = searchDraft[k] || {};
+        var out = { base_url: d.base_url };
+        if (d.api_key) out.api_key = d.api_key;
+        else if (searchClearKey[k]) out.api_key = "";   // 明确提交空串 = 清除
+        var ex = d.extra || {};
+        var exOut = {};
+        var hasExtra = false;
+        Object.keys(ex).forEach(function (ek) {
+          exOut[ek] = ex[ek]; hasExtra = true;
+        });
+        if (hasExtra) out.extra = exOut;
+        spv[k] = out;
+      });
+      payload.searchProviders = spv;
       return payload;
     }
 
@@ -4626,13 +5214,15 @@ COLLAPSE_SCRIPT = r"""
   // 「设置页模块顺序偶发随机、要刷新才正常」。
   // 这里在每次挂载后按这张表统一重排，结果与网络时序完全无关。
   // 顺序与 run() 的调用序列一致：API接入 → 巡检 → 助手 → 通知 → 账号 → 关于。
+  // 2026-10-16 用户要求：「账号资料应该放在顶部」。
+  // 原顺序是 外观→API→巡检→助手→通知→账号→关于，账号资料排在倒数第二，
+  // 每次要滚过半页才看到。现在提到最前。
   var WB_SETTINGS_ORDER = [
-    "settings-appearance",
+    "settings-profile",
     "settings-api-access",
     "settings-model-health",
     "settings-assistant",
     "settings-notify",
-    "settings-profile",
     "settings-about"
   ];
 
@@ -5750,6 +6340,8 @@ COLLAPSE_SCRIPT = r"""
     wbCiyuanRename();
     wbCheckAuth();
     initCollapse();
+    // 主题已挪到侧边栏左下角，设置页里那个官方主题项要藏掉
+    wbHideOfficialThemeRow();
     sanitizeMacUI();
     wbTransformNoBuddyBadges();
     enforceTitle();
@@ -7795,6 +8387,62 @@ async def assistant_models(request: Request):
         return {"ok": True, "models": ids, "count": len(ids)}
     except Exception as e:
         return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:100])}
+
+
+@app.post("/api/assistant/search-test")
+async def assistant_search_test(request: Request):
+    """搜索引擎连通性测试（2026-10-16 新增）。
+
+    用户诉求：「每个人可以在前端 UI 可以选择常见搜索引擎输入 API
+    配置自己的搜索引擎」—— 填完密钥总得有个地方能立刻验证对错，
+    否则只能等问答时才发现配错了。
+
+    语义：用当前填的配置真发一次检索（query 固定为一句无害的探针词），
+    返回能否拿到结果 + 首条标题，**不落盘**（测试不该有副作用）。
+    """
+    import time as _t
+    t0 = _t.time()
+    try:
+        payload = json.loads(await request.body() or b"{}")
+        cfg_in = payload.get("config") or {}
+        engine = str(cfg_in.get("searchProvider") or "").strip()
+        if not engine:
+            return {"ok": False, "error": "请先选择搜索引擎"}
+        spec = _assistant._SEARCH_BY_KEY.get(engine)
+        if not spec:
+            return {"ok": False, "error": "未知搜索引擎：%s" % engine}
+        slot = ((cfg_in.get("searchProviders") or {}).get(engine)) or {}
+        api_key = str(slot.get("api_key") or "").strip()
+        base = str(slot.get("base_url") or "").strip() or spec.get("default_base_url") or ""
+        extra = slot.get("extra") if isinstance(slot.get("extra"), dict) else {}
+        if spec.get("supports_api_key") and not api_key:
+            return {"ok": False, "error": "请先填写 %s 的 API Key"
+                    % (spec.get("api_key_label") or "API Key")}
+        if engine == "google_cse" and not str(extra.get("cx") or "").strip():
+            return {"ok": False, "error": "Google CSE 还需要填写「搜索引擎 ID（cx）」"}
+        cr = {"ok": True, "key": engine, "spec": spec,
+              "base_url": base.rstrip("/"), "api_key": api_key,
+              "extra": extra, "name": spec.get("name") or engine}
+        adapt = _assistant._SEARCH_ADAPTERS.get(engine)
+        if not adapt:
+            return {"ok": False, "error": "引擎 %s 尚未实现适配器" % engine}
+        d = adapt(cr, "AutoBuddy 网关", 3, "general")
+        if not d:
+            return {"ok": False,
+                    "error": "未返回可用结果：请检查接口地址与密钥是否正确",
+                    "durationMs": int((_t.time() - t0) * 1000)}
+        results = [r for r in (d.get("results") or []) if isinstance(r, dict)]
+        first = results[0] if results else None
+        if not first:
+            return {"ok": False, "error": "接口可达但没有搜索结果",
+                    "durationMs": int((_t.time() - t0) * 1000)}
+        return {"ok": True, "engine": spec.get("name") or engine,
+                "title": str(first.get("title") or "")[:80],
+                "url": str(first.get("url") or "")[:160],
+                "count": len(results),
+                "durationMs": int((_t.time() - t0) * 1000)}
+    except Exception as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:120])}
 
 
 # ---------------------------------------------------------------------------

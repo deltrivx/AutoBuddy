@@ -31,6 +31,53 @@
 
 ---
 
+## [v0.9.86] - 2026-10-16
+
+<!-- summary: 主界面重新设计为左右分离 + 背景磨砂样式（含移动端竖屏底部导航适配）、联网搜索引擎改为前端可自选配置（6 种引擎、密钥不再内置）、设置页账号资料置顶、主题入口挪到侧边栏左下角 -->
+
+### 新增
+
+- **联网搜索引擎可自选配置**（`gateway/assistant.py`）：新增 `SEARCH_PROVIDERS` 注册表，
+  内置 6 种常见引擎 —— Tavily / Serper（Google 结果）/ Bing Web Search /
+  Google Custom Search / 博查搜索 / SearXNG（自建）。
+  - 设置页「智能助手 → 联网搜索引擎」下拉选引擎，每个引擎的接口地址、
+    API Key、附加字段（Google CSE 的 `cx`）都在前端填写
+  - **密钥一律不进仓库**（开源项目硬约束）：只落在用户自己的
+    `assistant_config.json`，secret 语义与 LLM provider 完全一致
+    （GET 不回明文、不提交=保留、空串=清除、有值=覆盖）
+  - 每个引擎一个适配函数，请求/响应差异在适配层归一化，工具层不关心
+  - 新增 `POST /api/assistant/search-test`：填完密钥立刻验证连通性，不落盘
+  - 环境变量 `TAVILY_API_KEY` 仍被识别，仅为兼容老部署（新用户无需再碰环境变量）
+  - 新增 `_test_search_providers.py`（81 项断言），含「仓库内无真实密钥形态」扫描
+
+### 变更
+
+- **主界面重新设计**（`gateway/web_proxy.py` 的 `COLLAPSE_SCRIPT`）：
+  按用户提供的参考图改为**左右分离结构 + 背景磨砂**。
+  - 侧边栏 `backdrop-filter: blur(18px) saturate(140%)` + 半透明底色，
+    内容区可透出底色形成层次
+  - 主内容区卡片统一 16px 圆角、细边框、柔和阴影，与侧边栏明确分离
+  - 强调色沿用官方 `--primary`，不引入第二套配色
+  - **移动端竖屏（≤720px）侧边栏改为贴底横向导航条**：图标在上、文字在下，
+    横向可滚动；品牌区与折叠按钮隐藏；主题 dock 横排在导航右侧
+  - 极窄屏（≤380px）导航文字再缩一档，5 个入口放得下
+  - 磨砂层在深浅两种主题下都验证过（`color-mix` + 官方 CSS 变量）
+- **设置页「账号资料」置顶**：原顺序是 外观→API→巡检→助手→通知→账号→关于，
+  账号资料排倒数第二，每次要滚过半页。现在排第一。
+- **主题入口挪到侧边栏左下角**：新增三段式控件（系统 / 浅色 / 深色），
+  与官方 `appearance-theme` 读写同一份 `localStorage`（实测 React 不会回弹），
+  设置页里那个官方主题项随之隐藏，两处不会各说各话。
+- 版本号 `0.9.85` → `0.9.86`。
+
+### 修复
+
+- 移动端底部导航条被折叠态规则压成 68px 宽：`aside.wb-collapsed` 的
+  `width: 68px !important` 特异性（0,1,1）高于移动端 `aside` 规则（0,0,1），
+  导致竖屏侧边栏只剩 68px、导航被压到 9px。已补同等特异性的覆盖规则。
+- 移动端主题 dock 竖排被底部条高度挤成 ~15px 高（实测点不中）：改横排 + 固定 30×32。
+
+---
+
 ## [v0.9.85] - 2026-10-15
 
 <!-- summary: 修复设置页「智能助手」区块不显示、模块顺序偶发随机、侧边栏切换闪屏三个 UI 缺陷 -->
@@ -4454,7 +4501,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.85...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.86...HEAD
+[v0.9.86]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.85...v0.9.86
 [v0.9.85]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.84...v0.9.85
 [v0.9.84]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.83...v0.9.84
 [v0.9.83]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.82...v0.9.83
