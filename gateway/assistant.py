@@ -1342,6 +1342,81 @@ def _tool_notify_config(_args: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _tool_credit_rules(_args: Dict[str, Any]) -> str:
+    """任务积分规则表（回答「预计收益」类问题的依据）。
+
+    2026-10-15 用户要求建立：此前助手答不了「执行完后预计多少积分收益」，
+    因为数据源里 `total_credits` 恒为 null，没有规则可依。
+    本工具暴露 gateway/task_credits.py 里**实测得出**的规则。
+    """
+    try:
+        try:
+            from gateway import task_credits as _tc
+        except ImportError:
+            import task_credits as _tc  # type: ignore
+        return _tc.describe_rules()
+    except Exception as e:
+        return "积分规则读取失败：%s" % str(e)[:100]
+
+
+def _tool_estimate_credits(args: Dict[str, Any]) -> str:
+    """按连签天数与剩余任务估算积分收益（区分精确与估算）。
+
+    **回答必须区分口径**：exact 是可精确计算的，estimateRange 是历史统计。
+    不得把估算值说成确定值。
+    """
+    try:
+        try:
+            from gateway import task_credits as _tc
+        except ImportError:
+            import task_credits as _tc  # type: ignore
+    except Exception as e:
+        return "积分估算模块不可用：%s" % str(e)[:100]
+
+    a = args or {}
+    streak = a.get("streak_days")
+    tasks = a.get("remaining_tasks")
+    if isinstance(tasks, str):
+        tasks = [t.strip() for t in tasks.replace("，", ",").split(",") if t.strip()]
+    if not isinstance(tasks, list):
+        tasks = None
+
+    if streak is None and not tasks:
+        # 没给参数时，自动从任务进度里取连签与剩余任务
+        try:
+            d = _http_json(WEBUI_BASE + "/api/wb-daily/accounts", timeout=25.0) or {}
+            accs = d.get("accounts") or []
+            if accs:
+                # 取一个代表性账号的连签（通常所有账号节奏一致）
+                first = accs[0]
+                streak = first.get("streak") or first.get("streak_days")
+                tasks = first.get("rest") or None
+        except Exception:
+            pass
+
+    try:
+        r = _tc.estimate_pending(
+            int(streak) if streak not in (None, "") else None, tasks)
+    except (TypeError, ValueError):
+        r = _tc.estimate_pending(None, tasks)
+
+    lines = ["积分收益估算："]
+    if r.get("exactItems"):
+        lines.append("  【可精确算】")
+        for it in r["exactItems"]:
+            lines.append("    · %s" % it)
+        lines.append("    · 小计：%s 积分" % _fmt_num(r.get("exact")))
+    else:
+        lines.append("  【可精确算】暂无（未提供连签天数或已知领奖项）")
+    lo, hi = (r.get("estimateRange") or [0, 0])[:2]
+    lines.append("  【估算区间】%s ~ %s 积分/天" % (_fmt_num(lo), _fmt_num(hi)))
+    lines.append("    · %s" % r.get("estimateNote") or "")
+    lines.append("")
+    lines.append("注：签到与已知领奖项可精确计算；"
+                 "旅行/兑换/礼包等由服务端下发，无法预算，只能用历史区间估算。")
+    return "\n".join(lines)
+
+
 def _tool_web_search(args: Dict[str, Any]) -> str:
     """联网搜索（Tavily）。照 MoviePilot 的「联网搜索」项新增。
 
@@ -1470,6 +1545,11 @@ _TOOLS: Dict[str, tuple] = {
     "get_reqlog": (_tool_reqlog, "请求日志明细：最近请求的模型/账号/耗时/结果",
                    "limit: 返回条数，默认 10"),
     "get_notify_config": (_tool_notify_config, "通知配置详情：各渠道就绪状态与关键参数（密钥只显示是否已配）", "无参数"),
+    # ---- 积分规则表（2026-10-15 用户要求建立）----
+    "get_credit_rules": (_tool_credit_rules, "任务积分规则：签到/领奖的精确积分值与历史量级（回答「预计收益」用这个，勿用 get_credits 的参数）",
+                         "无参数"),
+    "estimate_credits": (_tool_estimate_credits, "积分收益估算：按连签天数与剩余任务算「还能拿多少」（区分精确与估算）",
+                          "streak_days: 连签天数；remaining_tasks: 未完成任务列表"),
 }
 
 
@@ -1535,6 +1615,11 @@ def _tool_registry() -> List[Dict[str, Any]]:
         "get_reqlog": {"type": "object", "properties": {
             "limit": {"type": "integer", "description": "返回条数，默认 10"}}},
         "get_notify_config": {"type": "object", "properties": {}},
+        "get_credit_rules": {"type": "object", "properties": {}},
+        "estimate_credits": {"type": "object", "properties": {
+            "streak_days": {"type": "integer", "description": "当前签到连签天数（未签到时可不传）"},
+            "remaining_tasks": {"type": "array", "items": {"type": "string"},
+                                "description": "未完成任务名/code 列表"}}},
     }
     enabled = set(_enabled_tool_names())
     return [{"type": "function", "function": {
