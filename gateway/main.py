@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.80"
+VERSION_DEFAULT = "0.9.81"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -548,6 +548,26 @@ def _collect_daily_report() -> tuple:
     return title, lines
 
 
+def _scene_err(r: Dict[str, Any]) -> str:
+    """从 send_scene 返回值里提取**可读**的失败原因。
+
+    `send_scene` 失败时顶层 `error` 常为 None（只有「总开关未开启」会填它），
+    真实错误在每个渠道的 `results.<channel>.error` 里。
+    原先直接打印顶层 error，日志就成了「日报发送失败: None」。
+    """
+    if not isinstance(r, dict):
+        return str(r)[:120]
+    errs = []
+    for ch, res in (r.get("results") or {}).items():
+        if isinstance(res, dict) and res.get("error"):
+            errs.append("%s: %s" % (ch, str(res["error"])[:200]))
+        elif isinstance(res, dict) and not res.get("ok"):
+            errs.append("%s: 未知失败" % ch)
+    if not errs:
+        return str(r.get("error") or "未知原因")[:200]
+    return " | ".join(errs)
+
+
 async def daily_report_loop() -> None:
     """每天 00:05 推送一次日报（幂等，重启不重发）。"""
     print("[report] daily report loop started")
@@ -563,7 +583,9 @@ async def daily_report_loop() -> None:
                     _mark_report_sent(today)
                     print("[report] 日报已发送: %s" % ",".join(r.get("sent_to") or []))
                 elif "总开关未开启" not in str(r.get("error") or ""):
-                    print("[report] 日报发送失败: %s" % r.get("error"))
+                    # 真实错误在 results 里（渠道级），顶层 error 往往是 None ——
+                    # 2026-10-15 用户反馈「日志只写日报发送失败: None」，等于没写。
+                    print("[report] 日报发送失败: %s" % _scene_err(r))
                 else:
                     # 总开关没开：不标记 sent，等开启后下次循环补发
                     pass

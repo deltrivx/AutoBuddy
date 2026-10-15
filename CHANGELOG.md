@@ -31,6 +31,41 @@
 
 ---
 
+## [v0.9.81] - 2026-10-15
+
+<!-- summary: 补齐企微渠道级代理（对齐MoviePilot的WECHAT_PROXY）+ 推送失败可读日志 + 助手人格化回复 -->
+
+### 新增
+
+- **企微渠道级代理**（对齐 MoviePilot 的 `WECHAT_PROXY`）：研究 MoviePilot
+  `app/modules/wechat/wechat.py` 后发现其**每个渠道都有独立代理配置**，企微所有
+  API（gettoken / message/send / menu/create）都走该代理；而本实现此前只给
+  Telegram 做了，企微漏了。本次补齐并覆盖全部调用点：`CHANNELS` 新增 `proxy`
+  字段、`_send_wecom()`、`_wecom_token()`、`create_wecom_menus()`。
+  实测三条出口（容器直连 112.194.50.154、内网代理 18.140.235.192、VPS
+  107.172.90.165）均被企微 `errcode=60020` 拒绝，故代理为**通道**、
+  IP 白名单是**准入**，需二者配合。
+
+### 修复
+
+- **日报失败日志只打 `None`**：`send_scene()` 失败时顶层 `error` 常为 None
+  （只有「总开关未开启」会填），真实错误在 `results.<channel>.error` 里。
+  新增 `main._scene_err()` 提取可读原因。
+- **助手回复机械**：`_looks_like_capability_question()` 命中后恒返回写死的
+  帮助清单。改为**模型优先**生成自我介绍，失败才回落本地清单；企微场景走
+  延后推送（5 秒硬限制仍在，不阻塞）。`SYSTEM_PROMPT` 加入人格设定：
+  身份（智能管家，不是命令解释器）、口语化、**明确禁止罗列功能清单**并给出
+  期望回复示例、高危操作边界。
+- **推送失败静默**：`_push_to_channel()` 与延后 worker 现在对三种失败
+  （渠道错误 / 未知渠道 / 异常）都留痕，并附 60020 的可操作提示。
+
+### 测试
+
+- 新增 `_test_notify_diag.py`（**41** 项）：日报日志 surface 真实错误、
+  推送失败留痕、60020 提示含实际 IP 与修复动作、人格化契约、行为验证。
+- 同步更新 `_test_notify.py`：企微字段集合加入 `proxy`。
+- 全量 46 个测试文件全绿。
+
 ## [v0.9.80] - 2026-10-15
 
 <!-- summary: 修正统计页回归测试——兼容「线上已被替换」状态（修复生效后旧文案不存在，规则命中0属预期） -->
@@ -4265,7 +4300,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.80...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.81...HEAD
+[v0.9.81]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.80...v0.9.81
 [v0.9.80]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.79...v0.9.80
 [v0.9.79]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.78...v0.9.79
 [v0.9.78]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.77...v0.9.78

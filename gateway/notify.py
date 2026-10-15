@@ -57,6 +57,14 @@ CHANNELS: List[Dict[str, Any]] = [
              "placeholder": "43 位加密密钥（企微后台生成）"},
             {"key": "cb_url", "label": "回调 URL", "secret": False,
              "placeholder": "公网可达地址，如 http://<VPS>:10083/api/notify/wecom/callback/<随机段>"},
+            # 渠道级代理（对齐 MoviePilot 的 WECHAT_PROXY）：企微主动推送
+            # （日报/任务通知/助手延后答复）走这里指定的出口。
+            # 2026-10-15 实测：容器直连出口是 NAT 池（112.194.50.154/.151/.1），
+            # VPS 固定 IP 107.172.90.165 与内网代理 18.140.235.192 都不在企微
+            # 可信 IP 名单里，全部 errcode=60020。配好后台可信 IP 后，
+            # 这里填对应代理即可，与 Telegram 的 proxy 语义一致。
+            {"key": "proxy", "label": "代理（仅本通道）", "secret": False,
+             "placeholder": "留空=直连；如 http://192.168.31.10:7890"},
         ],
     },
     {
@@ -242,10 +250,16 @@ def _send_wecom(ch_cfg: Dict[str, Any], text: str) -> Dict[str, Any]:
         agentid_num = int(agentid)
     except ValueError:
         return {"ok": False, "error": "AgentId 必须是纯数字（企微后台应用页的 AgentId）"}
+    # 渠道级代理（对齐 MoviePilot 的 WECHAT_PROXY）：只作用于本通道的通知
+    # 推送，不写全局、不影响网关出网。留空 = 直连。
+    proxy = str(ch_cfg.get("proxy") or "").strip()
     try:
         import httpx
         base = "https://qyapi.weixin.qq.com"
-        with httpx.Client(timeout=20.0, verify=False) as client:
+        kwargs = {"timeout": 20.0, "verify": False}
+        if proxy:
+            kwargs["proxy"] = proxy
+        with httpx.Client(**kwargs) as client:
             tr = client.get(base + "/cgi-bin/gettoken",
                             params={"corpid": corpid, "corpsecret": secret})
             td = tr.json() if tr.status_code == 200 else {}
@@ -786,6 +800,20 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None,
     #       **先回执 + 后台推送**（allow_defer），否则回复被丢弃。
     if _looks_like_question(text):
         if _looks_like_capability_question(text, low):
+            # 能力问句优先让**模型**回答（智能体感：会说「我是…我能…」），
+            # 失败才回落本地清单。
+            # 2026-10-15 用户反馈「回复比较机械，不是那种智能助手的智能体回复，
+            # 感觉都是写死的」—— 根因就是这里恒返回写死文案。
+            #
+            # 注意：企微 5 秒硬限制仍在。因此**不阻塞**：
+            #   · allow_defer=True（企微回调）→ 走延后推送，先回「我想想」；
+            #   · allow_defer=False（本地/Telegram）→ 同步等，最多 CAP_TIMEOUT。
+            if _assistant_available():
+                if allow_defer and _defer_assistant_reply(text, session_id):
+                    return "🤔 让我整理一下能做什么，稍后发你～"
+                r = _assistant_fallback(text, session_id)
+                if r:
+                    return r
             return _cmd_assistant_help()
         if allow_defer and _assistant_available():
             # 先回执，后台算完主动推送（企微 5 秒硬限制的解法）
@@ -936,17 +964,50 @@ def _assistant_available() -> bool:
 
 
 def _push_to_channel(channel: str, text: str) -> bool:
-    """把文本推送到指定渠道（绕过通知总开关，但要求渠道配置就绪）。"""
+    """把文本推送到指定渠道（绕过通知总开关，但要求渠道配置就绪）。
+
+    失败**必须留痕**：2026-10-15 用户反馈「只回『正在查询』然后没下文」——
+    根因是企微推送被 errcode=60020 拒掉，而 worker 把异常吞了、日志一个字
+    都没有，用户侧完全看不出是「算出来了但发不出去」。
+    """
     try:
         cfg = _load()
         ch_cfg = (cfg.get("channels", {}).get(channel) or {})
         sender = _SENDERS.get(channel)
         if not sender:
+            print("[assistant] 推送失败：未知渠道 %s" % channel)
             return False
         r = sender(ch_cfg, text)
-        return bool(r.get("ok"))
-    except Exception:
+        if not r.get("ok"):
+            err = str(r.get("error") or "未知原因")
+            print("[assistant] 助手答复推送失败（%s）：%s" % (channel, err[:200]))
+            hint = _wecom_ip_hint(err)
+            if hint:
+                print("[assistant] %s" % hint)
+            return False
+        return True
+    except Exception as e:
+        print("[assistant] 推送异常（%s）：%s: %s" % (channel, type(e).__name__, str(e)[:150]))
         return False
+
+
+def _wecom_ip_hint(err: str) -> str:
+    """企微 errcode=60020（可信 IP 不符）时给出**可操作**的修复指引。
+
+    2026-10-15 实测：容器出网 IP 是 NAT 池（112.194.50.154 / .151 / .1），
+    而企微后台配的可信 IP 还是旧的 112.194.50.104 —— ISP 换 IP 后所有主动
+    推送（日报/任务通知/助手延后回复）全部被 60020 拒掉。
+    日志里要把「该加哪个 IP」说清楚，否则用户看到 errcode 也不知道干嘛。
+    """
+    if "60020" not in (err or ""):
+        return ""
+    import re as _re
+    ips = _re.findall(r"from ip: (\d+\.\d+\.\d+\.\d+)", err)
+    found = "、".join(sorted(set(ips))) if ips else "（未在报错里取到，见下方自查命令）"
+    return ("【需要人工处理】企微可信 IP 不含当前出口 IP。"
+            "请到企微管理后台 → 应用管理 → 可信 IP，添加：%s。"
+            "自查命令：curl -s https://api.ipify.org（在 Unraid 宿主上执行）"
+            % found)
 
 
 def _defer_assistant_reply(text: str, session_id: str,
@@ -963,8 +1024,13 @@ def _defer_assistant_reply(text: str, session_id: str,
             reply = _assistant_fallback(text, session_id)
             if reply:
                 _push_to_channel(channel, reply)
-        except Exception:
-            pass
+            else:
+                # 助手没给出答复（模型不可用/超时）也要留痕，
+                # 否则用户只看到「正在查询」然后永远没下文。
+                print("[assistant] 延后问答未得到答复（session=%s, q=%s）"
+                      % (session_id, str(text)[:40]))
+        except Exception as e:
+            print("[assistant] 延后问答异常：%s: %s" % (type(e).__name__, str(e)[:150]))
         finally:
             global _DEFER_BUSY
             with _DEFER_LOCK:
@@ -1238,9 +1304,14 @@ def _wecom_token(ch_cfg: Dict[str, Any]) -> tuple:
         agentid_num = int(agentid)
     except ValueError:
         return None, "AgentId 必须是纯数字"
+    # 与 _send_wecom 一致：渠道级代理（留空 = 直连）。
+    proxy = str(ch_cfg.get("proxy") or "").strip()
     try:
         import httpx
-        with httpx.Client(timeout=20.0, verify=False) as client:
+        kwargs = {"timeout": 20.0, "verify": False}
+        if proxy:
+            kwargs["proxy"] = proxy
+        with httpx.Client(**kwargs) as client:
             r = client.get("https://qyapi.weixin.qq.com/cgi-bin/gettoken",
                            params={"corpid": corpid, "corpsecret": secret})
             d = r.json() if r.status_code == 200 else {}
@@ -1260,12 +1331,18 @@ def create_wecom_menus(channel_cfg: Optional[Dict[str, Any]] = None) -> Dict[str
     if err:
         return {"ok": False, "error": err}
     token, agentid = got
+    # 与 _send_wecom 一致：菜单注册也走渠道级代理（企微对来源 IP 有限制时，
+    # 不配代理会连菜单都注册不上）。留空 = 直连。
+    proxy = str(cfg.get("proxy") or "").strip()
     try:
         import httpx
+        kwargs = {"timeout": 20.0, "verify": False}
+        if proxy:
+            kwargs["proxy"] = proxy
         r = httpx.post(
             "https://qyapi.weixin.qq.com/cgi-bin/menu/create",
             params={"access_token": token, "agentid": agentid},
-            json=wecom_menu_spec(), timeout=20.0, verify=False)
+            json=wecom_menu_spec(), **kwargs)
         d = r.json() if r.status_code == 200 else {}
         if (d or {}).get("errcode") == 0:
             return {"ok": True, "buttons": len(wecom_menu_spec()["button"])}
