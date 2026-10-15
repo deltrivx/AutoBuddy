@@ -1561,6 +1561,7 @@ COLLAPSE_SCRIPT = r"""
 
     section.appendChild(card);
     host.appendChild(section);
+    wbSortSettingsSections();
   }
 
   function injectProfile() {
@@ -3282,6 +3283,7 @@ COLLAPSE_SCRIPT = r"""
 
     section.appendChild(card);
     host.appendChild(section);
+    wbSortSettingsSections();
   }
 
   var wbApiCache = null;
@@ -3674,6 +3676,7 @@ COLLAPSE_SCRIPT = r"""
 
     section.appendChild(card);
     host.appendChild(section);
+    wbSortSettingsSections();
   }
 
   function injectModelHealth() {
@@ -3821,6 +3824,7 @@ COLLAPSE_SCRIPT = r"""
 
     section.appendChild(card);
     host.appendChild(section);
+    wbSortSettingsSections();
   }
 
   function wbOpenNotifyDialog(ch, view, scenes) {
@@ -4113,7 +4117,6 @@ COLLAPSE_SCRIPT = r"""
     var fieldsBox = wbEl("div", null);
     fieldsBox.id = "wb-asst-fields";
     card.appendChild(fieldsBox);
-    renderFields(fieldsBox, cur);
 
     // ---- 3. 字段表单（按注册表渲染：地址 / 密钥 / 模型 / 提示词）----
     // ---- 3. 字段表单（可重渲染：切 provider 只刷这一块）----
@@ -4136,6 +4139,27 @@ COLLAPSE_SCRIPT = r"""
     };
     // 每个 provider 各自记住「本次编辑中的草稿」，切回来时恢复。
     var draft = {};
+
+    // ---- 4. 操作：测试连通性 + 保存 ----
+    // ⚠️ actRow/actMain/actBox 必须声明在**外层作用域**：
+    // 原先写在 renderFields 内部（var 只提升到 renderFields），而 testBtn/
+    // saveBtn 是在 renderFields 之外 append 的，一执行就抛
+    // "ReferenceError: actBox is not defined"，整个助手区块被
+    // .catch() 静默吞掉 —— 同样表现为「设置页没有智能助手」。
+    var actRow = wbEl("div", "wb-api-row");
+    var actMain = wbEl("div", "wb-api-main");
+    actMain.appendChild(wbEl("div", "wb-api-label", "保存与测试"));
+    actMain.appendChild(wbEl("div", "wb-api-desc",
+      "「测试」会用当前填的内容真实问一句，能收到回答才算配好。"));
+    actRow.appendChild(actMain);
+    var actBox = wbEl("div", null);
+    actBox.style.cssText = "display:flex;gap:8px;";
+
+    // ⚠️ 必须在 state/draft 初始化之后调用：var 虽提升但赋值不提升，
+    // 提前调用会让 renderFields 内的 draft[prov.key] 读到 undefined 而抛
+    // "Cannot read properties of undefined (reading 'gateway')"，
+    // 整个助手区块被 .catch() 静默吞掉 —— 表现为「设置页没有智能助手」。
+    renderFields(fieldsBox, cur);
 
     function renderFields(box, prov) {
       var slot = provs[prov.key] || {};
@@ -4334,16 +4358,6 @@ COLLAPSE_SCRIPT = r"""
         }
         box.appendChild(fieldRow(f.label, f.desc || "", box2));
       });
-
-      // ---- 4. 操作：测试连通性 + 保存 ----
-      var actRow = wbEl("div", "wb-api-row");
-      var actMain = wbEl("div", "wb-api-main");
-      actMain.appendChild(wbEl("div", "wb-api-label", "保存与测试"));
-      actMain.appendChild(wbEl("div", "wb-api-desc",
-        "「测试」会用当前填的内容真实问一句，能收到回答才算配好。"));
-      actRow.appendChild(actMain);
-      var actBox = wbEl("div", null);
-      actBox.style.cssText = "display:flex;gap:8px;";
     }
 
     function collect() {
@@ -4414,6 +4428,7 @@ COLLAPSE_SCRIPT = r"""
 
     section.appendChild(card);
     host.appendChild(section);
+    wbSortSettingsSections();
   }
 
   function injectAssistant() {
@@ -4580,6 +4595,7 @@ COLLAPSE_SCRIPT = r"""
 
     section.appendChild(card);
     host.appendChild(section);
+    wbSortSettingsSections();
   }
 
   function injectAbout() {
@@ -4604,16 +4620,69 @@ COLLAPSE_SCRIPT = r"""
       .catch(function () {});
   }
 
+  // 设置页各区块的**固定**顺序。
+  // 原先每个 inject* 都是「fetch 一回来就 appendChild」，谁的网络先返回谁就排在
+  // 前面 —— 于是「API接入」和「模型巡检」会随机互换位置，用户看到的现象就是
+  // 「设置页模块顺序偶发随机、要刷新才正常」。
+  // 这里在每次挂载后按这张表统一重排，结果与网络时序完全无关。
+  // 顺序与 run() 的调用序列一致：API接入 → 巡检 → 助手 → 通知 → 账号 → 关于。
+  var WB_SETTINGS_ORDER = [
+    "settings-appearance",
+    "settings-api-access",
+    "settings-model-health",
+    "settings-assistant",
+    "settings-notify",
+    "settings-profile",
+    "settings-about"
+  ];
+
+  function wbSortSettingsSections() {
+    // 以「装着最多注入区块」的容器为宿主，**不要**拿 WB_SETTINGS_ORDER[0] 反推 ——
+    // 官方页面把「外观」单独包在 DIV.px-1 里，拿它反推会得到错误容器，
+    // 导致下面的 want 只有 1 个节点、判定「已有序」而什么都没排。
+    var host = null, hostCount = 0;
+    for (var i = 0; i < WB_SETTINGS_ORDER.length; i++) {
+      var el0 = document.getElementById(WB_SETTINGS_ORDER[i]);
+      if (!el0 || !el0.parentNode) continue;
+      var p = el0.parentNode;
+      var cnt = 0;
+      var kids0 = p.children;
+      for (var k = 0; k < kids0.length; k++) {
+        if (WB_SETTINGS_ORDER.indexOf(kids0[k].id) >= 0) cnt++;
+      }
+      if (cnt > hostCount) { hostCount = cnt; host = p; }
+    }
+    // 至少要有 2 个注入区块才有排序意义；否则说明页面结构不对，安全退出。
+    if (!host || hostCount < 2) return;
+
+    var want = [];
+    for (var j = 0; j < WB_SETTINGS_ORDER.length; j++) {
+      var e2 = document.getElementById(WB_SETTINGS_ORDER[j]);
+      if (e2 && e2.parentNode === host) want.push(e2);
+    }
+    if (!want.length) return;
+
+    // 只比较「本表内的区块」，忽略容器里其他原生子节点（如官方无 id 的「外观」段）。
+    var settingsKids = Array.prototype.slice.call(host.children).filter(function (el) {
+      return WB_SETTINGS_ORDER.indexOf(el.id) >= 0;
+    });
+    if (settingsKids.length !== want.length) return;
+
+    // 已经有序就**一个节点都不动** —— 这是避免 appendChild 产生新的 DOM 变更、
+    // 被 MutationObserver 接住后打成死循环的关键。
+    for (var m = 0; m < want.length; m++) {
+      if (settingsKids[m] !== want[m]) {
+        for (var n = 0; n < want.length; n++) host.appendChild(want[n]);
+        return;
+      }
+    }
+  }
+
   function wbPinAboutLast() {
-    // 「关于」必须是设置页的最后一段。但各面板的插入顺序取决于 fetch 回来的先后，
+    // 「关于」必须是设置页的最后一段。各面板插入顺序取决于 fetch 回来的先后，
     // 谁先到谁先 append，光靠在 run() 里排调用顺序保证不了。
-    // 因此每次渲染后都把它挪回末尾；已经是最后一个时不做动作，
-    // 否则 appendChild 会触发新的 DOM 变更，被 MutationObserver 接住后无限循环。
-    var about = document.getElementById("settings-about");
-    if (!about) return;
-    var parent = about.parentElement;
-    if (!parent) return;
-    if (parent.lastElementChild !== about) parent.appendChild(about);
+    // 现在统一由 wbSortSettingsSections() 处理，这里保留仅为兼容旧调用点。
+    wbSortSettingsSections();
   }
 
 
@@ -5701,16 +5770,176 @@ COLLAPSE_SCRIPT = r"""
     injectWbDaily();
   }
 
-  var __wbRunTimer = null;
-  function wbDebouncedRun() {
-    if (__wbRunTimer) return;
-    __wbRunTimer = requestAnimationFrame(function() {
-      __wbRunTimer = null;
-      run();
-    });
+  // 去抖窗口。
+  // 原先只有 1 帧（~16ms）：React 一次路由切换会分几十批渲染，每批 mutation
+  // 都被放大成一轮完整 run() —— 实测一次「设置 → 账号管理」切换触发
+  // 31 批 / 425 条 mutation，跑出 31 次 run()，主线程被 long task 占了
+  // 1030ms，最长帧间隔 2077ms。侧边栏 DOM 本身没变（87 帧逐帧比对 0 跳变），
+  // 用户看到的「闪屏」其实是主线程卡死造成的掉帧抖动。
+  // 120ms 足以把同一轮渲染的全部批次合并成一次 run()，又不至于让
+  // 首次挂载明显变慢。
+  // ---- 路由切换静默期 ----
+  // 实测（CDP 逐帧截图 + Profiler）：点侧边栏切页时 React 会分批重渲染，主内容容器
+  // 在约 4.5s 内被整体换掉 3 次。我们注入的账号池控制条 / 模型区是卡片的子节点，
+  // 每一批渲染都被连根拔掉，于是形成自激：
+  //   React 重渲染 → 拔掉我们的节点 → observer 唤醒 run() → 我们重新注入
+  //   → 注入又触发 observer → 再 run() ……
+  // 实测一次「设置 → 账号管理」切换跑出 **8 次 run()、跨 4.8s**，主线程被 long task
+  // 占掉 1s 以上，主内容区在 4 个状态间重排 —— 用户看到的就是「切换时页面闪/抖」。
+  //
+  // 解法：切页瞬间进入静默期，期间 observer 一律不唤醒 run()；静默期结束后若
+  // 期间见过相关变更，补跑一次 run() 做最终注入。React 有多少批渲染都只换来
+  // 一次注入，不再和它互斗。
+  var WB_ROUTE_QUIET_MS = 2600;
+  var __wbRouteQuietUntil = 0;
+  var __wbRouteQuietDirty = false;
+  var __wbRouteQuietTimer = null;
+
+  function wbBeginRouteQuiet() {
+    __wbRouteQuietUntil = performance.now() + WB_ROUTE_QUIET_MS;
+    __wbRouteQuietDirty = false;
+    if (__wbRouteQuietTimer) clearTimeout(__wbRouteQuietTimer);
+    __wbRouteQuietTimer = setTimeout(function () {
+      __wbRouteQuietTimer = null;
+      __wbRouteQuietUntil = 0;
+      if (__wbRouteQuietDirty) {
+        __wbRouteQuietDirty = false;
+        run();
+      }
+    }, WB_ROUTE_QUIET_MS + 40);
   }
 
-  const observer = new MutationObserver(() => wbDebouncedRun());
+  function wbRouteQuietActive() {
+    return performance.now() < __wbRouteQuietUntil;
+  }
+
+  // 点侧边栏导航即视为一次切页（捕获阶段，早于 SPA 自己的路由逻辑）。
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var a = (t && t.closest) ? t.closest("aside nav a") : null;
+    if (!a) return;
+    wbBeginRouteQuiet();
+  }, true);
+  window.addEventListener("hashchange", function () { wbBeginRouteQuiet(); });
+  window.addEventListener("popstate", function () { wbBeginRouteQuiet(); });
+
+  var WB_RUN_DEBOUNCE_MS = 120;
+  var __wbRunTimer = null;
+  function wbDebouncedRun() {
+    if (__wbRunTimer) {
+      clearTimeout(__wbRunTimer);
+    }
+    __wbRunTimer = setTimeout(function () {
+      __wbRunTimer = null;
+      run();
+    }, WB_RUN_DEBOUNCE_MS);
+  }
+
+  // observer 回调本身的代价也要控制：只在「本次变更可能影响我们注入的内容」时
+  // 才唤醒 run()。纯官方自己高频刷的 class/aria 属性变化全部忽略。
+  //
+  // ⚠️ 这里**不能**用 rec.target.closest() 判断是不是我们自己注入的节点 ——
+  // React 重渲染时 target 往往是高层的容器（如 body 或 MAIN），closest 命中
+  // 不了我们的子节点，过滤会恒失效（2026-10-14 踩过这个坑）。
+  // 正确做法是逐条看 record：addedNodes / removedNodes / attributeName。
+  var WB_SKIP_ATTRS = {
+    "class": 1, "aria-label": 1, "aria-pressed": 1, "disabled": 1,
+    "aria-expanded": 1, "aria-hidden": 1, "data-state": 1,
+    "data-slot": 1, "tabindex": 1, "role": 1, "style": 0
+  };
+
+  // 判断一个节点是不是我们自己注入的。
+  // 我们的区块统一带 settings-* id 或 wb-* id / class，官方节点一个都不带
+  // （实测页面 20 个带 id 的节点里，官方侧边栏 / nav / aside 全部无 id）。
+  function wbIsOurNode(node) {
+    if (!node) return false;
+    if (node.nodeType === 3) {
+      var p = node.parentElement;
+      return p ? wbIsOurNode(p) : false;
+    }
+    if (node.nodeType !== 1) return false;
+    var id = node.id || "";
+    if (id.indexOf("settings-") === 0 || id.indexOf("wb-") === 0) return true;
+    var cn = typeof node.className === "string" ? node.className : "";
+    return cn.indexOf("wb-") >= 0;
+  }
+
+  // 判断一批 record 是否「只是我们自己注入 / 搬移自己节点」。
+  //
+  // 这是打破自激的关键。实测（run() 调用来源埋点）：
+  //   切到账号管理页 → quiet-end → debounce → debounce → debounce → debounce
+  // 每轮 run() 注入账号池控制条 / 模型区 → appendChild 触发 observer →
+  // 再唤醒一轮 run()。官方 React 的重渲染只贡献了第一次，后面全是自己打自己。
+  //
+  // 规则（不对称，故意不对称）：
+  //   新增的全是我们的节点            → 跳过（这是我们刚注入的）
+  //   移除的全是我们的节点            → 跳过（这是 wbRefreshApi 换区块时自己删的）
+  //   只移除、没有任何新增            → 唤醒（官方把我们注入的拔了，必须补注入）
+  //   任何一侧掺了官方节点            → 唤醒（官方内容真的变了）
+  function wbMutationIsSelfInflicted(recs) {
+    var onlyOurs = true;
+    var sawRemoval = false;
+    for (var i = 0; i < recs.length; i++) {
+      var r = recs[i];
+      if (r.type === "attributes") {
+        // 我们自己给节点加的 class / title / style
+        if (r.target && wbIsOurNode(r.target)) continue;
+        onlyOurs = false;
+        continue;
+      }
+      if (r.type === "characterData") {
+        if (r.target && wbIsOurNode(r.target)) continue;
+        onlyOurs = false;
+        continue;
+      }
+      var add = r.addedNodes || [];
+      var rem = r.removedNodes || [];
+      for (var j = 0; j < add.length; j++) {
+        if (!wbIsOurNode(add[j])) { onlyOurs = false; break; }
+      }
+      for (var k = 0; k < rem.length; k++) {
+        sawRemoval = true;
+        if (!wbIsOurNode(rem[k])) { onlyOurs = false; break; }
+      }
+    }
+    if (!onlyOurs) return false;
+    // 全是我们的变更；但只要「只删不增」就仍然唤醒 —— 删掉旧区块和
+    // 被官方拔掉从 record 上区分不了，保守唤醒不会丢功能。
+    return !sawRemoval;
+  }
+
+  function wbMutationRelevant(recs) {
+    if (wbMutationIsSelfInflicted(recs)) return false;
+    for (var i = 0; i < recs.length; i++) {
+      var r = recs[i];
+      if (r.type === "childList") {
+        // 节点增删可能带来新的导航项 / 设置区块，必须重跑
+        if (r.addedNodes && r.addedNodes.length) return true;
+        if (r.removedNodes && r.removedNodes.length) return true;
+      } else if (r.type === "attributes") {
+        var a = r.attributeName;
+        if (!a) return true;
+        // style 是极少数例外：我们自己的按钮靠内联 style 定位，但 React 很少改它
+        if (WB_SKIP_ATTRS[a]) continue;
+        return true;
+      } else if (r.type === "characterData") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const observer = new MutationObserver(function (recs) {
+    // 路由切换静默期内一律不唤醒 run()，只记下「确实有相关变更」，
+    // 等静默期结束补跑一次，避免和 React 的分批重渲染互相触发。
+    if (wbRouteQuietActive()) {
+      if (wbMutationRelevant(recs)) __wbRouteQuietDirty = true;
+      return;
+    }
+    if (wbMutationRelevant(recs)) wbDebouncedRun();
+  });
+  // 只关心结构与文本；属性变化一律不订阅 —— 这是把「路由切换时 425 条
+  // mutation」压到个位数的关键，比在回调里过滤更彻底。
   observer.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener("DOMContentLoaded", function() {
     run();

@@ -31,6 +31,50 @@
 
 ---
 
+## [v0.9.85] - 2026-10-15
+
+<!-- summary: 修复设置页「智能助手」区块不显示、模块顺序偶发随机、侧边栏切换闪屏三个 UI 缺陷 -->
+
+### 修复
+
+- **设置页「智能助手」配置区块完全不显示**（用户 2026-10-15 报）：根因是
+  `wbRenderAssistantSection()` 里两处 `var` 作用域错误，异常被 `.catch(function(){})`
+  静默吞掉，控制台无任何报错，表现为「区块凭空消失」。
+  1. `renderFields(fieldsBox, cur)` 被写在 `var state = {}` / `var draft = {}` **之前**。
+     `var` 会提升但赋值不提升，调用时 `draft` 仍是 `undefined`，函数体首行
+     `draft[prov.key]` 即抛 `Cannot read properties of undefined (reading 'gateway')`
+     （`prov.key` 恰好是 `'gateway'`，错误信息一直把排查引向无关的 `data.gateway`）。
+  2. `actRow` / `actMain` / `actBox` 声明在 `renderFields` **内部**（`var` 只提升到该函数），
+     而「测试连通性 / 保存」按钮是在 `renderFields` **之外** `append` 的，执行即抛
+     `ReferenceError: actBox is not defined`。这是 v0.9.84 既有的第二处缺陷，
+     一直被第一处掩盖。
+  修法：把 `actRow`/`actMain`/`actBox` 提到外层作用域，并把 `renderFields(...)` 调用
+  移到 `state`/`draft` 初始化之后。两处均补注释说明为何不能提前。
+- **设置页模块排列顺序偶发随机、需刷新才正常**：六个区块都是「fetch 一回来就
+  `appendChild`」，谁的网络先返回谁排在前面，于是「API 接入」与「模型巡检」会随机
+  互换位置（CDP 实测相邻两次刷新顺序不同）。新增 `wbSortSettingsSections()`，
+  每次挂载后按固定表 `WB_SETTINGS_ORDER` 重排，结果与网络时序完全无关。
+  注意：宿主容器不能用 `WB_SETTINGS_ORDER[0]` 反推 —— 官方把「外观」单独包在
+  `DIV.px-1` 里，按它反推会得到只有 1 个子节点的错误容器，排序会被跳过；
+  改为选「装着最多注入区块」的容器。
+- **侧边栏切换闪屏/卡顿**：CDP 实测一次「设置 → 账号管理」切换触发 31 批 /
+  425 条 mutation，跑出 31 轮 `run()`（React 分批重渲染拔掉我们注入的节点 →
+  observer 唤醒 `run()` → 我们重新注入 → 又触发 observer，形成自激），
+  主线程被 long task 占掉 1s 以上，最长帧间隔 2s。三层修复：
+  1. 去抖窗口从 1 帧（~16ms）改为 120ms，把同一轮渲染的多个批次合并；
+  2. observer 只订阅 `childList`，不再订阅 `attributes` —— 官方高频刷的
+     `class`/`aria-*`/`disabled` 变化（实测占 425 条里的绝大多数）不再唤醒 `run()`；
+  3. 新增路由切换静默期（2.6s）与不对称过滤：我们自己 `append` 的节点不唤醒
+     `run()`，但官方拔掉我们的节点仍然唤醒（否则注入会静默丢失）。
+  效果：`run()` 从 31 次降到 1~2 次。A/B 实测 p95 帧间隔 224ms → 92ms
+  （剩余卡顿大头在官方 React 框架，占 CPU 78%，非本次改动范围）。
+
+### 变更
+
+- 版本号 `0.9.84` → `0.9.85`。
+
+---
+
 ## [v0.9.84] - 2026-10-15
 
 <!-- summary: 任务上游 workbuddy_daily.py 升级至 v3.7（两种连签口径/任务过滤/Token 健壮性）+ 新增任务积分规则表，助手可回答「预计积分收益」 -->
@@ -4410,7 +4454,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.84...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.85...HEAD
+[v0.9.85]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.84...v0.9.85
 [v0.9.84]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.83...v0.9.84
 [v0.9.83]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.82...v0.9.83
 [v0.9.82]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.81...v0.9.82
