@@ -82,6 +82,19 @@ CHANNELS: List[Dict[str, Any]] = [
              "placeholder": "智能机器人的 secret"},
             {"key": "bot_chat_id", "label": "默认会话 ID", "secret": False,
              "placeholder": "留空 = 发给最近互动过的用户"},
+            # 代理（对齐 MoviePilot 的 `WECHAT_PROXY`）：**URL 重写**，不是 HTTP 代理。
+            # 远程代理会把 base_url 整体换成该值（urljoin），原样透传到企微 API。
+            # 家里双 WAN 出口 IP 在 NAT 池漂移，进不了企微「可信 IP」；
+            # 填 VPS 固定 IP（107.172.90.165:8484，已在名单内）即走 VPS 出口。
+            # 留空 = 直连 `https://qyapi.weixin.qq.com`（与 MP 默认值同义）。
+            {"key": "proxy", "label": "代理地址（URL 重写）", "secret": False,
+             "placeholder": "留空=直连；如 http://107.172.90.165:8484"},
+            # 模式开关（对齐 MoviePilot 的 `WECHAT_MODE`）：
+            # app = HTTP 应用消息（需可信 IP / 代理）；bot = 智能机器人长连接。
+            {"key": "mode", "label": "模式", "secret": False,
+             "placeholder": "app（默认，HTTP 应用消息）或 bot（智能机器人）"},
+            {"key": "admins", "label": "管理员白名单", "secret": False,
+             "placeholder": "可使用管理菜单的用户 ID，多个用 , 分隔；如 DeltrivX"},
         ],
     },
     {
@@ -184,6 +197,46 @@ def _sanitize_token(text: str) -> str:
     return re.sub(r"access_token=[A-Za-z0-9_\-]+", "access_token=***", text or "")
 
 
+def _adapt_request_url(host: str, endpoint: str) -> str:
+    """把端点拼到 base 上，逐行对齐 MoviePilot 的 `UrlUtils.adapt_request_url`。
+
+    MP 源码（`app/foundation/url.py`）：
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint
+        host = UrlUtils.standardize_base_url(host)
+        return urljoin(host, endpoint) if host else endpoint
+
+    这里必须用 `urljoin` 而不是字符串相加：代理地址可能带子路径，
+    拼接语义要与 MP 完全一致，否则会与 MP 行为分叉。
+    """
+    from urllib.parse import urljoin
+    if endpoint.startswith(("http://", "https://")):
+        return endpoint
+    if not host:
+        return endpoint
+    if not host.endswith("/"):
+        host += "/"
+    if not host.startswith(("http://", "https://")):
+        host = "http://" + host
+    return urljoin(host, endpoint)
+
+
+# 企微 API 默认 base（MP 的 `WECHAT_PROXY or "https://qyapi.weixin.qq.com"` 同义）
+_WECOM_DEFAULT_BASE = "https://qyapi.weixin.qq.com"
+
+
+def _secret_value(v: Any) -> str:
+    """密钥字段取值。
+
+    存盘时密钥可能是裸字符串，也可能被 update_config 包成
+    ``{"has_value": True, "value": "..."}``。两种都要能取到，
+    取不到就返回空串（调用方据此判定「未配置」）。
+    """
+    if isinstance(v, dict):
+        return str(v.get("value") or "").strip()
+    return str(v or "").strip()
+
+
 # ---------------------------------------------------------------------------
 # API 视图：GET 用的脱敏结构
 # ---------------------------------------------------------------------------
@@ -204,8 +257,7 @@ def public_view() -> Dict[str, Any]:
                      and (view.get("secret") or {}).get("has_value")
                      and view.get("agentid"))
         if c["key"] == "wecom":
-            # 智能机器人（WebSocket）就绪也算「可用」—— 它不依赖可信 IP，
-            # 是当前实际能打通的主通道。
+            # 智能机器人（WebSocket）就绪也算「可用」—— 它不依赖可信 IP。
             if (view.get("bot_id") or "").strip() and (view.get("bot_secret") or {}).get("has_value"):
                 ready = True
         if c["key"] == "telegram":
@@ -289,26 +341,37 @@ def _send_wecom(ch_cfg: Dict[str, Any], text: str) -> Dict[str, Any]:
         agentid_num = int(agentid)
     except ValueError:
         return {"ok": False, "error": "AgentId 必须是纯数字（企微后台应用页的 AgentId）"}
-    # 渠道级代理（对齐 MoviePilot 的 WECHAT_PROXY）：只作用于本通道的通知
-    # 推送，不写全局、不影响网关出网。留空 = 直连。
-    proxy = str(ch_cfg.get("proxy") or "").strip()
+    # 代理：**URL 重写**，逐行对齐 MoviePilot 的 `WECHAT_PROXY` 语义。
+    #
+    # 关键点（2026-10-15 实测勘误）：MP 的 `WECHAT_PROXY` **不是 HTTP 代理**，
+    # 而是整体替换 base_url —— 见 `app/modules/wechat/wechat.py`:
+    #     self._proxy = WECHAT_PROXY or "https://qyapi.weixin.qq.com"
+    #     self._token_url = UrlUtils.adapt_request_url(self._proxy, self._token_url)
+    #     self._send_msg_url = UrlUtils.adapt_request_url(self._proxy, self._send_msg_url)
+    # 即 `urljoin(proxy, "cgi-bin/gettoken?...")`。
+    #
+    # 之前把它塞进 `httpx.Client(proxy=...)` 走 CONNECT 隧道，实测被
+    # VPS:8484 拒（`501 Unsupported method ('CONNECT')`）；改成 URL 重写后
+    # gettoken 与 message/send 均 `errcode=0`。
+    #
+    # 为什么必须走 VPS：家里双 WAN 家宽出口在 NAT 池漂移，进不了企微「可信 IP」；
+    # VPS 固定 IP 107.172.90.165 已在名单内。
+    proxy = str(ch_cfg.get("proxy") or "").strip() or _WECOM_DEFAULT_BASE
     try:
         import httpx
-        base = "https://qyapi.weixin.qq.com"
-        kwargs = {"timeout": 20.0, "verify": False}
-        if proxy:
-            kwargs["proxy"] = proxy
-        with httpx.Client(**kwargs) as client:
-            tr = client.get(base + "/cgi-bin/gettoken",
-                            params={"corpid": corpid, "corpsecret": secret})
+        token_url = _adapt_request_url(
+            proxy, "cgi-bin/gettoken?corpid=%s&corpsecret=%s" % (corpid, secret))
+        send_url = _adapt_request_url(
+            proxy, "cgi-bin/message/send?access_token={token}")
+        with httpx.Client(timeout=20.0, verify=False) as client:
+            tr = client.get(token_url)
             td = tr.json() if tr.status_code == 200 else {}
             token = (td or {}).get("access_token")
             if not token:
                 return {"ok": False,
                         "error": "获取 access_token 失败：errcode=%s %s" % (
                             (td or {}).get("errcode"), _sanitize_token(str((td or {}).get("errmsg") or ""))[:120])}
-            mr = client.post(base + "/cgi-bin/message/send",
-                             params={"access_token": token},
+            mr = client.post(send_url.format(token=token),
                              json={"touser": touser, "msgtype": "text",
                                    "agentid": agentid_num,
                                    "text": {"content": text}})
@@ -723,14 +786,97 @@ def _cmd_status() -> str:
 
 
 def _cmd_daily() -> str:
-    d = _http_json(_WEBUI_BASE + "/api/wb-daily/jobs")
-    jobs = d.get("jobs") or []
-    if not jobs:
+    """任务进度：用 runs（落库历史，跨重启）+ jobs（实时进度）。
+
+    2026-10-15 修 bug：之前只读 `/api/wb-daily/jobs`，而该接口**常为空**
+    （jobs 是内存态，只记当前进程的最近一轮，容器重启即丢）。
+    实测：jobs 返回 [] 但 runs 有完整历史 —— 于是「任务跑完了吗」总是
+    答「暂无任务记录」，与事实相反。
+
+    数据源分层（与助手侧 _tool_task 口径保持一致）：
+      · runs：SQLite 落库的轮次历史（查「跑过没/跑完没」用这个）
+      · jobs：内存态实时进度（查「正在跑到哪了」用这个）
+    """
+    import datetime as _dt
+    parts = []
+
+    # 1) 内存态实时进度（有才显示）
+    try:
+        jd = _http_json(_WEBUI_BASE + "/api/wb-daily/jobs")
+        jobs = jd.get("jobs") or []
+    except Exception:
+        jobs = []
+    if jobs:
+        j = jobs[0]
+        parts.append("正在执行：%s 账号 %s/%s" % (
+            j.get("progress"), j.get("accounts_done"), j.get("accounts_total")))
+
+    # 2) 落库历史（主数据源）
+    try:
+        rd = _http_json(_WEBUI_BASE + "/api/wb-daily/runs?limit=5")
+        runs = rd if isinstance(rd, list) else (rd.get("runs") or [])
+    except Exception:
+        runs = []
+    if runs:
+        parts.append("最近轮次：")
+        for r in runs[:3]:
+            st = r.get("started_at")
+            try:
+                hm = _dt.datetime.fromtimestamp(float(st)).strftime("%m-%d %H:%M")
+            except Exception:
+                hm = "?"
+            fin = r.get("finished_at")
+            dur = ""
+            try:
+                if st and fin:
+                    dur = "（%.0f 分钟）" % ((float(fin) - float(st)) / 60.0)
+            except Exception:
+                dur = ""
+            parts.append("  · %s %s%s · 账号 %s" % (
+                hm, r.get("status"), dur, r.get("accounts") or "?"))
+
+    if not parts:
         return "暂无任务记录，回复「任务」启动一轮"
-    j = jobs[0]
-    return ("最近任务: %s（%s）\n进度: %s 账号 %s/%s" % (
-        j.get("job_id"), j.get("status"), j.get("progress"),
-        j.get("accounts_done"), j.get("accounts_total")))
+    return "\n".join(parts)
+
+
+def _cmd_today_tasks() -> str:
+    """「今天执行过任务吗」本地直答（<0.5s，绕开 LLM）。
+
+    2026-10-15 用户实测：这类标准只读查询走 LLM 要 5.4s（两轮），
+    超企微 5s 上限被丢弃。数据本来就在本地接口里，直接查更快更稳。
+    只读，绝不动任务（不调 /run）。
+    """
+    import datetime as _dt
+    today = _dt.date.today()
+    start = float(_dt.datetime.combine(today, _dt.time.min).timestamp())
+    d = _http_json(_WEBUI_BASE + "/api/wb-daily/task-summary")
+    items = [x for x in (d.get("items") or []) if isinstance(x, dict)]
+    if not items:
+        return "今天还没有任务记录。回复「任务」可以启动一轮。"
+    # 今天有执行的（last_at 在今日区间内）
+    ran = []
+    for it in items:
+        la = it.get("last_at")
+        try:
+            la_f = float(la)
+        except (TypeError, ValueError):
+            continue
+        if la_f >= start:
+            ran.append((la_f, it))
+    if not ran:
+        return "今天还没有执行过任务。回复「任务」可以启动一轮。"
+    ran.sort(reverse=True, key=lambda x: x[0])
+    lines = ["今天执行过 %d 项任务：" % len(ran)]
+    for la_f, it in ran[:6]:
+        hm = _dt.datetime.fromtimestamp(la_f).strftime("%H:%M")
+        name = str(it.get("task_name") or it.get("task_key") or "?")
+        ok = int(it.get("success") or 0)
+        tot = int(it.get("total") or 0)
+        acc = str(it.get("last_account") or "").strip()
+        lines.append("  · %s %s（%d/%d）%s" % (
+            hm, name, ok, tot, ("· 账号 " + acc) if acc else ""))
+    return "\n".join(lines)
 
 
 def _cmd_run() -> str:
@@ -779,8 +925,27 @@ def _readonly_fallback(text: str, low: str, orig: str) -> str:
 
     设计红线：这里**绝不**调用写操作（_cmd_run / _cmd_checkin / 通知开关）——
     疑问句永远是查询，助手挂了也不能反过来把用户的任务给执行了。
+
+    使用位置（2026-10-15 修订）：**仅在助手不可用时兜底**，不再前置。
+    原因：关键词匹配分不清复合语义 —— 实测「账号凭据还有多久过期」被
+    `"账号" in text` 抢走，返回了账号余额（完全跑题）。
+    MP 模式下回调立即返回、后台慢慢跑，交给 LLM 理解才是正解。
+
+    因此这里的匹配必须**特异优先**：越具体的意图越先判，笼统的放最后。
     """
     try:
+        # —— 特异意图优先（越具体越靠前，防止被笼统词抢走）——
+        # 凭据/有效期类：必须区分于「账号余额」
+        if ("凭据" in text or "有效期" in text or "过期" in text
+                or "续期" in text or orig in ("credentials", "expiry")):
+            return _cmd_credentials()
+        # 签到/打卡类：「今天签到了吗」→ 本地直查（<0.3s）
+        if _is_checkin_query(text):
+            return _cmd_checkin_status()
+        # 「今天执行过任务吗」类：本地直查 task-summary（<0.5s）
+        if _is_today_task_query(text):
+            return _cmd_today_tasks()
+        # —— 笼统意图（放最后）——
         if "账号" in text or orig in ("accounts", "balance"):
             return _cmd_accounts()
         if "模型" in text or orig in ("models",):
@@ -795,6 +960,122 @@ def _readonly_fallback(text: str, low: str, orig: str) -> str:
     except Exception:
         return ""
     return ""
+
+
+def _cmd_credentials() -> str:
+    """账号凭据有效期：哪些账号快过期、还能用多少天。
+
+    数据源必须是 `/api/wb-daily/accounts`（有 `exp` 时间戳）——
+    2026-10-15 实测：`/api/account-pool` 的账号对象**没有有效期字段**
+    （只有 id/name/variant/disabled/enabled/usable/active/nickname/email），
+    所以最初写在那里会恒返回「未返回有效期字段」。
+    口径与助手侧 `_tool_account_credentials` 保持一致。
+    """
+    import time as _t
+    d = _http_json(_WEBUI_BASE + "/api/wb-daily/accounts", timeout=25.0) or {}
+    accs = d.get("accounts") or []
+    if not accs:
+        return "账号凭据数据获取失败（可稍后再试）。"
+    now = _t.time()
+    rows = []
+    for a in accs:
+        exp = a.get("exp")
+        if not exp:
+            continue
+        try:
+            left = (float(exp) - now) / 86400.0
+        except (TypeError, ValueError):
+            continue
+        rows.append((left, str(a.get("name") or a.get("user") or "?"),
+                     bool(a.get("has_at")), bool(a.get("has_rt"))))
+    if not rows:
+        return "未获取到凭据有效期数据。"
+    rows.sort(key=lambda x: x[0])
+    urgent = [r for r in rows if r[0] < 7]
+    lines = ["账号凭据有效期（共 %d 个）：" % len(rows)]
+    for left, name, has_at, has_rt in rows[:10]:
+        if left < 0:
+            state = "已过期"
+        elif left < 7:
+            state = "%.1f 天后过期 ⚠️" % left
+        else:
+            state = "%.0f 天" % left
+        cred = "AT+RT" if (has_at and has_rt) else ("仅AT" if has_at else "无")
+        lines.append("  · %s：%s（%s）" % (name[:16], state, cred))
+    if urgent:
+        lines.append("  ⚠️ %d 个账号 7 天内到期，建议及时续期" % len(urgent))
+    else:
+        lines.append("  · 7 天内无到期账号")
+    return "\n".join(lines)
+
+
+def _cmd_checkin_status() -> str:
+    """「今天签到了吗」本地直答（<0.3s，绕开 LLM）。
+
+    2026-10-15 实测：「打卡了吗」走 LLM 用了 **13.01s**，远远超过企微
+    5s 硬上限，用户根本收不到。签到状态本来就在本地接口里。
+    只读，绝不触发签到（不调 /checkin/all）。
+    """
+    d = _http_json(_WEBUI_BASE + "/api/wb-daily/credit-summary")
+    today_ck = float(d.get("todayCheckinCredits") or 0)
+    today_all = float(d.get("todayCredits") or 0)
+    total = float(d.get("totalCredits") or 0)
+    if today_ck > 0:
+        return ("今天已签到 ✅ 签到积分 %s\n"
+                "  · 今日合计：%s（签到 %s / 任务 %s）\n"
+                "  · 累计：%s" % (
+                    _fmt_amount(today_ck), _fmt_amount(today_all),
+                    _fmt_amount(today_ck), _fmt_amount(today_all - today_ck),
+                    _fmt_amount(total)))
+    return "今天还没签到。回复「签到」可以立即执行。"
+
+
+def _fmt_amount(v: float) -> str:
+    """金额千分位（本地直答用，与面板口径一致）。"""
+    try:
+        return "{:,}".format(int(round(float(v))))
+    except (TypeError, ValueError):
+        return str(v)
+
+
+# 「今天执行过任务吗」类问句的特征：必须同时含「今天/今日」与「执行/跑/做了」。
+# 刻意用「与」而不是「或」—— 单提「任务」的情况多了去了（要启动任务、
+# 任务进度如何…），不能都归到这类。
+_TODAY_WORDS = ("今天", "今日", "今天有", "今天有没有")
+_RAN_WORDS = ("执行", "跑", "做过", "做了", "执行过", "跑过", "有没有跑", "有没有执行")
+
+# 签到/打卡类问句特征。
+# 2026-10-15 实测：「打卡了吗」走 LLM 用了 13.01s（远超企微 5s），
+# 「签到了吗」则 3s 转后台 —— 同类问法表现不一致。统一成本地直答。
+_CHECKIN_WORDS = ("签到", "打卡", "签到了", "打卡了", "签过", "打过卡")
+# 这些词出现时说明是**要执行签到**，不是问状态 —— 不能本地直答（会越过确认）。
+_CHECKIN_ACTION_WORDS = ("帮我", "执行", "去签", "去打卡", "立即", "马上", "现在")
+
+
+def _is_checkin_query(text: str) -> bool:
+    """是否「今天签到了吗」类查询（本地直答，不问 LLM）。
+
+    只读语义：必须带疑问语气（吗/呢/？/没/有没有），且**不含**执行意图词，
+    否则交给写操作确认流程。「签到」两字单独出现属于显式命令，不走这里。
+    """
+    t = (text or "").strip()
+    if not t or not any(w in t for w in _CHECKIN_WORDS):
+        return False
+    if any(w in t for w in _CHECKIN_ACTION_WORDS):
+        return False
+    # 疑问语气：吗/呢/？/没/有没有/情况/进度
+    marks = ("吗", "呢", "？", "?", "没", "有没有", "情况", "进度", "怎么样")
+    return any(m in t for m in marks)
+
+
+def _is_today_task_query(text: str) -> bool:
+    """是否「今天执行过任务吗」类查询（本地直答，不问 LLM）。"""
+    t = (text or "").strip()
+    if "任务" not in t and "签到" not in t:
+        return False
+    if not any(w in t for w in _TODAY_WORDS):
+        return False
+    return any(w in t for w in _RAN_WORDS)
 
 
 def wecom_command_reply(cmd: str, session_id: Optional[str] = None,
@@ -856,14 +1137,32 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None,
             #   · allow_defer=True（企微回调）→ 走延后推送，先回「我想想」；
             #   · allow_defer=False（本地/Telegram）→ 同步等，最多 CAP_TIMEOUT。
             if _assistant_available():
+                # MP 模式下企微回调已改为后台执行（allow_defer=False），
+                # 这里不再需要「先回执 + 短预算」那套 —— 直接同步算完即可。
+                # 保留 allow_defer 分支只为兼容 Telegram / 本地同步调用。
                 if allow_defer and _defer_assistant_reply(text, session_id):
                     return "🤔 让我整理一下能做什么，稍后发你～"
                 r = _assistant_fallback(text, session_id)
                 if r:
                     return r
             return _cmd_assistant_help()
+        # ---- 1b. 直接交 LLM（不再插本地关键词直答）----
+        #
+        # 废弃原因（2026-10-15 用户实测「答非所问」）：
+        # 问：「当前任务执行进度到哪了，执行完后预计多少积分收益？」
+        # 答：账号池积分消耗（剩余/今日消耗/近7天）—— 完全跑题。
+        #
+        # 根因：本地直答是**关键词前缀匹配**，命中第一个就返回：
+        #     if "积分" in text: return _cmd_credits()
+        # 这类问句含「任务/进度/积分/收益」多个词，被 "积分" 抢走，
+        # 而且返回的是「消耗」，用户问的是「收益」—— 语义相反。
+        #
+        # 关键认知：在 MP 模式（回调立即返回 + 后台跑完推送）下，
+        # **不再需要**把答复塞进 5 秒内。让 LLM 去理解复合语义才是正解；
+        # 本地直答只在助手不可用时做兜底（见下方 ro）。
         if allow_defer and _assistant_available():
-            # 先回执，后台算完主动推送（企微 5 秒硬限制的解法）
+            # 兼容旧的同步调用方式（Telegram / 本地调试）：仍支持回执往返。
+            # 企微回调已改 MP 模式（allow_defer=False + 后台线程），不走这里。
             if _defer_assistant_reply(text, session_id):
                 return ("🤔 正在查询，请稍候～\n"
                         "结果出来后我会主动推送给你。")
@@ -905,6 +1204,14 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None,
         pass
     try:
         # ---- 2a. 只读查询：关键词命中即可（最坏只是多返回了数据）----
+        #
+        # ⚠️ 特异优先（2026-10-15 修 bug）：命令分支按顺序首次命中就返回，
+        # 所以越具体的意图必须排在越前面。反例：问「账号凭据还有多久过期」
+        # 含「账号」两字，若账号余额排在前面会被它抢走（完全跑题）。
+        # 规则：先判「账号 + 限定词」的组合，再判光杆「账号」。
+        if ("凭据" in text or "有效期" in text or "过期" in text
+                or "续期" in text):
+            return _cmd_credentials()
         if "账号" in text or orig in ("accounts", "balance"):
             return _cmd_accounts()
         if "模型" in text or orig in ("models",):
@@ -933,8 +1240,12 @@ def wecom_command_reply(cmd: str, session_id: Optional[str] = None,
     return "收到：%s\n（回复「帮助」查看可用指令，或直接向我提问）" % text[:60]
 
 
-def _assistant_fallback(text: str, session_id: Optional[str] = None) -> str:
+def _assistant_fallback(text: str, session_id: Optional[str] = None,
+                        timeout: Optional[float] = None) -> str:
     """未命中命令时交给智能助手；不可用/失败返回空串。
+
+    ``timeout``：传给助手的总超时。企微回调会传短预算（如 3.5s）
+    先探一下：能快出结果就同步返回，不给用户「请稍候」。
 
     任何异常都吞掉返回空串 —— 助手是**增益功能**，绝不能让它把
     原本正常的命令路由搞挂。
@@ -949,7 +1260,8 @@ def _assistant_fallback(text: str, session_id: Optional[str] = None) -> str:
     try:
         if not _assistant.ASSISTANT_ENABLED:
             return ""
-        return _assistant.assistant_reply(session_id or "default", text) or ""
+        return _assistant.assistant_reply(session_id or "default", text,
+                                          timeout=timeout) or ""
     except Exception:
         return ""
 
@@ -997,6 +1309,34 @@ def _looks_like_capability_question(text: str, low: str = "") -> bool:
 _DEFER_LOCK = threading.Lock()
 _DEFER_BUSY = False
 
+# 企微回调硬上限 5s；这里先给 LLM 一个短预算探一下，
+# 留 2s 给回调处理 + 加密回包开销（实测约 0.3~0.5s，留足余量更稳）。
+# 注意：这是**整条链路**的总预算（deadline 制），不是每轮 ——
+# LLM 是两轮链路（出工具调用 → 出答案），按每轮算会叠加超限。
+# 2026-10-15 实测：常见只读问答（今任务/积分/账号）已改本地直答；
+# 真需要 LLM 的多为开放式问题，超过就老实回执+推送。
+# 已废弃（2026-10-15）：MP 模式（回调立即返回 + 后台推送）下不再需要
+# 「短预算同步探一下」这套机制。保留常量仅为兼容环境变量，不再被引用。
+_FAST_REPLY_BUDGET = float(os.getenv("AB_ASSISTANT_FAST_BUDGET", "3.0") or 3.0)
+
+
+def _remember_assistant_reply(session_id: str, question: str, reply: str) -> None:
+    """把「快路径同步答复」也写进会话历史。
+
+    为什么需要：快路径与延后路径是两条通道，若不记录，用户下一句追问时
+    助手会看不到自己刚说过什么（延后路径是在 worker 里记录的，
+    这里必须补齐，否则两条路径的上下文不对等）。
+    """
+    try:
+        try:
+            from gateway import assistant as _assistant
+        except ImportError:
+            import assistant as _assistant  # type: ignore
+        _assistant._remember(session_id or "default", "user", question)
+        _assistant._remember(session_id or "default", "assistant", reply)
+    except Exception:
+        pass          # 历史记录失败不影响本次回复
+
 
 def _assistant_available() -> bool:
     """助手是否可用（开关 + 已配置模型源）。"""
@@ -1008,6 +1348,16 @@ def _assistant_available() -> bool:
         return bool(_a.ASSISTANT_ENABLED) and bool(_a._runtime().get("enabled"))
     except Exception:
         return False
+
+
+def push_text_to_wecom(text: str) -> bool:
+    """把文本主动推送到企微（MP 模式的答复出口）。
+
+    为什么单独包一层：回调现在立即返回、不等结果，所以答复只能靠
+    主动推送送达。这里固定走 wecom 渠道，并绕过通知总开关
+    （这是用户问的答复，不是例行通知）。
+    """
+    return _push_to_channel("wecom", text)
 
 
 def _push_to_channel(channel: str, text: str) -> bool:
@@ -1070,6 +1420,10 @@ def _defer_assistant_reply(text: str, session_id: str,
         try:
             reply = _assistant_fallback(text, session_id)
             if reply:
+                # 与快路径（_remember_assistant_reply）对齐：延后问答也要进
+                # 会话历史，否则快/慢两条通道的上下文不对等 —— 用户追问时
+                # 助手会看不到自己刚说过什么。
+                _remember_assistant_reply(session_id, text, reply)
                 _push_to_channel(channel, reply)
             else:
                 # 助手没给出答复（模型不可用/超时）也要留痕，

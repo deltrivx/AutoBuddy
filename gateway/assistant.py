@@ -60,6 +60,32 @@ MAX_SESSIONS = int(os.getenv("AB_ASSISTANT_MAX_SESSIONS", "200") or 200)
 HISTORY_TURNS = int(os.getenv("AB_ASSISTANT_HISTORY", "6") or 6)
 MAX_OUTPUT_CHARS = 1200
 
+# 联网搜索（Tavily）：密钥沿用宿主已有的 TAVILY_API_KEY，不在本模块另存。
+# 联网搜索（Tavily）：密钥优先读环境变量；环境变量缺失时回退读
+# 持久化文件 /data/.autobuddy/.env.local（容器重建不丢）。
+def _load_tavily_key() -> str:
+    k = (os.getenv("TAVILY_API_KEY") or "").strip()
+    if k:
+        return k
+    try:
+        data_dir = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
+        env_file = data_dir / ".env.local"
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("TAVILY_API_KEY="):
+                    return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return ""
+
+
+TAVILY_API_KEY = _load_tavily_key()
+TAVILY_ENDPOINT = "https://api.tavily.com/search"
+# 会话历史裁剪的 token 上限（对齐 MoviePilot 的「最大上下文 Token 数量 (K)」）。
+# 粗估：中文 1 字≈1 token，英文 4 字符≈1 token；取 max(len) 偏保守。
+DEFAULT_MAX_CONTEXT_K = 256
+
 # 本地端点（同容器 loopback，不经公网）
 WEBUI_BASE = os.getenv("AB_ASSISTANT_WEBUI", "http://127.0.0.1:18090")
 GATEWAY_BASE = os.getenv("AB_ASSISTANT_GATEWAY", "http://127.0.0.1:18091")
@@ -147,12 +173,28 @@ _PROVIDER_BY_KEY = {p["key"]: p for p in PROVIDERS}
 
 
 def _blank_config() -> Dict[str, Any]:
-    """配置默认值。"""
+    """配置默认值。
+
+    字段分层（2026-10-15 照 MoviePilot 智能助手设置页逐项对照后补齐）：
+      - 已有（用户明确：LLM 那块已做好，不动）：enabled / provider / model /
+        systemPrompt / providers
+      - 新补 6 项：maxContextK / temperature / reasoningEffort /
+        outputLanguage / userAgent / verbose
+      - 联网搜索：webSearch（off|tavily）
+    """
     return {
         "enabled": True,
         "provider": _default_provider(),
         "model": "",                      # 空 = 自动挑选
         "systemPrompt": "",               # 空 = 用内置 SYSTEM_PROMPT
+        # —— 以下为照 MP 补齐的通用项 ——
+        "maxContextK": DEFAULT_MAX_CONTEXT_K,   # 会话历史 token 上限（千）
+        "temperature": "",                # 空 = 模型默认；"0" = 显式 0
+        "reasoningEffort": "auto",        # off|auto|minimal|low|medium|high|max|xhigh
+        "outputLanguage": "zh-CN",        # 强制输出语言
+        "userAgent": "",                  # 空 = SDK 默认
+        "verbose": False,                 # 啰嗦模式（MP 同名）
+        "webSearch": "off",               # off | tavily
         "providers": {
             "gateway": {"base_url": GATEWAY_BASE, "api_key": ""},
             "openai": {"base_url": "https://api.openai.com/v1", "api_key": ""},
@@ -184,7 +226,9 @@ def _save_config(patch: Dict[str, Any]) -> Dict[str, Any]:
     with _CONFIG_LOCK:
         cfg = _load_config()
         body = patch or {}
-        for k in ("enabled", "provider", "model", "systemPrompt"):
+        for k in ("enabled", "provider", "model", "systemPrompt",
+                  "maxContextK", "temperature", "reasoningEffort",
+                  "outputLanguage", "userAgent", "verbose", "webSearch"):
             if k in body:
                 cfg[k] = body[k]
         provs = body.get("providers")
@@ -210,7 +254,7 @@ def _save_config(patch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _runtime() -> Dict[str, Any]:
-    """当前生效的运行时配置（provider + base_url + key + model）。"""
+    """当前生效的运行时配置（provider + base_url + key + model + 通用项）。"""
     cfg = _load_config()
     if not cfg.get("enabled", True):
         return {"enabled": False}
@@ -218,6 +262,16 @@ def _runtime() -> Dict[str, Any]:
     prov = _PROVIDER_BY_KEY.get(pk) or _PROVIDER_BY_KEY[_default_provider()]
     slot = (cfg.get("providers") or {}).get(prov["key"]) or {}
     base = str(slot.get("base_url") or "").strip() or prov.get("default_base_url") or ""
+    # 温度：空串 = 不传（用模型默认）；"0" 是有效值，必须保留。
+    temp_raw = cfg.get("temperature", "")
+    temperature: Optional[float] = None
+    if isinstance(temp_raw, (int, float)):
+        temperature = float(temp_raw)
+    elif str(temp_raw).strip() != "":
+        try:
+            temperature = float(str(temp_raw).strip())
+        except ValueError:
+            temperature = None
     return {
         "enabled": True,
         "provider": prov["key"],
@@ -225,7 +279,39 @@ def _runtime() -> Dict[str, Any]:
         "api_key": str(slot.get("api_key") or "").strip(),
         "model": str(cfg.get("model") or "").strip(),
         "systemPrompt": str(cfg.get("systemPrompt") or "").strip(),
+        "maxContextK": int(cfg.get("maxContextK") or DEFAULT_MAX_CONTEXT_K),
+        "temperature": temperature,
+        "reasoningEffort": str(cfg.get("reasoningEffort") or "auto").strip(),
+        "outputLanguage": str(cfg.get("outputLanguage") or "zh-CN").strip(),
+        "userAgent": str(cfg.get("userAgent") or "").strip(),
+        "verbose": bool(cfg.get("verbose")),
+        "webSearch": str(cfg.get("webSearch") or "off").strip(),
     }
+
+
+# 设置页注册表：照 MoviePilot 智能助手设置项逐项对齐（仅列 AutoBuddy 适用的）。
+SETTING_FIELDS: List[Dict[str, Any]] = [
+    {"key": "enabled", "label": "启用智能助手", "type": "bool",
+     "desc": "关闭后助手不再响应，命令路径不受影响（等同 AB_ASSISTANT_ENABLED=0）。"},
+    {"key": "verbose", "label": "啰嗦模式", "type": "bool",
+     "desc": "开启后回复更详细（带过程与结论）；关闭则只给结论，更简短。"},
+    {"key": "maxContextK", "label": "LLM 最大上下文 Token 数量 (K)", "type": "number",
+     "desc": "会话历史的最大 Token 上限（千），超出后自动裁剪旧消息，节省消耗并防超限。",
+     "min": 8, "max": 1024},
+    {"key": "temperature", "label": "温度参数", "type": "number",
+     "desc": "控制回复随机性；留空使用模型默认值，填 0 表示显式使用温度 0，通常建议 0-2。",
+     "min": 0, "max": 2},
+    {"key": "reasoningEffort", "label": "思考模式 / 深度", "type": "select",
+     "desc": "思考深度：off/auto/minimal/low/medium/high/max/xhigh；不支持的级别会按模型能力自动映射。",
+     "options": ["off", "auto", "minimal", "low", "medium", "high", "max", "xhigh"]},
+    {"key": "outputLanguage", "label": "助手输出语言", "type": "text",
+     "desc": "强制助手使用所选语言回复，默认 zh-CN。"},
+    {"key": "userAgent", "label": "User-Agent", "type": "text",
+     "desc": "OpenAI 兼容接口请求使用的 User-Agent，留空则使用默认值。"},
+    {"key": "webSearch", "label": "联网搜索", "type": "select",
+     "desc": "助手可调用 Tavily 实时联网检索；关闭则只用内置只读工具。",
+     "options": ["off", "tavily"]},
+]
 
 
 def public_view() -> Dict[str, Any]:
@@ -240,11 +326,20 @@ def public_view() -> Dict[str, Any]:
         }
     return {
         "registry": PROVIDERS,
+        "settings": SETTING_FIELDS,
+        "tavily": {"has_value": bool(TAVILY_API_KEY)},
         "config": {
             "enabled": bool(cfg.get("enabled", True)),
             "provider": str(cfg.get("provider") or _default_provider()),
             "model": str(cfg.get("model") or ""),
             "systemPrompt": str(cfg.get("systemPrompt") or ""),
+            "maxContextK": int(cfg.get("maxContextK") or DEFAULT_MAX_CONTEXT_K),
+            "temperature": cfg.get("temperature", ""),
+            "reasoningEffort": str(cfg.get("reasoningEffort") or "auto"),
+            "outputLanguage": str(cfg.get("outputLanguage") or "zh-CN"),
+            "userAgent": str(cfg.get("userAgent") or ""),
+            "verbose": bool(cfg.get("verbose")),
+            "webSearch": str(cfg.get("webSearch") or "off"),
             "providers": provs_out,
         },
         "runtime": session_stats(),
@@ -311,9 +406,31 @@ def _gc_sessions_locked(now: Optional[float] = None) -> None:
 
 
 def _history(session_id: str) -> List[Dict[str, str]]:
+    """取会话历史，并按 maxContextK 裁剪（照 MP 的上下文 Token 上限语义）。
+
+    裁剪策略：从最新往旧累加，超上限就丢弃更早的整轮，保证最新的
+    对话一定在上下文里。粗估 1 字≈1 token（中文）偏保守，宁可少留几轮。
+    """
     with _SESSIONS_LOCK:
         s = _SESSIONS.get(_session_key(session_id)) or {}
-        return list(s.get("history") or [])
+        hist = list(s.get("history") or [])
+    try:
+        limit_k = int(_load_config().get("maxContextK") or DEFAULT_MAX_CONTEXT_K)
+    except Exception:
+        limit_k = DEFAULT_MAX_CONTEXT_K
+    budget = max(1, limit_k) * 1000
+    if not hist:
+        return hist
+    kept: List[Dict[str, str]] = []
+    used = 0
+    for msg in reversed(hist):
+        cost = len(str(msg.get("content") or ""))
+        if kept and used + cost > budget:
+            break
+        kept.append(msg)
+        used += cost
+    kept.reverse()
+    return kept
 
 
 def _remember(session_id: str, role: str, content: str) -> None:
@@ -510,16 +627,37 @@ def _tool_task(_args: Dict[str, Any]) -> str:
 
 
 def _tool_reqstats(_args: Dict[str, Any]) -> str:
+    """请求指标：从 summary 子对象取，并说明统计窗口语义。
+
+    2026-10-15 修 bug：原实现把顶层当指标容器（`for k in (...): if k in d`），
+    但真实结构是 `{"summary": {...}, "recent": [...]}` —— 键都在 summary 里，
+    于是恒返回一个光杆的「请求指标：」。
+    """
     d = _http_json(WEBUI_BASE + "/api/reqstats?limit=50") or {}
     if not d:
         return "暂无请求指标"
-    parts = ["请求指标："]
-    for k in ("total", "success", "failed", "successRate", "avgMs", "p95Ms"):
-        if k in d:
-            parts.append("  · %s：%s" % (k, d.get(k)))
+    s = d.get("summary") or {}
+    if not s:
+        return "暂无请求指标"
+    win = s.get("windowCount")
+    parts = ["请求指标%s：" % ("（窗口内 %s 次）" % win if win is not None else "")]
+    labels = (("total", "总请求"), ("success", "成功"),
+              ("httpError", "HTTP 错"), ("streamError", "流中断"),
+              ("successRate", "成功率"), ("avgMs", "平均耗时 ms"),
+              ("p50Ms", "P50 ms"), ("p95Ms", "P95 ms"))
+    for k, label in labels:
+        if s.get(k) is not None:
+            v = s.get(k)
+            try:
+                v = round(float(v), 1) if k not in ("total", "success", "httpError", "streamError", "windowCount") else v
+            except (TypeError, ValueError):
+                pass
+            parts.append("  · %s：%s" % (label, v))
     recent = d.get("recent") or []
     if recent:
-        parts.append("  · 最近 %d 条请求" % len(recent))
+        parts.append("  · 最近请求：可问我「最近请求明细」")
+    elif win == 0:
+        parts.append("  ·（窗口内无请求，指标为累计口径；刚重启时属正常）")
     return "\n".join(parts)
 
 
@@ -878,6 +1016,413 @@ def _tool_diagnose_task(args: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 补全工具（2026-10-15，用户要求「补全所有接口，使助手真正可用可交付」）
+#
+# 盘点依据：对外端点 64 个，助手原覆盖 14 个。下面按功能域补齐**只读**部分；
+# 认证类 / 删除类 / import / export / 助手自身配置 属红线，永久不给工具。
+# ---------------------------------------------------------------------------
+def _fmt_ts(ts: Any, fmt: str = "%m-%d %H:%M") -> str:
+    """时间戳 → 可读时间（本地时区）。"""
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(float(ts)).strftime(fmt)
+    except Exception:
+        return "?"
+
+
+def _tool_task_runs(args: Dict[str, Any]) -> str:
+    """轮次历史：每轮任务的开始/结束/状态/账号数。"""
+    try:
+        limit = int((args or {}).get("limit") or 10)
+    except (TypeError, ValueError):
+        limit = 10
+    limit = max(1, min(50, limit))
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/runs?limit=%d" % limit) or {}
+    runs = d if isinstance(d, list) else (d.get("runs") or [])
+    if not runs:
+        return "暂无任务轮次记录。"
+    st_filter = str((args or {}).get("status") or "").strip().lower()
+    if st_filter:
+        runs = [r for r in runs if str(r.get("status") or "").lower() == st_filter]
+        if not runs:
+            return "没有状态为 %s 的轮次。" % st_filter
+    lines = ["任务轮次（%d 条）：" % len(runs)]
+    for r in runs:
+        st, fin = r.get("started_at"), r.get("finished_at")
+        dur = ""
+        try:
+            if st and fin:
+                dur = "（%.0f 分钟）" % ((float(fin) - float(st)) / 60.0)
+        except Exception:
+            dur = ""
+        lines.append("  · %s %s · %s%s · 账号 %s · %s" % (
+            _fmt_ts(st), str(r.get("status")), str(r.get("mode") or "?"),
+            dur, r.get("accounts") or "?", str(r.get("job_id"))[:8]))
+    return "\n".join(lines)
+
+
+def _tool_task_detail(args: Dict[str, Any]) -> str:
+    """单轮详情：失败原因 / 输出摘要。"""
+    jid = str((args or {}).get("job_id") or "").strip()
+    if not jid:
+        return "请提供 job_id（可先用 get_task_runs 查看）。"
+    # runs 里拿兜底信息（status 接口只对内存态有效，重启后 404）
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/runs?limit=50") or {}
+    runs = d if isinstance(d, list) else (d.get("runs") or [])
+    hit = None
+    for r in runs:
+        if str(r.get("job_id")) == jid or str(r.get("job_id")).startswith(jid):
+            hit = r
+            break
+    if not hit:
+        return "找不到轮次 %s（可用 get_task_runs 查看现有轮次）。" % jid
+    lines = ["轮次 %s：" % hit.get("job_id"),
+             "  · 状态：%s（%s）" % (hit.get("status"), hit.get("mode")),
+             "  · 开始：%s" % _fmt_ts(hit.get("started_at"), "%Y-%m-%d %H:%M"),
+             "  · 结束：%s" % _fmt_ts(hit.get("finished_at"), "%Y-%m-%d %H:%M"),
+             "  · 账号数：%s" % (hit.get("accounts") or 0)]
+    summ = hit.get("summary") or {}
+    if isinstance(summ, dict):
+        if summ.get("detail"):
+            lines.append("  · 说明：%s" % str(summ["detail"])[:300])
+        if summ.get("rc") is not None:
+            lines.append("  · 返回码：%s" % summ.get("rc"))
+        for s in (summ.get("summary") or [])[:6]:
+            lines.append("    - %s" % str(s)[:160])
+    return "\n".join(lines)
+
+
+def _tool_task_accounts(args: Dict[str, Any]) -> str:
+    """某轮涉及哪些账号：等级/连续天数/积分/完成进度/剩余任务。"""
+    jid = str((args or {}).get("job_id") or "").strip()
+    if not jid:
+        return "请提供 job_id（可先用 get_task_runs 查看）。"
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/run-accounts/%s" % jid) or {}
+    accts = d.get("accounts") or []
+    if not accts:
+        return "轮次 %s 没有账号明细记录。" % jid
+    lines = ["轮次 %s 的账号（%d 个）：" % (jid[:8], len(accts))]
+    for a in accts[:12]:
+        rest = a.get("rest") or []
+        lines.append("  · %s Lv%s 连续%s天 %s/%s" % (
+            a.get("account"), a.get("level") or "?", a.get("streak") or "?",
+            a.get("done") or 0, a.get("total") or 0))
+        if rest:
+            lines.append("      未完成：%s" % "、".join(str(x) for x in rest[:5]))
+    if len(accts) > 12:
+        lines.append("  ·（其余 %d 个略）" % (len(accts) - 12))
+    return "\n".join(lines)
+
+
+def _tool_task_catalog(_args: Dict[str, Any]) -> str:
+    """任务目录：有哪些任务、哪些能自动跑、哪些要手动。"""
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/catalog") or {}
+    groups = d.get("groups") or []
+    if not groups:
+        return "暂无任务目录。"
+    lines = ["任务目录："]
+    manual = []
+    for g in groups:
+        items = g.get("items") or []
+        lines.append("  【%s】%d 项" % (g.get("group"), len(items)))
+        for it in items[:8]:
+            tag = "自动" if it.get("auto") else "**需手动**"
+            lines.append("    - %s（%s）" % (it.get("name"), tag))
+            if not it.get("auto") and it.get("note"):
+                manual.append("%s：%s" % (it.get("name"), str(it["note"])[:120]))
+        if len(items) > 8:
+            lines.append("    ·（其余 %d 项略）" % (len(items) - 8))
+    if manual:
+        lines.append("  ⚠️ 需手动处理的任务：")
+        for m in manual:
+            lines.append("    - %s" % m)
+    return "\n".join(lines)
+
+
+def _tool_task_config(_args: Dict[str, Any]) -> str:
+    """任务配置：开关/间隔/运行模式/签到开关/保留天数。"""
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/config") or {}
+    c = d.get("config") or {}
+    if not c:
+        return "暂无任务配置。"
+    return ("任务配置：\n"
+            "  · 启用：%s\n"
+            "  · 间隔：%s 小时\n"
+            "  · 运行模式：%s\n"
+            "  · 签到开关：%s\n"
+            "  · 记录保留：%s 天\n"
+            "  · 懒刷新：%s 小时\n"
+            "  · 上次执行：%s" % (
+                "开" if c.get("enabled") else "关",
+                c.get("interval_hours"), c.get("run_mode"),
+                "开" if c.get("checkin_enabled") else "关",
+                c.get("keepalive_days"), c.get("lazy_refresh_hours"),
+                _fmt_ts(c.get("last_run_at"), "%Y-%m-%d %H:%M")))
+
+
+def _tool_task_health(_args: Dict[str, Any]) -> str:
+    """任务服务健康：是否运行中、下次执行时间。"""
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/health") or {}
+    if not d:
+        return "任务服务无响应。"
+    return ("任务服务：\n"
+            "  · 状态：%s\n"
+            "  · 正在执行：%s\n"
+            "  · 上次执行：%s\n"
+            "  · 下次计划：%s" % (
+                "正常" if d.get("ok") else "异常",
+                ("是（%s）" % str(d.get("running_job_id"))[:8]) if d.get("running") else "否",
+                _fmt_ts(d.get("last_run_at"), "%Y-%m-%d %H:%M"),
+                _fmt_ts(d.get("next_due_at"), "%Y-%m-%d %H:%M")))
+
+
+def _tool_task_items(args: Dict[str, Any]) -> str:
+    """任务执行明细：每个子任务的最近结果与说明。"""
+    try:
+        limit = int((args or {}).get("limit") or 12)
+    except (TypeError, ValueError):
+        limit = 12
+    limit = max(1, min(40, limit))
+    d = _http_json(WEBUI_BASE + "/api/wb-daily/tasks") or {}
+    tasks = d.get("tasks") or []
+    if not tasks:
+        return "暂无任务执行明细。"
+    lines = ["任务执行明细（最近 %d 条，共 %d）：" % (min(limit, len(tasks)), len(tasks))]
+    for t in tasks[:limit]:
+        lines.append("  · %s %s [%s] %s" % (
+            _fmt_ts(t.get("occurred_at")), t.get("task_name"),
+            t.get("result") or "?", str(t.get("account") or "")[:16]))
+        det = str(t.get("detail") or "").strip()
+        if det:
+            lines.append("      %s" % det[:150])
+    return "\n".join(lines)
+
+
+def _tool_account_health(_args: Dict[str, Any]) -> str:
+    """账号一致性自检（凭据侧 × 模型侧并排）。慢接口，超时给足。"""
+    try:
+        d = _http_json(WEBUI_BASE + "/api/account-health/audit", timeout=120.0) or {}
+    except Exception as e:
+        return ("账号自检未完成（%s）：该接口要对每个账号跑一次凭据探测"
+                "加数次模型探测，账号多时耗时较长，可直接在面板上重试。"
+                % str(e)[:80])
+    rows = d.get("rows") or d.get("accounts") or []
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    if not rows:
+        return "账号自检返回为空（可能在运行中或未配置）。"
+    lines = ["账号自检（%d 个）：" % len(rows)]
+    for r in rows[:15]:
+        if not isinstance(r, dict):
+            continue
+        lines.append("  · %s：凭据=%s 模型=%s" % (
+            r.get("name") or r.get("account") or "?",
+            r.get("credential") or r.get("credentialStatus") or "?",
+            r.get("model") or r.get("modelStatus") or "?"))
+        note = r.get("note") or r.get("detail")
+        if note:
+            lines.append("      %s" % str(note)[:130])
+    return "\n".join(lines)
+
+
+def _tool_account_models(args: Dict[str, Any]) -> str:
+    """账号 × 模型覆盖：每个账号能用哪些模型、共禁用多少。"""
+    d = _http_json(WEBUI_BASE + "/api/account-models", timeout=30.0) or {}
+    accts = d.get("accounts") or {}
+    if isinstance(accts, list):
+        accts = {str(i): a for i, a in enumerate(accts)}
+    if not accts:
+        return "暂无账号模型配置。"
+    cat = d.get("catalog") or []
+    lines = ["账号模型覆盖（%d 个账号，目录共 %d 个模型，全局禁用 %s）：" % (
+        len(accts), len(cat) if hasattr(cat, "__len__") else 0,
+        d.get("disabledTotal"))]
+    name = str((args or {}).get("account") or "").strip()
+    rows = []
+    for v in accts.values():
+        if not isinstance(v, dict):
+            continue
+        if name and name not in str(v.get("name")) and name.lower() not in [str(x).lower() for x in (v.get("aliases") or [])]:
+            continue
+        rows.append(v)
+    if not rows:
+        rows = list(accts.values())[:12]
+    for v in rows[:12]:
+        if not isinstance(v, dict):
+            continue
+        ms = v.get("models") or []
+        lines.append("  · %s：%d 个模型%s" % (
+            v.get("name"), len(ms),
+            ("（" + "、".join(str(x) for x in ms[:6]) + "…）") if ms else ""))
+    if len(rows) > 12:
+        lines.append("  ·（其余 %d 个略）" % (len(rows) - 12))
+    return "\n".join(lines)
+
+
+def _tool_token_stats(args: Dict[str, Any]) -> str:
+    """Token 用量：按天统计（输入/输出/缓存命中率）。"""
+    try:
+        days = int((args or {}).get("days") or 7)
+    except (TypeError, ValueError):
+        days = 7
+    days = max(1, min(30, days))
+    d = _http_json(WEBUI_BASE + "/api/token-stats", timeout=30.0) or {}
+    src = d.get("sources") or []
+    if not src:
+        return "暂无 Token 用量数据。"
+    lines = ["Token 用量（最近 %d 天）：" % days]
+    for s in src[:2]:
+        # requests / sessions 是**列表**（元素为 dict），不是计数 —— 需取长度
+        reqs = s.get("requests")
+        sess = s.get("sessions")
+        n_req = len(reqs) if isinstance(reqs, (list, dict)) else (reqs or 0)
+        n_ses = len(sess) if isinstance(sess, (list, dict)) else (sess or 0)
+        lines.append("  【%s】%s 次请求 / %s 个会话" % (
+            s.get("source") or "?", n_req, n_ses))
+        daily = (s.get("daily") or [])[-days:]
+        for dy in daily:
+            hit = dy.get("cacheHitRate")
+            hit_s = ("%.0f%%" % (float(hit) * 100)) if isinstance(hit, (int, float)) else "?"
+            lines.append("    - %s：%s tokens（入 %s / 出 %s，缓存命中 %s）" % (
+                dy.get("key"), _fmt_num(dy.get("total")),
+                _fmt_num(dy.get("input")), _fmt_num(dy.get("output")), hit_s))
+    return "\n".join(lines)
+
+
+def _tool_reqlog(args: Dict[str, Any]) -> str:
+    """请求日志明细：最近请求的模型/账号/耗时/结果。"""
+    try:
+        limit = int((args or {}).get("limit") or 10)
+    except (TypeError, ValueError):
+        limit = 10
+    limit = max(1, min(30, limit))
+    d = _http_json(WEBUI_BASE + "/api/reqstats?limit=%d" % limit, timeout=20.0) or {}
+    recent = d.get("recent") or []
+    if not recent:
+        # 窗口内无请求是正常态（比如刚重启/空闲）—— 如实说明，不当作错误
+        summ = d.get("summary") or {}
+        return ("统计窗口内暂无请求明细（窗口内请求数：%s）。"
+                "可稍后再问，或直接看累计指标（问「请求成功率」）。"
+                % summ.get("windowCount", 0))
+    lines = ["最近请求（%d 条）：" % len(recent)]
+    for r in recent[:limit]:
+        lines.append("  · %s %s @%s %sms [%s]" % (
+            _fmt_ts(r.get("ts"), "%H:%M:%S"), r.get("model") or "?",
+            r.get("account") or "?",
+            ("%.0f" % float(r.get("total_ms"))) if r.get("total_ms") else "?",
+            r.get("outcome") or "?"))
+    return "\n".join(lines)
+
+
+def _tool_notify_config(_args: Dict[str, Any]) -> str:
+    """通知配置详情：各渠道就绪状态（密钥只显示是否已配）。"""
+    d = _http_json(WEBUI_BASE + "/api/notify", timeout=20.0) or {}
+    chans = d.get("channels") or {}
+    if not chans:
+        return "暂无通知渠道配置。"
+    lines = ["通知配置（总开关：%s）：" % ("开" if d.get("enabled") else "关")]
+    for k, v in chans.items():
+        if not isinstance(v, dict):
+            continue
+        lines.append("  【%s】就绪：%s / 启用：%s" % (
+            k, "是" if v.get("_ready") else "否",
+            "是" if v.get("_enabled", True) else "否"))
+        bits = []
+        for f, label in (("corpid", "企业ID"), ("agentid", "AgentId"),
+                         ("mode", "模式"), ("proxy", "代理"),
+                         ("bot_id", "机器人ID"), ("chat_id", "会话ID")):
+            if v.get(f):
+                bits.append("%s=%s" % (label, str(v[f])[:40]))
+        secret_hit = v.get("secret")
+        if isinstance(secret_hit, dict):
+            bits.append("密钥=%s" % ("已配" if secret_hit.get("has_value") else "未配"))
+        if bits:
+            lines.append("      " + " · ".join(bits))
+    return "\n".join(lines)
+
+
+def _tool_web_search(args: Dict[str, Any]) -> str:
+    """联网搜索（Tavily）。照 MoviePilot 的「联网搜索」项新增。
+
+    密钥不落盘、不回传：只用运行时环境里的 TAVILY_API_KEY。
+    仅当设置页 webSearch=tavily 时该工具才会注册给模型。
+    """
+    if not TAVILY_API_KEY:
+        return "联网搜索未启用（缺少 TAVILY_API_KEY）。"
+    query = str((args or {}).get("query") or "").strip()[:400]
+    if not query:
+        return "请提供搜索关键词。"
+    try:
+        n = int((args or {}).get("max_results") or 5)
+    except (TypeError, ValueError):
+        n = 5
+    n = max(1, min(20, n))
+    topic = str((args or {}).get("topic") or "general").strip().lower()
+    if topic not in ("general", "news", "finance"):
+        topic = "general"
+    body = json.dumps({
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "max_results": n,
+        "topic": topic,
+        "include_answer": True,
+    }).encode("utf-8")
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            TAVILY_ENDPOINT, data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        return "联网搜索失败（%s）：%s" % (type(e).__name__, str(e)[:120])
+    lines: List[str] = []
+    ans = str(d.get("answer") or "").strip()
+    if ans:
+        lines.append("摘要：%s" % ans[:400])
+    for it in (d.get("results") or [])[:n]:
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("title") or "").strip()[:80]
+        url = str(it.get("url") or "").strip()[:160]
+        content = str(it.get("content") or "").strip().replace("\n", " ")[:200]
+        lines.append("· %s\n  %s\n  %s" % (title, url, content))
+    if not lines:
+        return "联网搜索无结果：%s" % query
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 工具边界说明（2026-10-15 用户确认）
+#
+# 「不给工具」 ≠ 「禁用接口」。这两件事必须分清，否则后人维护时容易误读：
+#
+#   · 面板 / WebUI —— 所有接口**完全可用**，登录、改密、导出入、删账号
+#     照常操作，一行代码没动。
+#   · 助手工具  —— 只是**不给模型一个 function 声明**，使 LLM 无法从
+#     自然语言路径触发它。
+#
+# 为什么区分（触发路径风险不同）：
+#   面板点击 → 用户明确、有 UI 确认、看得见自己在改什么 → 安全
+#   LLM 工具 → 自然语言触发、可能被提示注入诱导 → 有风险
+#   反例：若 change_password 是 LLM 工具，「帮我改成密码 123456」
+#        可能被模型真的执行 —— 不可逆且涉账号安全。
+#
+# 【不给助手工具的接口清单】（接口本身都在，只是无 tool 声明）：
+#   认证类 8 个：auth/login、auth/logout、auth/password、auth/username、
+#                auth/profile(GET/PUT)、auth/status、auth/avatar-upload、
+#                auth/avatar
+#   危险操作 4 个：delete（删账号，不可逆）、api-keys/delete-all（一把清空）、
+#                import（会覆盖现有账号池）、refresh-token（全量刷新连锁失效）
+#   助手自身配置 4 个：assistant(GET/PUT)、assistant/test、assistant/models
+#   回调 2 个：notify/wecom/callback(GET/POST)（企微平台调用，非助手职责）
+#   配置写入 2 个：notify PUT、wb-daily/config POST
+#
+# 【已给助手工具的能力】：见下方 _TOOLS 注册表（只读 30 个）
+# 与 _WRITE_OPS（写操作 10 个，全部走两段式确认）。
+# ---------------------------------------------------------------------------
+
 # 注册表：name -> (函数, 描述, 参数说明)
 _TOOLS: Dict[str, tuple] = {
     # ---- 原有 6 个 ----
@@ -900,7 +1445,44 @@ _TOOLS: Dict[str, tuple] = {
     # ---- 阶段 6 新增（主动智能）----
     "get_credit_trend": (_tool_credit_trend, "积分趋势：按近期消耗估算可支撑天数、预警见底风险", "无参数"),
     "diagnose_task_failure": (_tool_diagnose_task, "异常归因：分析最近的失败任务，给出原因与建议", "limit: 分析几轮，默认 5"),
+    # ---- 联网搜索（Tavily，2026-10-15 照 MP 的「联网搜索」项新增）----
+    "web_search": (_tool_web_search, "联网搜索：用 Tavily 实时检索网页，回答需要最新外部信息的问题",
+                   "query: 搜索词；max_results: 结果数，默认 5；topic: general|news，默认 general"),
+    # ---- 补全批次 1：任务域 7 个（2026-10-15）----
+    "get_task_runs": (_tool_task_runs, "任务轮次历史：每轮的开始/结束/状态/账号数（查「跑过没/跑完没」用这个）",
+                      "limit: 返回条数，默认 10；status: 按状态筛选 done|failed|running"),
+    "get_task_detail": (_tool_task_detail, "单轮任务详情：失败原因、输出摘要、返回码",
+                        "job_id: 轮次 ID（可用 get_task_runs 获取）"),
+    "get_task_accounts": (_tool_task_accounts, "某轮任务的账号明细：等级/连续天数/完成进度/未完成任务",
+                          "job_id: 轮次 ID"),
+    "get_task_catalog": (_tool_task_catalog, "任务目录：有哪些任务、哪些能自动跑、哪些需手动", "无参数"),
+    "get_task_config": (_tool_task_config, "任务配置：开关/间隔/运行模式/签到开关/保留天数", "无参数"),
+    "get_task_health": (_tool_task_health, "任务服务健康：是否运行中、上次与下次执行时间", "无参数"),
+    "get_task_items": (_tool_task_items, "任务执行明细：每个子任务的最近结果与说明",
+                       "limit: 返回条数，默认 12"),
+    # ---- 补全批次 2：账号域 + 系统域 4 个（2026-10-15）----
+    "get_account_health": (_tool_account_health, "账号一致性自检：凭据侧与模型侧结论并排（慢接口，约 1-2 分钟）",
+                           "无参数"),
+    "get_account_models": (_tool_account_models, "账号模型覆盖：每个账号能用哪些模型",
+                           "account: 可选，指定账号名筛选"),
+    "get_token_stats": (_tool_token_stats, "Token 用量：按天统计输入/输出/缓存命中率",
+                        "days: 返回最近多少天，默认 7"),
+    "get_reqlog": (_tool_reqlog, "请求日志明细：最近请求的模型/账号/耗时/结果",
+                   "limit: 返回条数，默认 10"),
+    "get_notify_config": (_tool_notify_config, "通知配置详情：各渠道就绪状态与关键参数（密钥只显示是否已配）", "无参数"),
 }
+
+
+def _enabled_tool_names() -> List[str]:
+    """当前配置下可用的工具名。web_search 仅在开启联网搜索且密钥就绪时启用。"""
+    names = list(_TOOLS.keys())
+    try:
+        rt = _runtime()
+    except Exception:
+        rt = {}
+    if str(rt.get("webSearch") or "off") != "tavily" or not TAVILY_API_KEY:
+        names = [n for n in names if n != "web_search"]
+    return names
 
 
 def _tool_registry() -> List[Dict[str, Any]]:
@@ -927,11 +1509,38 @@ def _tool_registry() -> List[Dict[str, Any]]:
         "get_credit_trend": {"type": "object", "properties": {}},
         "diagnose_task_failure": {"type": "object", "properties": {
             "limit": {"type": "integer", "description": "分析几轮失败任务，默认 5"}}},
+        "web_search": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "搜索关键词，保持 400 字以内"},
+            "max_results": {"type": "integer", "description": "返回结果数，1-20，默认 5"},
+            "topic": {"type": "string", "description": "general（默认）或 news（实时新闻）"}}},
+        "get_task_runs": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "返回条数，默认 10"},
+            "status": {"type": "string", "description": "按状态筛选：done / failed / running"}}},
+        "get_task_detail": {"type": "object", "properties": {
+            "job_id": {"type": "string", "description": "轮次 ID"}},
+            "required": ["job_id"]},
+        "get_task_accounts": {"type": "object", "properties": {
+            "job_id": {"type": "string", "description": "轮次 ID"}},
+            "required": ["job_id"]},
+        "get_task_catalog": {"type": "object", "properties": {}},
+        "get_task_config": {"type": "object", "properties": {}},
+        "get_task_health": {"type": "object", "properties": {}},
+        "get_task_items": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "返回条数，默认 12"}}},
+        "get_account_health": {"type": "object", "properties": {}},
+        "get_account_models": {"type": "object", "properties": {
+            "account": {"type": "string", "description": "可选，指定账号名筛选"}}},
+        "get_token_stats": {"type": "object", "properties": {
+            "days": {"type": "integer", "description": "返回最近多少天，默认 7"}}},
+        "get_reqlog": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "返回条数，默认 10"}}},
+        "get_notify_config": {"type": "object", "properties": {}},
     }
+    enabled = set(_enabled_tool_names())
     return [{"type": "function", "function": {
         "name": name, "description": desc,
         "parameters": props.get(name) or {"type": "object", "properties": {}},
-    }} for name, (_fn, desc, _p) in _TOOLS.items()]
+    }} for name, (_fn, desc, _p) in _TOOLS.items() if name in enabled]
 
 
 def _dispatch_tool(name: str, args: Dict[str, Any]) -> str:
@@ -1037,6 +1646,15 @@ def _write_intent(text: str) -> Optional[str]:
         return "notify_off"
     if t in ("重置选号统计", "清空选号统计", "reset_selections"):
         return "reset_selections"
+    # ---- 补全批次 3：新增写操作（2026-10-15）----
+    if t in ("发送测试通知", "测试通知", "notify_test"):
+        return "notify_test"
+    if t in ("注册菜单", "创建菜单", "刷新菜单", "notify_menu"):
+        return "notify_menu"
+    if t in ("账号巡检", "账号自检", "跑一次账号巡检", "account_audit"):
+        return "account_audit"
+    if t in ("网关自检", "跑一次自检", "gateway_selftest"):
+        return "gateway_selftest"
 
     # 动词组合（自然语言下令，但不是疑问句）
     if ("任务" in t or "每日" in t) and any(v in t for v in ("执行", "启动", "跑", "运行", "来一轮", "跑一轮")):
@@ -1045,6 +1663,14 @@ def _write_intent(text: str) -> Optional[str]:
         return "checkin_all"
     if "巡检" in t and any(v in t for v in ("触发", "执行", "跑", "立即")):
         return "probe_models"
+    if "测试通知" in t or ("通知" in t and "测试" in t):
+        return "notify_test"
+    if "菜单" in t and any(v in t for v in ("注册", "创建", "刷新", "更新")):
+        return "notify_menu"
+    if "自检" in t and any(v in t for v in ("网关", "跑", "执行", "来一次")):
+        return "gateway_selftest"
+    if "账号" in t and any(v in t for v in ("自检", "巡检", "一致性")):
+        return "account_audit"
     return None
 
 
@@ -1268,6 +1894,90 @@ def _op_notify_off(_args: Dict[str, Any]) -> str:
         return "操作失败：%s" % str(e)[:80]
 
 
+# ---- 补全批次 3：新增写操作（2026-10-15）----
+
+@_register_write_op("notify_test", "将向已启用渠道发送一条测试通知",
+                    "所有已启用渠道（会真实发出消息）", "立即")
+def _op_notify_test(_args: Dict[str, Any]) -> str:
+    try:
+        try:
+            from gateway import notify as _nt
+        except ImportError:
+            import notify as _nt  # type: ignore
+        cfg = _nt._load()
+        sent = []
+        for ch in ((cfg.get("channels") or {})).keys():
+            ch_cfg = (cfg.get("channels") or {}).get(ch) or {}
+            if not ch_cfg.get("_enabled", True):
+                continue
+            sender = _nt._SENDERS.get(ch)
+            if not sender:
+                continue
+            try:
+                r = sender(ch_cfg, "AutoBuddy 测试通知（来自智能助手）")
+                sent.append("%s:%s" % (ch, "✅" if r.get("ok") else "❌" + str(r.get("error"))[:60]))
+            except Exception as e:
+                sent.append("%s:异常 %s" % (ch, str(e)[:40]))
+        if not sent:
+            return "没有已启用的通知渠道，未发送。"
+        return "测试通知已发送：\n  " + "\n  ".join(sent)
+    except Exception as e:
+        return "操作失败：%s" % str(e)[:100]
+
+
+@_register_write_op("notify_menu", "将向企微后台注册/刷新自定义菜单",
+                    "企微应用的自定义菜单（会覆盖现有菜单）", "立即")
+def _op_notify_menu(_args: Dict[str, Any]) -> str:
+    try:
+        try:
+            from gateway import notify as _nt
+        except ImportError:
+            import notify as _nt  # type: ignore
+        d = _http_json(WEBUI_BASE + "/api/notify/menu", timeout=30.0,
+                       method="POST", body=b"{}") or {}
+        if d.get("error"):
+            return "菜单注册失败：%s" % str(d["error"])[:160]
+        return "✅ 菜单已注册/刷新：%s" % (d.get("detail") or d.get("status") or "完成")
+    except Exception as e:
+        return "操作失败：%s" % str(e)[:120]
+
+
+@_register_write_op("account_audit", "将对全部账号做一次凭据+模型一致性自检",
+                    "全部账号（只读探测，不改配置）", "约 1-2 分钟")
+def _op_account_audit(_args: Dict[str, Any]) -> str:
+    try:
+        d = _http_json(WEBUI_BASE + "/api/account-health/audit", timeout=150.0) or {}
+    except Exception as e:
+        return "自检未完成：%s" % str(e)[:100]
+    rows = d.get("rows") or d.get("accounts") or []
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    if not rows:
+        return "自检已执行，但未返回账号明细（可在面板查看详情）。"
+    bad = [r for r in rows if isinstance(r, dict)
+           and any(str(r.get(k) or "").lower() in ("fail", "failed", "异常", "失效")
+                   for k in ("credential", "model", "credentialStatus", "modelStatus"))]
+    return "✅ 账号自检完成：共 %d 个，发现 %d 个异常%s" % (
+        len(rows), len(bad),
+        ("。\n异常账号：" + "、".join(str(r.get("name") or r.get("account")) for r in bad[:8])) if bad else "。")
+
+
+@_register_write_op("gateway_selftest", "将从容器内实测一次网关连通性",
+                    "只读探测（真实发一次请求）", "约 5-15 秒")
+def _op_gateway_selftest(_args: Dict[str, Any]) -> str:
+    try:
+        d = _http_json(WEBUI_BASE + "/api/gateway-selftest", timeout=60.0,
+                       method="POST", body=b"{}") or {}
+    except Exception as e:
+        return "自检失败：%s" % str(e)[:120]
+    ok = d.get("ok")
+    parts = ["✅ 网关自检：%s" % ("通过" if ok else "异常")]
+    for k in ("status", "model", "account", "durationMs", "detail", "error"):
+        if d.get(k) is not None:
+            parts.append("  · %s：%s" % (k, str(d[k])[:140]))
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # 模型选择
 # ---------------------------------------------------------------------------
@@ -1316,8 +2026,13 @@ def _is_tool_echo(text: str) -> bool:
     return bool(_TOOL_ECHO_RX.match(t))
 
 
-def assistant_reply(session_id: str, question: str) -> str:
+def assistant_reply(session_id: str, question: str,
+                    timeout: Optional[float] = None) -> str:
     """自然语言 → （可选工具调用）→ 中文回答。
+
+    ``timeout``：本次调用的总超时（秒）。None = 用 ASSISTANT_TIMEOUT（45s，
+    本地/Telegram 同步等）。企微回调会传一个短预算（如 3.5s）先探一下：
+    能快出结果就同步答，不给用户「请稍候」。
 
     返回空字符串表示助手不可用（调用方应回落到命令兜底文案）。
     """
@@ -1332,9 +2047,34 @@ def assistant_reply(session_id: str, question: str) -> str:
     model = _pick_model(rt)
     if not model:
         return ""
+    # 总预算（deadline 制）：``timeout`` 是**整条链路**的预算，不是每轮。
+    # 为什么必须这样（2026-10-15 实测）：LLM 是两轮链路（第1轮出工具调用
+    # → 执行工具 → 第2轮出答案）。之前把 _tmo 当每轮超时用，两轮各 3.5s
+    # 叠加 → 实际 5.4s，越过了企微 5s 硬上限。改成算好绝对截止时间，
+    # 每轮调用前用剩余时间，总耗时才不会超预算。
+    _tmo = float(timeout) if timeout else ASSISTANT_TIMEOUT
+    _deadline = time.time() + _tmo
+
+    def _remaining() -> float:
+        """距截止还剩多少秒（<0 表示已超）。"""
+        return _deadline - time.time()
     base = rt.get("base_url") or GATEWAY_BASE
     api_key = rt.get("api_key") or ""
     sys_prompt = rt.get("systemPrompt") or SYSTEM_PROMPT
+    # 啰嗦模式 / 输出语言：作为追加指令拼到 system prompt 末尾，
+    # 不污染用户自定义的 systemPrompt 本体。
+    _extra: List[str] = []
+    if rt.get("verbose"):
+        _extra.append("回复可以稍详细：先给结论，再附关键依据与建议。")
+    else:
+        _extra.append("回复简洁：直接给结论，避免多余铺垫与重复。")
+    _lang = str(rt.get("outputLanguage") or "").strip()
+    if _lang and _lang.lower() not in ("", "auto"):
+        _lang_cn = {"zh-CN": "简体中文", "zh-TW": "繁体中文", "en": "English",
+                    "ja": "日本語", "ko": "한국어"}.get(_lang, _lang)
+        _extra.append("始终使用%s回复。" % _lang_cn)
+    if _extra:
+        sys_prompt = sys_prompt + "\n\n【本次会话要求】" + "".join(_extra)
 
     messages: List[Dict[str, Any]] = [{"role": "system", "content": sys_prompt}]
     messages.extend(_history(session_id))
@@ -1344,9 +2084,16 @@ def assistant_reply(session_id: str, question: str) -> str:
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": 0.3,
         "stream": False,
     }
+    # 温度：配置为空则**不传**（用模型默认）；配了才传。
+    # 注意 "0" 是合法值，不能用 `if rt.get("temperature")` 判真假。
+    if rt.get("temperature") is not None:
+        payload["temperature"] = rt["temperature"]
+    # 思考深度：只在非 auto 时显式下发，避免不支持该参数的网关报错。
+    _effort = str(rt.get("reasoningEffort") or "").strip()
+    if _effort and _effort != "auto":
+        payload["reasoning_effort"] = _effort
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -1360,7 +2107,13 @@ def assistant_reply(session_id: str, question: str) -> str:
             headers={"Content-Type": "application/json"})
         if api_key:
             req.add_header("Authorization", "Bearer %s" % api_key)
-        with urllib.request.urlopen(req, timeout=ASSISTANT_TIMEOUT) as r:
+        # User-Agent：留空则用 Python 默认，不强行覆盖。
+        if rt.get("userAgent"):
+            req.add_header("User-Agent", str(rt["userAgent"]))
+        _left = _remaining()
+        if _left < 0.5:
+            return ""                      # 预算耗尽，不发起请求
+        with urllib.request.urlopen(req, timeout=min(_tmo, _left)) as r:
             d = json.loads(r.read().decode("utf-8", "replace"))
     except Exception:
         return ""
@@ -1404,7 +2157,10 @@ def assistant_reply(session_id: str, question: str) -> str:
                     headers={"Content-Type": "application/json"})
                 if api_key:
                     req2.add_header("Authorization", "Bearer %s" % api_key)
-                with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
+                _left2 = _remaining()
+                if _left2 < 0.5:
+                    return (final or "").strip()   # 预算不够，用已有结果
+                with urllib.request.urlopen(req2, timeout=min(_tmo, _left2)) as r2:
                     d2 = json.loads(r2.read().decode("utf-8", "replace"))
                 msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
                 # 模型可能又发起工具调用（或不支持 tool_choice=none）——
@@ -1423,11 +2179,15 @@ def assistant_reply(session_id: str, question: str) -> str:
                         headers={"Content-Type": "application/json"})
                     if api_key:
                         req2.add_header("Authorization", "Bearer %s" % api_key)
-                    with urllib.request.urlopen(req2, timeout=ASSISTANT_TIMEOUT) as r2:
-                        d2 = json.loads(r2.read().decode("utf-8", "replace"))
-                    msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
-                    if not (msg2.get("tool_calls") or []):
-                        final = (msg2.get("content") or "").strip()
+                    _left3 = _remaining()
+                    if _left3 < 0.5:
+                        final = (final or "").strip()
+                    else:
+                        with urllib.request.urlopen(req2, timeout=min(_tmo, _left3)) as r2:
+                            d2 = json.loads(r2.read().decode("utf-8", "replace"))
+                        msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
+                        if not (msg2.get("tool_calls") or []):
+                            final = (msg2.get("content") or "").strip()
                 except Exception:
                     final = ""
             # 回吐工具调用原文 → 视为无效输出

@@ -4019,6 +4019,8 @@ COLLAPSE_SCRIPT = r"""
   // ---------------------------------------------------------------------
   function wbRenderAssistantSection(host, data) {
     var reg = data.registry || [];
+    var settingsReg = data.settings || [];
+    var tavilyReady = !!(data.tavily && data.tavily.has_value);
     var cfg = data.config || {};
     var provs = cfg.providers || {};
     var curKey = cfg.provider || (reg[0] && reg[0].key) || "gateway";
@@ -4122,7 +4124,15 @@ COLLAPSE_SCRIPT = r"""
       base_url: "",
       api_key: "",
       model: cfg.model || "",
-      systemPrompt: cfg.systemPrompt || ""
+      systemPrompt: cfg.systemPrompt || "",
+      // 照 MoviePilot 智能助手设置补齐的通用项
+      maxContextK: cfg.maxContextK !== undefined ? cfg.maxContextK : 256,
+      temperature: cfg.temperature !== undefined ? cfg.temperature : "",
+      reasoningEffort: cfg.reasoningEffort || "auto",
+      outputLanguage: cfg.outputLanguage || "zh-CN",
+      userAgent: cfg.userAgent || "",
+      verbose: !!cfg.verbose,
+      webSearch: cfg.webSearch || "off"
     };
     // 每个 provider 各自记住「本次编辑中的草稿」，切回来时恢复。
     var draft = {};
@@ -4283,6 +4293,48 @@ COLLAPSE_SCRIPT = r"""
       box.appendChild(fieldRow("系统提示词（高级）",
         "自定义助手的身份与口径；一般无需修改。", promptBox));
 
+      // ---- 3.5 通用设置（照 MoviePilot 智能助手设置项逐项对齐，注册表驱动）----
+      settingsReg.forEach(function (f) {
+        if (f.key === "enabled") return;      // 总开关已在顶部单独渲染
+        var box2 = wbEl("div", null);
+        box2.style.cssText = "min-width:260px;";
+        if (f.type === "bool") {
+          var bBtn = wbEl("button",
+            "wb-api-btn" + (state[f.key] ? " wb-api-btn-on" : ""),
+            state[f.key] ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+          bBtn.onclick = function () {
+            state[f.key] = !state[f.key];
+            bBtn.className = "wb-api-btn" + (state[f.key] ? " wb-api-btn-on" : "");
+            bBtn.textContent = state[f.key] ? "已开启 · 点击关闭" : "已关闭 · 点击开启";
+          };
+          box2.appendChild(bBtn);
+        } else if (f.type === "select") {
+          var sSel = wbEl("select", "wb-api-input");
+          (f.options || []).forEach(function (o) {
+            var opt = document.createElement("option");
+            opt.value = o; opt.textContent = o;
+            if (String(state[f.key]) === o) opt.selected = true;
+            sSel.appendChild(opt);
+          });
+          sSel.onchange = function () { state[f.key] = sSel.value; };
+          box2.appendChild(sSel);
+        } else {
+          var nIn = wbEl("input", "wb-api-input");
+          nIn.type = f.type === "number" ? "number" : "text";
+          if (f.type === "number") {
+            if (f.min !== undefined) nIn.min = f.min;
+            if (f.max !== undefined) nIn.max = f.max;
+          }
+          nIn.value = (state[f.key] === undefined || state[f.key] === null)
+            ? "" : state[f.key];
+          nIn.placeholder = f.type === "number" ? "留空 = 模型默认" : "";
+          nIn.style.cssText = "width:100%;";
+          nIn.oninput = function () { state[f.key] = nIn.value; };
+          box2.appendChild(nIn);
+        }
+        box.appendChild(fieldRow(f.label, f.desc || "", box2));
+      });
+
       // ---- 4. 操作：测试连通性 + 保存 ----
       var actRow = wbEl("div", "wb-api-row");
       var actMain = wbEl("div", "wb-api-main");
@@ -4302,6 +4354,13 @@ COLLAPSE_SCRIPT = r"""
         provider: selKey,
         model: state.model,
         systemPrompt: state.systemPrompt,
+        maxContextK: state.maxContextK,
+        temperature: state.temperature,
+        reasoningEffort: state.reasoningEffort,
+        outputLanguage: state.outputLanguage,
+        userAgent: state.userAgent,
+        verbose: state.verbose,
+        webSearch: state.webSearch,
         providers: {}
       };
       var pv = {};
@@ -7581,25 +7640,56 @@ async def wecom_callback_msg(path: str, request: Request):
         # 此前这里内联了一份 if/elif 命令链，与 notify._wecom_interpret 各改一半，
         # 导致「改了 notify.py 菜单却没变」—— 回调实际走的是本文件这份。
         # 2026-10-13 用户二次反馈后收拢：本文件只做加解密，不含命令语义。
-        from fastapi.concurrency import run_in_threadpool
-        # from_user 作为会话标识传给智能助手（多轮上下文隔离）。
-        # 放在线程池里跑：助手要调 LLM（最长 45s），绝不能阻塞事件循环。
         #
-        # ⚠️ allow_defer=True：企微「接收消息服务器」要求 **5 秒内**返回响应体，
-        # 超时即丢弃（用户 2026-10-14 反馈「发了『你可以做什么』没回我」的
-        # 根因：LLM 链路实测 9 秒）。开启后，需要 LLM 的问题立即回一句
-        # 「正在查询」，算完由后台线程主动推送答复。
-        # 能力/菜单类与全部命令仍是**即时确定性回复**，不受影响。
-        reply = await run_in_threadpool(
-            _notify.wecom_command_reply, cmd, from_user or None, True)
-        plain_xml = _notify.build_reply_text(from_user, to_user, reply)
-        enc_xml = _notify.encrypt_reply(plain_xml, token, aes_key, corpid,
-                                        q.get("timestamp") or str(int(time.time())),
-                                        q.get("nonce") or "")
-        return Response(content=enc_xml, media_type="application/xml")
+        # ---- MP 模式（2026-10-15 重写）----
+        #
+        # 关键参照：MoviePilot `app/application/messaging/ingress.py`
+        #     def submit_message_to_host(payload, source, *, submit, timeout=15):
+        #         submit(forward_message_to_host, dict(payload), source, ...)
+        #         return True        # ← 立即返回 True，**不等结果**
+        #
+        # MP 日志实证（用户实测 6 分钟才回复）：
+        #     18:04:11.619  POST /api/v1/message/... 200 OK   ← 回调立即返回
+        #     18:04:11.626  收到微信消息：最近有哪些国内热门电影
+        #     18:04:17.281  执行工具 search_web（8694ms）
+        #     ...（5分41秒后台推理）...
+        #     18:10:27.679  发送消息：根据搜索结果，以下是…
+        #
+        # 回调响应与实际答复**完全解耦**：回调只回“我收到了”，答复走
+        # 另一条路（主动推送）。所以 MP 能跑 6 分钟不超时 ——
+        # 而之前我们把答复塞进 5 秒内，复杂问题永远答不好。
+        #
+        # 与之配套（重要）：wecom_command_reply 不再传 allow_defer ——
+        # 不再有「正在查询，请稍候」这类回执，用户发问后直接等答案。
+        threading.Thread(
+            target=_wecom_handle_async,
+            args=(cmd, from_user or None),
+            name="ab-wecom-handle", daemon=True).start()
+        # 立即返回空串：企微只要求 5s 内响应，不要求响应体内容。
+        return Response(content="", media_type="text/plain")
     except Exception as e:
         logging.warning("[notify] wecom 回调处理失败: %s", str(e)[:120])
         return Response(content="fail", status_code=403)
+
+
+def _wecom_handle_async(cmd: str, session_id: Optional[str]) -> None:
+    """后台处理企微消息，并把结果主动推送回去（MP 的 submit 模式）。
+
+    跑多久都行 —— 回调早已返回，没有任何超时约束。
+    只读命令会很快出结果；需要 LLM/联网的问题慢慢算，算完推送。
+    """
+    try:
+        # allow_defer=False：这里已是后台线程，不需要再「先回执 + 后台推送」，
+        # 直接同步把答案算出来，然后把答案本身推给用户。
+        reply = _notify.wecom_command_reply(cmd, session_id, False)
+        if not reply:
+            return
+        ok = _notify.push_text_to_wecom(reply)
+        if not ok:
+            logging.warning("[notify] 企微后台答复推送失败（session=%s）", session_id)
+    except Exception as e:
+        logging.warning("[notify] 企微后台处理异常：%s: %s",
+                        type(e).__name__, str(e)[:150])
 
 
 @app.put("/api/model-health")

@@ -23,4 +23,7 @@ services:
       # WorkBuddy 每日成长任务（vendor 版签到脚本，账号池 cn 账号只读共用凭据）。
       # 服务跑在容器内网 18093，由 web_proxy 转发，不对外映射端口。
       WB_DAILY_ENABLED: "1"
+      # 联网搜索（Tavily）。密钥走宿主环境变量注入，不落盘、不进仓库；
+      # 留空则助手不启用 web_search 工具（设置页「联网搜索」仍可切换）。
+      TAVILY_API_KEY: "${TAVILY_API_KEY:-}"
       WB_DAILY_PORT: "18093"
