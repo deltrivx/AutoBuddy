@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.89"
+VERSION_DEFAULT = "0.9.90"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -506,6 +506,25 @@ def _collect_daily_report() -> tuple:
                 y_task = float(row.get("task") or 0)
                 y_total = float(row.get("total") or 0)
                 break
+        # ⚠️ 2026-10-17 修复（用户反馈「昨日签到积分：0」但实际有 2200）：
+        # db.summarize_wb_daily_credits() 只从 wb_daily_tasks 的 detail 文本
+        # 解析「+N积分」，而 checkin 行的 detail 恒为「✅签到: 今天已签到」
+        # —— **不含任何数字**，所以签到奖励在这里恒为 0。
+        # 页面上的签到积分是 HTTP 层 _merge_checkin_credits() 用账号签到状态
+        # 里的 raw.daily_credit + raw.checkin_dates 补出来的。
+        # 日报原先直接读 DB，绕过了那层合并，于是永远报 0。
+        # 这里改为复用同一套合并逻辑，保证「页面看到的」与「日报报的」一致。
+        try:
+            from gateway import web_proxy as _wp
+            summ = _wp._merge_checkin_credits(summ)
+            for row in (summ.get("days") or []):
+                if str(row.get("date")) == y_date:
+                    y_checkin = float(row.get("checkin") or 0)
+                    y_task = float(row.get("task") or 0)
+                    y_total = float(row.get("total") or 0)
+                    break
+        except Exception as _e:
+            print(f"[daily-report] 合并签到积分失败: {_e}")
         total_credits = float(summ.get("totalCredits") or 0)
     except Exception:
         total_credits = 0.0
@@ -547,13 +566,26 @@ def _collect_daily_report() -> tuple:
         from gateway import token_tracker as _tt
         agg = _tt.get_aggregated_token_stats() or {}
         # 实测结构：sources[].daily[]（{key, records, ...}），records 才是请求数
-        # ⚠️ 2026-10-16 修复（用户反馈「给我的是今天的数据，凌晨 0 点推送
-        # 所以永远为 0」）：日报在 00:05 发送，此刻「今天」才过去 5 分钟，
-        # 按今天统计必然接近 0。改按**昨日**统计，与积分部分同一口径。
+        # ⚠️ 2026-10-17 修复（用户反馈「昨日调用：0」）：
+        # 1) 日报在 00:05 发送，此刻「今天」才过去 5 分钟，按今天统计必然接近 0。
+        #    改按**昨日**统计，与积分部分同一口径。
+        # 2) 不能把所有 source 的 records 直接相加 —— 实测 workbuddy 与
+        #    workbuddy-ai 扫的是**同一批文件**（filesScanned 20434 vs 21034、
+        #    projects / models 完全一致），daily 也几乎逐日相同，
+        #    只是后者多含 9-22/9-23 两天。直接相加会把同一天的调用数翻倍
+        #    （10-16 报成 7382，实际 3691）。
+        #    取**每个日期在所有 source 中的最大值**：同一批文件的重复来源
+        # #    取 max 即为真实值；真有两个独立来源时 max 也不会把小的漏掉。
+        per_day: dict[str, int] = {}
         for _s in (agg.get("sources") or []):
             for _row in (_s.get("daily") or []):
-                if str(_row.get("key")) == y_date:
-                    today_calls += int(_row.get("records") or 0)
+                _k = str(_row.get("key") or "")
+                if not _k:
+                    continue
+                _v = int(_row.get("records") or 0)
+                if _v > per_day.get(_k, 0):
+                    per_day[_k] = _v
+        today_calls = per_day.get(y_date, 0)
     except Exception:
         pass
     # 模型信息（日报 / 巡检通知 / 模型变化通知共用一份口径）
@@ -2910,6 +2942,8 @@ async def chat_completions(request: Request):
                     variant=variant,
                     cache_read=usage["cacheRead"] if usage else 0,
                     cache_write=usage["cacheWrite"] if usage else 0,
+                    key_id=gate.get("keyId") or "",
+                    key_name=gate.get("keyName") or "",
                 )
 
         # 上游已经接受了这个「账号 × 模型」组合（200 且尚未换号），记入正向矩阵。
@@ -3052,6 +3086,8 @@ async def chat_completions(request: Request):
             variant=variant,
             cache_read=usage["cacheRead"] if usage else 0,
             cache_write=usage["cacheWrite"] if usage else 0,
+            key_id=gate.get("keyId") or "",
+            key_name=gate.get("keyName") or "",
         )
         input_tokens = usage["prompt"] if usage else input_tokens
         output_tokens = usage["completion"] if usage else estimate_tokens(collected_content)

@@ -119,6 +119,18 @@ DEFAULT_CONFIG = {
     "task_last_run_at": None,
 }
 
+# 签到通知的最小发送间隔（秒）。用户可把签到轮配成 24 小时一轮，
+# 但巡检可能在短时间内反复拉起签到轮（中断→恢复→再中断），
+# 于是短时间连收多条签到通知。这道时间窗按用户配置的节奏兜底，
+# 默认 6 小时 —— 与「一天一两轮签到」的实际使用方式相容，
+# 又不至于让真正的第二次签到被压掉。
+_CHECKIN_NOTIFY_MIN_GAP_SEC = 6 * 3600
+
+# 任务执行期间的增量落库间隔（秒）。
+# 中断轮次的逐账号明细全靠它抢救 —— SIGKILL 时 finally 不会跑，
+# 不周期性落盘的话，跑到 92% 的任务被强杀后明细依然是 0 行。
+_PERSIST_INTERVAL_SEC = 20.0
+
 # 巡检周期下限（分钟）：设得比这更短会让循环空转，没有实际意义。
 PATROL_MIN_INTERVAL_MINUTES = 5
 # 巡检周期上限（分钟）：超过 1 天就失去「快速恢复」的意义。
@@ -420,6 +432,16 @@ class DailyJob:
         self._checkin_notified = True   # 先置位：即使发送失败也不重试（防刷屏）
 
         def _worker():
+            # 跨轮次时间窗：读不到时间戳时按「可以发」处理，不因故障静默
+            try:
+                import db as _db0
+                last = _db0.get_config("checkin_notify_last_at")
+                if last is not None:
+                    gap = time.time() - float(last)
+                    if 0 <= gap < _CHECKIN_NOTIFY_MIN_GAP_SEC:
+                        return
+            except Exception:
+                pass
             try:
                 try:
                     import notify
@@ -439,6 +461,15 @@ class DailyJob:
                 title, lines = notify.build_checkin_done(checkin, remaining, total)
                 r = notify.send_scene("checkin_done", title, lines)
                 if r.get("ok"):
+                    # 只有真的发出去了才记时间戳：被内容去重（deduped）不算一次
+                    # 有效推送，否则两条相同内容会互相压制，后续真的变化也发不出来。
+                    if not r.get("deduped"):
+                        try:
+                            _db.set_config("checkin_notify_last_at", time.time(),
+                                           category="wb_daily",
+                                           description="上次签到通知发送时间（跨轮次去重）")
+                        except Exception:
+                            pass
                     self.log_line("签到通知已发送：%s" % ",".join(r.get("sent_to") or []))
             except Exception as e:
                 try:
@@ -478,7 +509,16 @@ class DailyJob:
             # 场景通知：签到成功（用户 2026-10-13 需求）。
             # 挂在**账号完成处**而非每个签到动作 —— 一轮有 20+ 账号，逐个推会刷屏；
             # 且此刻该账号的签到结果已确定，积分汇总也已落库，数据是准的。
-            self._notify_checkin_once()
+            #
+            # ⚠️ 2026-10-17 修复（用户反馈「签到已配置 24 小时一次，
+            # 短时间发送两次，还违背重复消息原则」）：
+            # 原先不分轮次类型，任何一轮（含任务轮）首个账号完成就推一次。
+            # 而任务轮会被巡检 / 调度 / 手动执行反复拉起，于是签到通知
+            # 也跟着一轮接一条 —— 用户看到「明明 24 小时一轮，却连收两条」。
+            # 现在**只有签到轮（kind == checkin）才发**：任务轮的职责是
+            # 签到以外的全部任务，本来就不该由它报告签到结果。
+            if self.kind == "checkin":
+                self._notify_checkin_once()
             self._cur_account = None
         elif self._cur_account is not None:
             # 记录具体的执行动作（签到、领奖、抽奖、完成等）
@@ -945,6 +985,7 @@ async def _execute(job: DailyJob):
     # 单个账号真的卡死（上游不返回 / 网络黑洞）仍能被切掉，不会拖死整轮。
     per_account_timeout = float(os.getenv("WB_DAILY_ACCOUNT_TIMEOUT", "180") or 180)
     last_activity = time.monotonic()
+    last_persist = last_activity      # 增量落库计时基准
     rc = None
     try:
         while True:
@@ -962,6 +1003,26 @@ async def _execute(job: DailyJob):
             if text:
                 all_lines.append(text)
                 job.log_line(text)
+                # 周期性增量落库（用户 2026-10-17 需求：中断的任务要能续跑）。
+                # 背景：_persist_run 原先只在任务**结束**时调一次，
+                # 而 SIGKILL / 容器重建时 _guard 的 finally 都没机会跑，
+                # 于是中断轮次的逐账号明细**全部丢失** ——
+                # 实测 6 个中断轮次 accounts=0、wb_daily_accounts 零行，
+                # 断点续跑因此永远无账可续（_already_done_accounts 取不到
+                # 已完成的账号，只能整轮 22 个账号重跑）。
+                # 现在每 _PERSIST_INTERVAL_SEC 秒把当前进度落一次盘：
+                #   · 面板能实时看到「这一轮已经跑完哪几个账号」；
+                #   · 被强杀时最后 N 秒的进度已在库里，续跑能真正跳过
+                #     已完成的账号，而不是整轮重来。
+                # save_wb_daily_run 用 INSERT OR REPLACE，同一 job_id
+                # 重复落盘是设计内的（start_job 时就先记了一条 running）。
+                now_mono = time.monotonic()
+                if now_mono - last_persist >= _PERSIST_INTERVAL_SEC:
+                    last_persist = now_mono
+                    try:
+                        _persist_run(job, all_lines)
+                    except Exception:
+                        pass
         rc = await proc.wait()
     except TimeoutError:
         try:

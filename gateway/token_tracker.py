@@ -571,12 +571,19 @@ def _estimate_cost(model: str, input_tokens: int, output_tokens: int,
 
 def record_token_usage(model: str, input_tokens: int, output_tokens: int, duration_sec: float = 0.0, request_id: str = "",
                        account_id: str = "", account_name: str = "", variant: str = "",
-                       cache_read: int = 0, cache_write: int = 0):
+                       cache_read: int = 0, cache_write: int = 0,
+                       key_id: str = "", key_name: str = ""):
     """网关实时调用记录。
 
     必须带上实际服务该请求的账号（account_id / account_name）：
     官方的按账号用量接口只对「当前账号」返回模型明细，其余账号的 models 恒为空，
     因此只有靠网关自己归因，账号卡片才能显示「其他账号调用了哪些模型」。
+
+    ``key_id`` / ``key_name`` 是发起调用的 API 密钥（用户 2026-10-17 需求：
+    「设置页 API 接入，目前每个 API 只有总调用次数，可以将调用次数单独一行，
+    并添加今日和全部的积分消耗，词元消耗」）。
+    没有带密钥的调用（WebUI 内部回环、未开启密钥校验时）两者为空串，
+    聚合时归到「未归属」桶，不参与任何密钥行的展示。
 
     ``cache_read`` / ``cache_write`` 来自上游 ``usage``。命中缓存的那部分输入
     同时计在 ``input``（完整输入）里，另记一份 ``uncachedInput``（未命中部分），
@@ -610,6 +617,8 @@ def record_token_usage(model: str, input_tokens: int, output_tokens: int, durati
             "duration": round(duration_sec, 2),
             "accountId": account_id or "",
             "accountName": account_name or "",
+            "keyId": key_id or "",
+            "keyName": key_name or "",
             "variant": variant or "",
             "source": "gateway",
             # 等价美元成本（观感用，不是计费依据）。
@@ -1084,8 +1093,50 @@ def get_aggregated_token_stats() -> Dict[str, Any]:
     src_cn = aggregate_for_subset(cn_logs if cn_logs else logs, "workbuddy")
     src_ai = aggregate_for_subset(ai_logs if ai_logs else logs, "workbuddy-ai")
 
+    # ── 按 API 密钥聚合（用户 2026-10-17 需求）──
+    # 「设置页 API 接入，目前每个 API 只有总调用次数，可以将调用次数单独一行，
+    #  并添加今日和全部的积分消耗，词元消耗」。
+    # 只在网关实时记录里带 keyId（record_token_usage 的 key_id 参数）；
+    # 云端流水与历史记录没有这个字段，归到空串那一桶（界面标为「未归属」）。
+    # ⚠️ 不按 source 拆：密钥是调用方身份，与账号属于国内版/国际版无关，
+    #    同一把密钥完全可以同时调用两类账号。
+    by_key: dict = {}
+    today_key = time.strftime("%Y-%m-%d", time.localtime())
+    for l in agg_logs:
+        kid = str(l.get("keyId") or "")
+        if not kid:
+            continue        # 未归属的调用不进密钥行（WebUI 回环 / 未开密钥校验）
+        b = by_key.setdefault(kid, {
+            "keyId": kid,
+            "keyName": l.get("keyName") or "",
+            "calls": 0, "totalTokens": 0, "inputTokens": 0, "outputTokens": 0,
+            "cacheRead": 0, "todayCalls": 0, "todayTokens": 0,
+            "firstAt": None, "lastAt": None,
+        })
+        b["calls"] += 1
+        _t = int(l.get("total") or 0)
+        b["totalTokens"] += _t
+        b["inputTokens"] += int(l.get("input") or 0)
+        b["outputTokens"] += int(l.get("output") or 0)
+        b["cacheRead"] += min(int(l.get("cacheRead") or 0), int(l.get("input") or 0))
+        if str(l.get("date") or "") == today_key:
+            b["todayCalls"] += 1
+            b["todayTokens"] += _t
+        _ts = l.get("ts") or l.get("timestamp")
+        try:
+            _ts = int(_ts)
+        except (TypeError, ValueError):
+            _ts = None
+        if _ts:
+            if b["firstAt"] is None or _ts < b["firstAt"]:
+                b["firstAt"] = _ts
+            if b["lastAt"] is None or _ts > b["lastAt"]:
+                b["lastAt"] = _ts
+    by_key_list = sorted(by_key.values(), key=lambda x: x["totalTokens"], reverse=True)
+
     return {
         "generatedAt": int(time.time() * 1000),
         "rangeDays": None,
-        "sources": [src_cn, src_ai]
+        "sources": [src_cn, src_ai],
+        "byKey": by_key_list,
     }

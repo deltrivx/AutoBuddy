@@ -106,6 +106,11 @@ def init_db() -> None:
                     account_name  TEXT NOT NULL DEFAULT '',
                     variant       TEXT NOT NULL DEFAULT '',
                     source        TEXT NOT NULL DEFAULT 'gateway',
+                    -- 发起调用的 API 密钥（用户 2026-10-17 需求：按密钥统计
+                    -- 今日/累计调用与词元消耗）。空串 = 未归属
+                    -- （WebUI 内部回环、未开启密钥校验时的调用）。
+                    key_id        TEXT NOT NULL DEFAULT '',
+                    key_name      TEXT NOT NULL DEFAULT '',
                     -- 等价美元成本（观感用）。NULL = 未定价，不是 0 ——
                     -- 0 表示「这个模型免费」，NULL 表示「没有定价数据」。
                     cost          REAL
@@ -155,6 +160,9 @@ def init_db() -> None:
             # 老库升级：CREATE TABLE IF NOT EXISTS 对已存在的表不做任何事，
             # 后加的列必须在这里补。生产库 v0.9.29 建表时还没有 cost。
             _ensure_column(conn, "usage_logs", "cost", "REAL")
+            # 按密钥统计（用户 2026-10-17）：老库没有这两列，补上空串默认值
+            _ensure_column(conn, "usage_logs", "key_id", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(conn, "usage_logs", "key_name", "TEXT NOT NULL DEFAULT ''")
         finally:
             conn.close()
         _INIT_DONE = True
@@ -214,6 +222,8 @@ def _row_to_detail(row: sqlite3.Row) -> Dict[str, Any]:
         "accountName": row["account_name"] or "",
         "variant": row["variant"] or "",
         "source": row["source"] or "gateway",
+        "keyId": row["key_id"] or "",
+        "keyName": row["key_name"] or "",
         # 未定价读回来是 None（不是 0），与写入语义一致
         "cost": row["cost"],
     }
@@ -273,6 +283,8 @@ def insert_batch(entries: List[Dict[str, Any]]) -> int:
             str(e.get("accountName") or ""),
             str(e.get("variant") or ""),
             str(e.get("source") or "gateway"),
+            str(e.get("keyId") or ""),
+            str(e.get("keyName") or ""),
             # 未定价模型写 None，不写 0（0 是「免费」，None 是「未知」）
             (float(e["cost"]) if isinstance(e.get("cost"), (int, float)) else None),
         ))
@@ -284,8 +296,8 @@ def insert_batch(entries: List[Dict[str, Any]]) -> int:
                 INSERT OR IGNORE INTO usage_logs
                     (id, ts, time, date, model, input, output, cache_read,
                      cache_write, uncached_input, duration, account_id,
-                     account_name, variant, source, cost)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     account_name, variant, source, key_id, key_name, cost)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 rows,
             )

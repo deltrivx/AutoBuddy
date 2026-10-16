@@ -819,6 +819,35 @@ COLLAPSE_SCRIPT = r"""
     border-bottom: 1px dashed var(--border, rgba(120, 120, 120, 0.2));
   }
   .wb-api-keyrow:last-child { border-bottom: 0; }
+  /* 密钥统计子行：单独一行横排五个指标（用户 2026-10-17 需求）。
+     用 flex-basis:100% 强制换行，把统计与上面的密钥名/按钮行分开；
+     不用再嵌一张卡片 —— 那张卡已经是一行一个密钥了，再套会变成框中框。 */
+  .wb-api-keystat {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 14px;
+    flex-basis: 100%;
+    margin-top: 2px;
+    padding-left: 2px;
+  }
+  .wb-api-keystat-cell { display: inline-flex; align-items: baseline; gap: 4px; }
+  .wb-api-keystat-k {
+    font-size: 10px;
+    color: var(--muted-foreground, #64748b);
+    white-space: nowrap;
+  }
+  .wb-api-keystat-v {
+    font-size: 11.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--foreground, #0f172a);
+    white-space: nowrap;
+  }
+  .wb-api-keystat-empty {
+    font-size: 10.5px;
+    color: var(--muted-foreground, #64748b);
+  }
   .wb-api-keyname {
     font-size: 12px;
     font-weight: 500;
@@ -5120,6 +5149,17 @@ COLLAPSE_SCRIPT = r"""
     return chip;
   }
 
+  /* 密钥统计子行里的一个「标签 + 数值」单元。
+     单独成行展示（用户 2026-10-17 需求：调用次数单独一行，
+     再加今日/全部的积分消耗与词元消耗），不复用行内的 badge ——
+     badge 是给状态用的，塞五个数字会挤成一团。 */
+  function wbKeyStat(label, value) {
+    var cell = wbEl("span", "wb-api-keystat-cell");
+    cell.appendChild(wbEl("span", "wb-api-keystat-k", label));
+    cell.appendChild(wbEl("span", "wb-api-keystat-v", value));
+    return cell;
+  }
+
   function wbTime(ms) {
     if (!ms) return "从未";
     try {
@@ -5149,6 +5189,7 @@ COLLAPSE_SCRIPT = r"""
     var accounts = gw.accounts || {};
     var stats = data.stats || {};
     var keys = data.keys || [];
+    var keyStats = data.keyStats || {};   // 按密钥的调用/词元统计（token-stats 的 byKey）
     var base = wbApiBase();
 
     var section = wbEl("section", "min-w-0 space-y-2.5");
@@ -5301,6 +5342,35 @@ COLLAPSE_SCRIPT = r"""
         var meta = wbEl("span", "wb-api-badge", "调用 " + (k.callCount || 0) + " 次");
         meta.title = "创建于 " + wbTime(k.createdAt) + " · 最近使用 " + wbTime(k.lastUsedAt);
         line.appendChild(meta);
+
+        /* 按密钥的调用 / 积分 / 词元统计（用户 2026-10-17 需求：
+           「可以将调用次数单独一行，并添加今日和全部的积分消耗，词元消耗」）。
+           数据来自 /api/token-stats 的 byKey（record_token_usage 的 key_id 归因）。
+           取不到时（该密钥还没被用于调用、或历史记录无 keyId）显示「—」，
+           不编造 0 —— 「没有记录」和「真的是 0」是两件事。 */
+        var ks = keyStats[k.id] || null;
+        var statRow = wbEl("div", "wb-api-keystat");
+        if (ks) {
+          var fmtN = function (n) {
+            n = Number(n || 0);
+            if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+            if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+            if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+            return String(n);
+          };
+          statRow.appendChild(wbKeyStat("今日调用", fmtN(ks.todayCalls) + " 次"));
+          statRow.appendChild(wbKeyStat("累计调用", fmtN(ks.calls) + " 次"));
+          statRow.appendChild(wbKeyStat("今日词元", fmtN(ks.todayTokens)));
+          statRow.appendChild(wbKeyStat("累计词元", fmtN(ks.totalTokens)));
+          statRow.appendChild(wbKeyStat("输入 / 输出",
+            fmtN(ks.inputTokens) + " / " + fmtN(ks.outputTokens)));
+          statRow.title = "最后使用：" + wbTime(ks.lastAt)
+            + "　缓存命中：" + fmtN(ks.cacheRead);
+        } else {
+          statRow.appendChild(wbEl("span", "wb-api-keystat-empty",
+            "暂无调用明细（该密钥还未被使用，或使用时间早于统计启用）"));
+        }
+        line.appendChild(statRow);
 
         var spacer = wbEl("span", null);
         spacer.style.cssText = "flex:1 1 auto;";
@@ -5840,12 +5910,27 @@ COLLAPSE_SCRIPT = r"""
     }
 
     if (wbApiCache) { render(wbApiCache); return; }
+    /* 两个接口都要：/api/api-keys 给密钥清单与总调用次数，
+       /api/token-stats 的 byKey 给每把密钥的今日/累计词元消耗
+       （用户 2026-10-17 需求）。
+       token-stats 拉失败不影响密钥列表渲染 —— 那时 keyStats 为 {}，
+       各行显示「暂无调用明细」，而不是整块不显示。 */
     fetch("/api/api-keys", { cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || data.error) return;
-        wbApiCache = data;
-        render(data);
+        return fetch("/api/token-stats", { cache: "no-store" })
+          .then(function (r2) { return r2.ok ? r2.json() : {}; })
+          .catch(function () { return {}; })
+          .then(function (agg) {
+            var map = {};
+            ((agg && agg.byKey) || []).forEach(function (b) {
+              if (b && b.keyId) map[b.keyId] = b;
+            });
+            data.keyStats = map;
+            wbApiCache = data;
+            render(data);
+          });
       })
       .catch(function () {});
   }

@@ -2101,7 +2101,12 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
         "🤖 模型",
         "  · 可用模型总数：%s（自动发现 %s）" % (
             models_info.get("total", "?"), models_info.get("autoDiscovered", "?")),
-        "  · 轮检禁用：%s · 手动禁用：%s" % (
+        # ⚠️ 2026-10-17 修复（用户截图反馈「轮检禁用：376」看不懂）:
+        # 376 是「账号 × 模型」的**组合数**（21 个启用账号 × 约 19 个
+        # 被轮检判禁用的模型），不是「376 个模型被禁用」。
+        # 日报里裸报一个组合数，用户完全无法理解它是什么、该不该管。
+        # 改为明确标注它是「账号×模型组合」，避免被误读成模型数。
+        "  · 轮检禁用：%s 个账号×模型组合 · 手动禁用：%s" % (
             models_info.get("disabled", "?"), models_info.get("manual", "?")),
         "",
         "🔌 API 调用",
