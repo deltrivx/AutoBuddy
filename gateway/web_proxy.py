@@ -83,45 +83,10 @@ COLLAPSE_SCRIPT = r"""
     background-color: rgba(120, 120, 120, 0.1);
     transform: scale(1.08);
   }
-  aside.wb-collapsed {
-    width: 68px !important;
-    padding-left: 10px !important;
-    padding-right: 10px !important;
-  }
   /* 切换视图时纵向滚动条出现/消失会让内容区宽度突变，视觉上就是「页面横向漂移」。
      scrollbar-gutter: stable 为滚动条预留固定槽位，消除这个抖动。 */
   html { scrollbar-gutter: stable; }
 
-  aside.wb-collapsed div.min-w-0 {
-    display: none !important;
-  }
-  aside.wb-collapsed nav a {
-    justify-content: center !important;
-    padding-left: 0 !important;
-    padding-right: 0 !important;
-  }
-  aside.wb-collapsed nav a span.wb-nav-label {
-    display: none !important;
-  }
-  /* 收拢态导航悬停提示：图标模式下用悬浮气泡补偿名称，收拢后零文字残留 */
-  aside.wb-collapsed nav a { position: relative; }
-  aside.wb-collapsed nav a:hover::after {
-    content: attr(data-wb-label);
-    position: absolute;
-    left: calc(100% + 12px);
-    top: 50%;
-    transform: translateY(-50%);
-    background: var(--card, #ffffff);
-    color: var(--foreground, #0f172a);
-    border: 1px solid var(--border, rgba(120,120,120,0.25));
-    box-shadow: 0 4px 14px rgba(0,0,0,0.14);
-    border-radius: 8px;
-    padding: 5px 10px;
-    font-size: 12px;
-    white-space: nowrap;
-    z-index: 80;
-    pointer-events: none;
-  }
   /* 右下角用户球（头像 + 昵称，窄屏只留头像）与弹出层 */
   #wb-user-orb {
     position: fixed;
@@ -1022,48 +987,59 @@ COLLAPSE_SCRIPT = r"""
   }
 
 
+
+
+
   /* ==================================================================
-     主界面重新设计 v2（2026-10-16 第二版）
-     用户反馈：「之前关于UI界面设计回滚，重新设计给我一个全新方案，
-     目前方案还是沿用的上游的」。
+     主界面重新设计 v5（2026-10-16 第五版）—— 顶栏中央选项卡
+     废弃 v4 的左侧边栏布局。用户需求：
+       1) PC 端选项卡固定到正上方中央
+       2) 移动端选项卡以收纳形式放在右上角
+       3) 主题切换以单个图标放在收纳按钮前方
+       4) 「概览」二字改为四字（与其他选项卡对齐）→ 数据总览
+       5) 概览页增加更多重要数据
 
-     所以这一版**彻底抛弃上游的左侧 220px 固定纵栏**这个范式，改成：
-       顶部横条导航（毛玻璃）+ 全宽内容区 + 主题控件在右上角
+     布局（PC >=861px）：
+       ┌────────────────────────────────────────────────────────┐
+       │ logo   [账号][词元][积分][任务][设置]      主题(三段)      │  56px sticky
+       ├────────────────────────────────────────────────────────┤
+       │  内容区（官方页 或 数据总览视图）                        │
+       └────────────────────────────────────────────────────────┘
+       用 3 列网格保证选项卡真正居中（brand 左 / nav 中 / 主题右）。
 
-     布局变换靠 flex 方向翻转实现（官方容器是 flex row: aside + main，
-     改成 column 后 aside 变横条、main 吃满全宽），DOM 一行不动，
-     所以不影响 React 渲染，也不会被 hydration 覆盖。
-
-     设计要点：
-       1) 顶栏毛玻璃 + 底部细边框，滚动时内容从栏下透出，层次分明
-       2) 导航横向排布，选中态用主色淡底 + 主色文字（不再靠左侧竖条）
-       3) 主题三段控件放顶栏右上角（用户明确要求）
-       4) 内容区限宽 1240px 居中，宽屏不拉满、窄屏吃满
-       5) 移动端（<=860px）顶栏保留品牌+主题，导航收成可横向滚条的
-          第二行；<=560px 时品牌名隐藏只留图标，保证 5 个入口放得下
+     布局（移动端 <=860px）：
+       ┌────────────────────────────────────────────────────────┐
+       │ logo                          [☾ 主题][☰ 收纳]          │  48px
+       ├────────────────────────────────────────────────────────┤
+       │  内容区                                                │
+       └────────────────────────────────────────────────────────┘
+       点收纳按钮弹出下拉面板（6 个选项卡纵向列表）。
      ================================================================== */
 
-  /* —— 1. 容器翻转：row → column，aside 从纵栏变横条 —— */
+  /* —— 0. 容器：column（顶栏在上，内容在下）—— */
   body > div#root > div,
   div.flex.h-screen {
     flex-direction: column !important;
   }
 
-  /* —— 2. 顶栏（原 aside 变成它）—— */
+  /* —— ① 顶栏：外层只做「贴顶 + 底部细线」，内层才是真正的盒子 —— */
+  /* 用户需求（2026-10-16）：「网页整体包含顶部以盒子形式展示，
+     顶部不要两边无限延伸」。
+     实测改前：顶栏 w=1425 / w=1905 通铺全宽，而内容区限宽 1240px 居中 —— 
+     顶栏两侧「无限延伸」，视觉上头部和内容对不齐。
+     改法：外层 aside 保留 sticky 与下边线，内层 #wb-topbar-inner 限宽
+     1240px 居中 + 圆角盒子底 + 独立边框，与内容区左右严格对齐。 */
   aside {
     width: 100% !important;
+    min-width: 0 !important;
     max-width: 100% !important;
     height: auto !important;
     flex: 0 0 auto !important;
-    flex-direction: row !important;
-    align-items: center !important;
-    gap: 4px !important;
-    padding: 0 14px !important;
-    height: 54px !important;
+    display: block !important;
+    padding: 0 !important;
     border-right: 0 !important;
     border-bottom: 1px solid var(--sidebar-border, rgba(120,120,120,0.16)) !important;
-    /* 毛玻璃：内容滚动时从栏下透出 */
-    background: color-mix(in oklab, var(--sidebar, #1b1e27) 78%, transparent) !important;
+    background: color-mix(in oklab, var(--sidebar, #1b1e27) 88%, transparent) !important;
     -webkit-backdrop-filter: blur(20px) saturate(150%);
     backdrop-filter: blur(20px) saturate(150%);
     position: sticky !important;
@@ -1072,94 +1048,146 @@ COLLAPSE_SCRIPT = r"""
     overflow: visible !important;
   }
 
-  /* 品牌区：横条左侧，不再占一整块 */
-  aside > div:first-child {
-    flex: 0 0 auto !important;
-    padding: 0 10px 0 2px !important;
-    margin-right: 6px !important;
-    border-right: 1px solid var(--sidebar-border, rgba(120,120,120,0.16)) !important;
-    height: 26px !important;
+  /* 顶栏内盒子：与内容区严格同宽同左边缘。
+     ⚠️ 为什么不用 max-width + margin:auto：
+     实测 aside 可用宽 1425、而 main 里的内容 wrap 受官方 mx-auto 上下文影响，
+     两者居中基点不同，用 max-width:1240 + margin:0 auto 会差 8px
+     （内盒 x=93 而内容 x=85，「差一点没对齐」）。
+     改用 width:100% + 内部再套一层限宽网格的方式，让内盒与 aside 同宽，
+     再让真正的三列网格限宽 1240 居中 —— 这样 logo 左边缘由内层 grid 的
+     padding 决定，与内容 wrap 的 padding 完全一致（都是 24px），严格对齐。 */
+  #wb-topbar-inner {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 56px !important;
+  }
+
+  /* 真正承载三列的那一层：盒模型与官方内容 wrap 完全一致
+     （w-full + max-width:1180px + 左右 padding 24px），
+     这样顶栏左边缘与内容左边缘严格相等，不会差几个像素。 */
+  #wb-topbar-inner > .wb-tb-grid {
+    display: grid !important;
+    grid-template-columns: 1fr auto 1fr !important;
+    align-items: center !important;
+    gap: 12px !important;
+    /* ⚠️ margin / width / max-width 都不能加 !important：
+       wbSyncTopbarAlign() 要用内联样式把顶栏宽度钉成「当前页内容区实测宽度」
+       （设置页是 max-w-3xl 768px，与默认 1180px 差 412px），
+       !important 会盖过内联样式，导致顶栏永远比内容宽一截。
+       2026-10-16 实测踩过：加了 !important 时设置页 grid 恒为 1180px。
+       这里给普通声明作默认值，JS 内联样式优先级更高，可正常覆盖。 */
+    width: 100%;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px !important;
+    height: 56px !important;
+  }
+
+  /* aside 的直接子元素都改成 grid 项，避免 block 布局下堆叠 */
+  aside > * { grid-column: auto !important; }
+
+  /* 收纳态在 v5 无意义（顶栏不可折叠），防御性清掉 */
+  aside.wb-collapsed { width: 100% !important; }
+
+  /* —— ② logo 区（内盒子左上角）—— */
+  .wb-tb-grid > div:first-child {
+    grid-column: 1 !important;
+    justify-self: start !important;
     display: flex !important;
     align-items: center !important;
-  }
-
-  /* 导航：横向、可滚动、吃掉剩余宽度 */
-  aside nav {
-    flex: 1 1 auto !important;
-    flex-direction: row !important;
-    gap: 2px !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    scrollbar-width: none !important;
-    height: 100% !important;
-    align-items: center !important;
+    gap: 9px !important;
     padding: 0 !important;
+    margin: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    cursor: default !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    transition: none !important;
     min-width: 0 !important;
   }
-  aside nav::-webkit-scrollbar { display: none !important; }
+  .wb-tb-grid > div:first-child span {
+    width: 26px !important;
+    height: 26px !important;
+    flex-shrink: 0 !important;
+  }
+  .wb-tb-grid > div:first-child div.min-w-0 { min-width: 0 !important; }
 
-  /* 导航项：图标+文字横排，选中态用主色淡底 */
-  aside nav a {
-    flex: 0 0 auto !important;
+  /* —— ③ 选项卡：内盒子正上方中央 —— */
+  .wb-tb-grid nav {
+    grid-column: 2 !important;
+    justify-self: center !important;
+    display: flex !important;
     flex-direction: row !important;
     align-items: center !important;
-    gap: 7px !important;
+    gap: 2px !important;
+    width: auto !important;
+    height: auto !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    min-width: 0 !important;
+  }
+  .wb-tb-grid nav a {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 6px !important;
     height: 34px !important;
     padding: 0 11px !important;
     border-radius: 9px !important;
     font-size: 13px !important;
+    line-height: 1.2 !important;
     white-space: nowrap !important;
     color: var(--muted-foreground, #64748b) !important;
+    text-decoration: none !important;
     transition: background 0.15s ease, color 0.15s ease !important;
+    position: relative !important;
   }
-  aside nav a:hover {
+  .wb-tb-grid nav a:hover {
     background: var(--accent, rgba(120,120,120,0.1)) !important;
     color: var(--foreground, #0f172a) !important;
   }
-  /* 官方选中态是 bg-foreground/[0.06] + text-foreground，
-     这里统一改成主色淡底 + 主色文字，和整体强调色一致 */
-  aside nav a.bg-foreground\/\[0\.06\],
-  aside nav a[class*="bg-foreground"] {
-    background: color-mix(in oklab, var(--primary, #3b82f6) 14%, transparent) !important;
-    color: var(--primary, #3b82f6) !important;
+  /* 选中态：主色淡底 + 主色文字 + 底部短横条（顶栏用底条比左侧竖条自然）。
+     ⚠️ 选择器必须用专用类 .wb-nav-active，不能用官方的 bg-foreground ——
+     后者是 React 的状态类，会随 SPA 重渲染被重新分配，导致
+     「离开页面后仍高亮 / 多项同时高亮」（2026-10-16 用户反馈）。 */
+  .wb-tb-grid nav a.wb-nav-active {
+    background: color-mix(in oklab, var(--primary, #22c55e) 13%, transparent) !important;
+    color: var(--primary, #22c55e) !important;
     font-weight: 600 !important;
   }
-  aside nav a svg { width: 16px !important; height: 16px !important; flex-shrink: 0 !important; }
-  aside nav a span.wb-nav-label { display: inline !important; }
-
-  /* —— 2.5 让旧的「收拢态」规则在新顶栏下失效 ——
-     ⚠️ 这条不是可选优化，是必须的：
-     initCollapse() 在窄屏（<=720px）或用户手动收拢时会给 aside 加
-     .wb-collapsed 类，而旧规则 `aside.wb-collapsed { width: 68px !important }`
-     特异性 (0,1,1) 高于上面 `aside { width: 100% !important }` 的 (0,0,1)，
-     特异性更高者胜 —— 于是顶栏在移动端只剩 68px 宽、导航被压成一条。
-     （v0.9.86 第一版设计就栽在这里，实测 nav clientWidth 只有 9px。）
-     这里补一条同等特异性的规则把它拉回全宽，并恢复被隐藏的文字。 */
-  aside.wb-collapsed {
-    width: 100% !important;
-    max-width: 100% !important;
-    padding-left: 14px !important;
-    padding-right: 14px !important;
+  .wb-tb-grid nav a.wb-nav-active::before {
+    content: "" !important;
+    position: absolute !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 3px !important;
+    height: 2px !important;
+    border-radius: 1px !important;
+    background: var(--primary, #22c55e) !important;
   }
-  aside.wb-collapsed div.min-w-0 { display: flex !important; }
-  aside.wb-collapsed nav a {
-    justify-content: flex-start !important;
-    padding: 0 11px !important;
-  }
-  aside.wb-collapsed nav a span.wb-nav-label { display: inline !important; }
-  aside.wb-collapsed nav a:hover::after { content: none !important; }
+  .wb-tb-grid nav a svg { width: 16px !important; height: 16px !important; flex-shrink: 0 !important; }
+  .wb-tb-grid nav a span.wb-nav-label { display: block !important; font-size: 13px !important; }
 
-  /* —— 3. 主题三段控件：顶栏右上角 —— */
+  /* —— ④ 主题三段控件：PC 端右上角 —— */
   #wb-theme-switch {
-    flex: 0 0 auto !important;
+    grid-column: 3 !important;
+    justify-self: end !important;
     display: flex !important;
     align-items: center !important;
     gap: 2px !important;
-    margin-left: 8px !important;
     padding: 3px !important;
     border-radius: 10px !important;
     background: var(--muted, rgba(120,120,120,0.12)) !important;
     border: 1px solid var(--border, rgba(120,120,120,0.14)) !important;
+    margin: 0 !important;
   }
   #wb-theme-switch .wb-ts-btn {
     display: inline-flex !important;
@@ -1180,66 +1208,391 @@ COLLAPSE_SCRIPT = r"""
     color: var(--foreground, #0f172a) !important;
   }
   #wb-theme-switch .wb-ts-btn.wb-ts-on {
-    background: var(--primary, #3b82f6) !important;
+    background: var(--primary, #22c55e) !important;
     color: var(--primary-foreground, #ffffff) !important;
   }
   #wb-theme-switch .wb-ts-btn svg { width: 14px !important; height: 14px !important; }
 
-  /* —— 3.5 收纳入口 = 左上角 logo（2026-10-16 第二次调整）——
-     用户：「取消右上角收纳按钮，改为收纳到左上角logo图标，也就是说
-     logo收纳五个选项卡，然后原本选项卡直接清除」。
+  /* —— ⑤ 移动端专用：主题单图标 + 收纳按钮（PC 端隐藏）—— */
+  #wb-theme-mini, #wb-nav-toggler { display: none !important; }
 
-     实现：品牌区整块（#wb-brand-trigger）变成可点击，不加新按钮。
-     5 个导航项已永久收纳进 logo（用户 2026-10-16），logo 是**唯一**入口，
-     所以给它一个常驻的淡底 + 主色描边，让用户一眼看出「这里能点」。
-     （不再分收纳/展开态 —— 没有展开态了。） */
-  /* 用户 2026-10-16：「logo右侧文字为何有个框，取消了」。
-     logo 仍然是唯一入口（可点、可键盘操作），但**不要那个淡底+描边的框** ——
-     它把品牌区包起来，视觉上像多了一块斑。只保留极轻的 hover 反馈暗示可点。 */
-  #wb-brand-trigger {
+  /* —— ⑥ 主内容区 —— */
+  main {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    background: var(--background, #f6f7fb) !important;
+  }
+  /* 内容区限宽：**不**覆盖官方 wrap 的 max-width。
+     官方 wrap 自带 mx-auto + w-full + max-w-[1180px] + px-6/sm:px-8，
+     浏览器据此算出 margin-left:85px 并固定。我们若用 !important 改
+     max-width，宽度变了但那个 85px 不重算，顶栏就与内容差 8px。
+     所以这里只保留居中与内边距的兜底，max-width 交给官方 —— 
+     顶栏网格（#wb-topbar-inner > .wb-tb-grid）用同一套盒模型对齐。 */
+  /* 内容区统一限宽：**六个页面全部 1180px**。
+     用户需求（2026-10-16）：「以账号管理/词元统计/积分统计三个页面为标准，
+     剩下三个页面的宽度和横向位置对齐，6个页面宽度、横向起始位置全部统一」。
+     官方设置页用 max-w-3xl（768px，x=321），与标准页 1180px（x=115）
+     左右都差一截；数据总览/每日任务两个 hash 视图也要跟同一套。
+     这里直接把 max-width 压成 1180px，居中由 margin auto 保证。 */
+  main > div, main > section {
+    max-width: 1180px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+
+  /* ⚠️ 两个注入视图（数据总览 / 每日任务）本身也是 main 的直接子 div，
+     会被上面的统一规则套上 1180px + 24px 左右 padding，
+     于是它们自带的 .wb-ov-wrap / .wb-daily-wrap 只剩 1180-48=1132px 可用，
+     实测总览页 wrap 变成 x=139 / w=1132，与官方页 x=115 / w=1180 对不上
+     （2026-10-16 实测）。
+     这两个视图自带限宽 wrap（1180px + 16px 左右 padding，与官方 px-4 一致），
+     外层必须是通铺、无内边距，让 wrap 自己居中。 */
+  #wb-overview-view, #wb-daily-view {
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* —— ⑦ 数据总览页 —— */
+  /* 与其他五个页面统一：1180px 居中（官方标准页就是 1180px）。 */
+  /* 与其他五个页面统一：1180px 居中、左右内边距 16px（与官方 max-w-[1180px] 的
+     px-4 完全一致），这样总览页内容区的**实测宽度与左边缘**和官方页逐像素相等。 */
+  #wb-overview-view .wb-ov-wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 16px 40px;
+  }
+  .wb-ov-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .wb-ov-h1 {
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -.02em;
+    color: var(--foreground, #0f172a);
+    margin: 0 0 4px;
+  }
+  .wb-ov-sub {
+    font-size: 13px;
+    color: var(--muted-foreground, #64748b);
+    margin: 0;
+  }
+  .wb-ov-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .wb-ov-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 13px;
+    border-radius: 8px;
+    border: 1px solid var(--border, rgba(120,120,120,0.18));
+    background: var(--card, #ffffff);
+    color: var(--foreground, #0f172a);
+    font-size: 12.5px;
+    cursor: pointer;
+    white-space: nowrap;
     transition: background 0.15s ease;
-    background: transparent !important;
-    box-shadow: none !important;
-    border-radius: 9px !important;
   }
-  #wb-brand-trigger:hover {
-    background: var(--accent, rgba(120,120,120,0.07)) !important;
+  .wb-ov-btn:hover { background: var(--accent, rgba(120,120,120,0.1)); }
+  .wb-ov-btn svg { width: 14px; height: 14px; }
+  .wb-ov-btn-primary {
+    background: var(--primary, #22c55e);
+    border-color: transparent;
+    color: var(--primary-foreground, #ffffff);
+    font-weight: 600;
   }
-  /* ⚠️ 5 个导航项**永久收纳**，不再有「展开态」。
-     用户 2026-10-16：「你都收纳了，为何五个选项卡还在外面」——
-     要的是：选项卡彻底不在顶栏出现，左上角 logo 是唯一入口，
-     点 logo 才弹出那 5 项（面板居中）。
-     因此这里不再区分 .wb-nav-collapsed，直接无条件隐藏 nav。 */
-  aside nav { display: none !important; }
-  /* nav 已永久隐藏（display:none 不占 flex 空间），主题会停在品牌旁边。
-     必须显式 margin-left:auto 把它推到最右。
-     （实测踩过：PC 上 theme x=170 而展开态在 x=1323，视觉重心全乱。） */
-  aside #wb-theme-switch { margin-left: auto !important; }
+  .wb-ov-btn-primary:hover { filter: brightness(1.06); background: var(--primary, #22c55e); }
+  .wb-ov-btn:disabled { opacity: 0.6; cursor: default; }
 
-  /* —— 3.6 收纳面板（点 logo 弹出的下拉）——
-     absolute 浮层，不参与文档流，不会把内容顶下去。
-     PC 端从 logo 下方垂下来（左对齐），移动端收窄为宽度受限的下拉。 */
+  /* KPI 网格：两行各 4 张 */
+  #wb-ov-kpi-row, #wb-ov-kpi-row2 {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 12px !important;
+    margin: 0 0 12px 0 !important;
+  }
+  .wb-kpi {
+    background: var(--card, #ffffff) !important;
+    border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
+    border-radius: 12px !important;
+    padding: 12px 14px 11px !important;
+    min-width: 0 !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04) !important;
+  }
+  .wb-kpi-label {
+    font-size: 11.5px !important;
+    color: var(--muted-foreground, #64748b) !important;
+    margin-bottom: 3px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .wb-kpi-value {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    line-height: 1.15 !important;
+    color: var(--foreground, #0f172a) !important;
+    font-variant-numeric: tabular-nums !important;
+    letter-spacing: -.02em !important;
+  }
+  .wb-kpi-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 3px !important;
+    margin-top: 5px !important;
+    height: 18px !important;
+    padding: 0 7px !important;
+    border-radius: 9px !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+  }
+  .wb-kpi-badge-up { background: color-mix(in oklab, #22c55e 15%, transparent) !important; color: #15803d !important; }
+  .wb-kpi-badge-down { background: color-mix(in oklab, #f59e0b 16%, transparent) !important; color: #b45309 !important; }
+  .wb-kpi-badge-flat { background: var(--muted, rgba(120,120,120,0.12)) !important; color: var(--muted-foreground, #64748b) !important; }
+
+  /* 中栏：趋势图 + 任务状态 */
+  #wb-ov-mid-row {
+    display: grid !important;
+    grid-template-columns: 2fr 1fr !important;
+    gap: 12px !important;
+    margin: 0 0 12px 0 !important;
+  }
+  /* 底栏：账号池 + 最近执行 */
+  #wb-ov-bottom-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px !important;
+    margin: 0 !important;
+  }
+  .wb-panel {
+    background: var(--card, #ffffff) !important;
+    border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
+    border-radius: 12px !important;
+    padding: 14px 16px !important;
+    min-width: 0 !important;
+  }
+  .wb-panel-head {
+    display: flex !important;
+    align-items: baseline !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    margin-bottom: 10px !important;
+  }
+  .wb-panel-title {
+    font-size: 12.5px !important;
+    font-weight: 650 !important;
+    color: var(--foreground, #0f172a) !important;
+  }
+  .wb-panel-sub {
+    font-size: 10.5px !important;
+    color: var(--muted-foreground, #64748b) !important;
+    margin-top: 1px !important;
+  }
+  .wb-panel-chip {
+    font-size: 10px !important;
+    color: var(--muted-foreground, #64748b) !important;
+    background: var(--muted, rgba(120,120,120,0.1)) !important;
+    border-radius: 8px !important;
+    padding: 2px 8px !important;
+    white-space: nowrap !important;
+  }
+  #wb-trend-svg { display: block !important; width: 100% !important; height: 130px !important; }
+  #wb-trend-svg .wb-trend-area { fill: color-mix(in oklab, var(--primary, #22c55e) 18%, transparent) !important; }
+  #wb-trend-svg .wb-trend-line { fill: none !important; stroke: var(--primary, #22c55e) !important; stroke-width: 2 !important; }
+  #wb-trend-svg .wb-trend-axis { stroke: var(--border, rgba(120,120,120,0.2)) !important; stroke-width: 1 !important; }
+  #wb-trend-svg text { font-size: 8.5px !important; fill: var(--muted-foreground, #64748b) !important; }
+  #wb-trend-svg .wb-trend-dot { fill: var(--primary, #22c55e) !important; }
+  .wb-task-bar {
+    height: 8px !important;
+    border-radius: 4px !important;
+    background: var(--muted, rgba(120,120,120,0.14)) !important;
+    overflow: hidden !important;
+    margin: 4px 0 8px !important;
+  }
+  .wb-task-bar > div {
+    height: 100% !important;
+    border-radius: 4px !important;
+    background: var(--primary, #22c55e) !important;
+    transition: width 0.4s ease !important;
+  }
+  .wb-task-row {
+    display: flex !important;
+    align-items: baseline !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    font-size: 11px !important;
+    padding: 3px 0 !important;
+  }
+  .wb-task-row span { color: var(--muted-foreground, #64748b) !important; }
+  .wb-task-row b { color: var(--foreground, #0f172a) !important; font-variant-numeric: tabular-nums !important; }
+
+  /* 账号池分布条 */
+  #wb-ov-acc-bars { display: flex; flex-direction: column; gap: 8px; }
+  .wb-ov-bar-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }
+  .wb-ov-bar-k { flex: 0 0 64px; color: var(--muted-foreground, #64748b); }
+  .wb-ov-bar {
+    flex: 1 1 auto; height: 8px; border-radius: 4px;
+    background: var(--muted, rgba(120,120,120,0.14)); overflow: hidden;
+  }
+  .wb-ov-bar > div { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+  .wb-ov-bar-row b {
+    flex: 0 0 32px; text-align: right;
+    color: var(--foreground, #0f172a); font-variant-numeric: tabular-nums;
+  }
+
+  /* 正在调用的账号（账号池卡片下方横条）。
+     用户需求（2026-10-16）：「内部下方可以动态显示正在调用的账号，
+     如果太多采用滑动条，不要改变卡片大小」。
+     实现要点（2026-10-16 用户要求改为纵向下拉列表）：
+       · 固定 max-height，卡片不随账号数变高
+       · 一行一个账号：左边账号名，右边调用次数（两端对齐）
+       · 显示不下时出现纵向滚动条 */
+  #wb-ov-acc-active {
+    display: flex; flex-direction: column; gap: 4px;
+    margin-top: 10px; min-width: 0;
+  }
+  #wb-ov-acc-active .wb-aa-k {
+    flex: 0 0 auto; font-size: 11px;
+    color: var(--muted-foreground, #64748b); white-space: nowrap;
+  }
+  /* 列表容器：固定高度 + 纵向滚动。高度钉死才能保证卡片不随账号数变化。 */
+  #wb-ov-acc-active .wb-aa-list {
+    display: flex; flex-direction: column; gap: 2px;
+    height: 108px; min-height: 108px; max-height: 108px;
+    overflow-y: auto; overflow-x: hidden;
+    scrollbar-width: thin; padding-right: 2px;
+  }
+  #wb-ov-acc-active .wb-aa-list::-webkit-scrollbar { width: 4px; }
+  #wb-ov-acc-active .wb-aa-list::-webkit-scrollbar-thumb {
+    background: var(--muted-foreground, #64748b); border-radius: 2px;
+  }
+  /* 一行一个：账号名左、次数右，两端对齐 */
+  #wb-ov-acc-active .wb-aa-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; height: 24px; padding: 0 8px; border-radius: 6px;
+    font-size: 11px; white-space: nowrap;
+    background: var(--muted, rgba(120,120,120,0.09));
+    color: var(--foreground, #0f172a);
+  }
+  #wb-ov-acc-active .wb-aa-item .wb-aa-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  #wb-ov-acc-active .wb-aa-item .wb-aa-n {
+    flex: 0 0 auto; font-variant-numeric: tabular-nums;
+    color: var(--muted-foreground, #64748b);
+  }
+  #wb-ov-acc-active .wb-aa-item.wb-aa-hot {
+    background: color-mix(in oklab, var(--primary, #22c55e) 15%, transparent);
+    color: var(--primary, #22c55e); font-weight: 600;
+  }
+  #wb-ov-acc-active .wb-aa-item.wb-aa-hot .wb-aa-n { color: var(--primary, #22c55e); }
+  #wb-ov-acc-active .wb-aa-empty {
+    font-size: 10.5px; color: var(--muted-foreground, #64748b);
+  }
+
+  /* 最近执行列表 */
+  #wb-ov-runs { display: flex; flex-direction: column; gap: 6px; }
+  .wb-run-row {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 11.5px; padding: 6px 8px;
+    border-radius: 8px; background: var(--muted, rgba(120,120,120,0.07));
+  }
+  .wb-run-dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    background: var(--muted-foreground, #64748b);
+  }
+  .wb-run-dot.ok { background: #22c55e; }
+  .wb-run-dot.err { background: #ef4444; }
+  .wb-run-mode {
+    flex: 0 0 auto; font-size: 10px; padding: 1px 6px; border-radius: 6px;
+    background: var(--muted, rgba(120,120,120,0.14)); color: var(--muted-foreground, #64748b);
+  }
+  .wb-run-time { flex: 0 0 auto; color: var(--muted-foreground, #64748b); font-variant-numeric: tabular-nums; }
+  .wb-run-detail {
+    flex: 1 1 auto; min-width: 0; text-align: right;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--foreground, #0f172a);
+  }
+  /* 行可点：给一点可点击暗示（用户 2026-10-16 要求点击展开明细） */
+  .wb-run-clickable { cursor: pointer; transition: background 0.15s ease; }
+  .wb-run-clickable:hover { background: var(--accent, rgba(120,120,120,0.13)); }
+  .wb-run-clickable:focus-visible { outline: 2px solid var(--ring, #3b82f6); outline-offset: 1px; }
+  /* 展开指示箭头：默认朝下，展开时翻转朝上 */
+  .wb-run-caret {
+    flex: 0 0 auto; font-size: 9px; line-height: 1; margin-left: 2px;
+    color: var(--muted-foreground, #64748b);
+    transition: transform 0.18s ease;
+  }
+  .wb-run-open .wb-run-caret { transform: rotate(180deg); }
+  .wb-run-open { background: var(--accent, rgba(120,120,120,0.13)); }
+
+  /* 行下方明细卡：插在被点行的正下方，宽度撑满列表 */
+  .wb-run-detailbox {
+    margin: 2px 0 2px; padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px dashed var(--border, rgba(120,120,120,0.22));
+    background: var(--background, #ffffff);
+    font-size: 11px;
+  }
+  .wb-run-detail-loading { color: var(--muted-foreground, #64748b); font-size: 11px; }
+  .wb-rund-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .wb-rund-h b { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--foreground, #0f172a); }
+  .wb-rund-st { font-size: 10px; padding: 1px 7px; border-radius: 6px; flex: 0 0 auto; }
+  .wb-rund-st-ok { background: rgba(34,197,94,.14); color: #047857; }
+  .wb-rund-st-run { background: rgba(59,130,246,.14); color: #1d4ed8; }
+  .wb-rund-st-err { background: rgba(239,68,68,.14); color: #b91c1c; }
+  .wb-rund-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; }
+  .wb-rund-kv span { color: var(--muted-foreground, #64748b); }
+  .wb-rund-kv b { color: var(--foreground, #0f172a); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .wb-rund-tbl { margin-top: 8px; border-radius: 6px; overflow: hidden; }
+  .wb-rund-tr {
+    display: grid; grid-template-columns: 1.5fr .7fr .5fr .5fr; gap: 6px;
+    padding: 3px 6px; font-size: 10.5px; align-items: center;
+  }
+  .wb-rund-tr:nth-child(odd) { background: var(--muted, rgba(120,120,120,0.06)); }
+  .wb-rund-th { color: var(--muted-foreground, #64748b); font-weight: 600; }
+  .wb-rund-acc { font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wb-rund-more { margin-top: 4px; color: var(--muted-foreground, #64748b); font-size: 10px; }
+  .wb-rund-note { margin-top: 6px; color: var(--muted-foreground, #64748b); font-size: 10.5px; line-height: 1.5; }
+  .wb-rund-acts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+  .wb-rund-acts span {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 5px;
+    background: var(--muted, rgba(120,120,120,0.12)); color: var(--muted-foreground, #64748b);
+  }
+
+  /* 设置页小标题间距 */
+  h2[id^="settings-"] {
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    color: var(--muted-foreground, #64748b) !important;
+  }
+
+  /* —— ⑧ 收纳下拉面板（PC 端不用，移动端专用）—— */
   #wb-nav-panel {
     display: none;
     position: absolute !important;
-    /* 用户 2026-10-16 澄清：「我说的是收纳框**里面文字**居中，
-       不是收纳框居中」。所以框本身回到左上角 logo 下方垂出，
-      _centered_ 的是每一项里的文字（见下面 .wb-nav-panel-item）。 */
-    left: 10px !important;
-    right: auto !important;
-    transform: none !important;
     top: calc(100% + 8px) !important;
+    right: 8px !important;
+    left: auto !important;
     z-index: 9500 !important;
-    /* 用户 2026-10-16：「收纳框两边过宽适当缩短左右距离」。
-       原 min-width 190 / max 340 太宽松；收到 168 / 260，
-       同时把自身 padding 从 5px 压到 4px。 */
-    min-width: 168px !important;
-    max-width: min(78vw, 260px) !important;
+    min-width: 176px !important;
+    max-width: min(80vw, 280px) !important;
     padding: 4px !important;
     border-radius: 12px !important;
     border: 1px solid var(--border, rgba(120,120,120,0.18)) !important;
-    /* 与顶栏同款毛玻璃，浮层有连续感 */
-    background: color-mix(in oklab, var(--popover, var(--card, #ffffff)) 92%, transparent) !important;
+    background: color-mix(in oklab, var(--popover, var(--card, #ffffff)) 94%, transparent) !important;
     -webkit-backdrop-filter: blur(20px) saturate(150%);
     backdrop-filter: blur(20px) saturate(150%);
     box-shadow: 0 10px 34px rgba(0,0,0,0.18) !important;
@@ -1249,33 +1602,23 @@ COLLAPSE_SCRIPT = r"""
   #wb-nav-panel.wb-nav-panel-open { display: flex !important; }
   #wb-nav-panel .wb-nav-panel-item {
     display: flex !important;
-    /* 用户 2026-10-16：「收纳框里面文字居中」。
-       图标 + 文字作为整体水平居中，不是默认的左对齐。 */
     align-items: center !important;
-    justify-content: center !important;
-    gap: 8px !important;
-    padding: 9px 8px !important;
-    text-align: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    padding: 10px 12px !important;
     border-radius: 9px !important;
     font-size: 13px !important;
-    line-height: 1.4 !important;
     white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
     color: var(--foreground, #0f172a) !important;
     text-decoration: none !important;
     cursor: pointer !important;
     transition: background 0.14s ease !important;
   }
-  #wb-nav-panel .wb-nav-panel-item:hover {
-    background: var(--accent, rgba(120,120,120,0.1)) !important;
-  }
-  #wb-nav-panel .wb-nav-panel-item svg {
-    width: 16px !important; height: 16px !important; flex-shrink: 0 !important;
-  }
+  #wb-nav-panel .wb-nav-panel-item:hover { background: var(--accent, rgba(120,120,120,0.1)) !important; }
+  #wb-nav-panel .wb-nav-panel-item svg { width: 16px !important; height: 16px !important; flex-shrink: 0 !important; }
   #wb-nav-panel .wb-nav-panel-item.wb-nav-panel-active {
-    background: color-mix(in oklab, var(--primary, #3b82f6) 14%, transparent) !important;
-    color: var(--primary, #3b82f6) !important;
+    background: color-mix(in oklab, var(--primary, #22c55e) 13%, transparent) !important;
+    color: var(--primary, #22c55e) !important;
     font-weight: 600 !important;
   }
   #wb-nav-panel .wb-nav-panel-empty {
@@ -1284,187 +1627,104 @@ COLLAPSE_SCRIPT = r"""
     color: var(--muted-foreground, #64748b) !important;
   }
 
-  /* 旧的折叠按钮在新顶栏里没意义（顶栏本来就是最小高度），隐藏 */
-  #wb-collapse-btn { display: none !important; }
-
-  /* —— 4. 内容区：吃满全宽 + 限宽居中 —— */
-  main {
-    flex: 1 1 auto !important;
-    width: 100% !important;
-    min-width: 0 !important;
-    background: var(--background, #0f1117) !important;
-  }
-  main > div, main > section {
-    max-width: 1240px !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-  }
-
-  /* —— 5. 卡片：与顶栏同一套语言（圆角 + 细边框 + 柔阴影）—— */
-  .wb-api-card {
-    border-radius: 14px !important;
-    border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
-    background: var(--card, #ffffff) !important;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 6px 20px rgba(0,0,0,0.05) !important;
-  }
-  h2[id^="settings-"] {
-    font-size: 12.5px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.03em !important;
-    color: var(--muted-foreground, #64748b) !important;
-  }
-  .wb-api-btn-primary {
-    background: var(--primary, #3b82f6) !important;
-    color: var(--primary-foreground, #ffffff) !important;
-    border-color: transparent !important;
-  }
-  .wb-api-btn-on {
-    background: color-mix(in oklab, var(--primary, #3b82f6) 15%, transparent) !important;
-    border-color: color-mix(in oklab, var(--primary, #3b82f6) 42%, transparent) !important;
-    color: var(--primary, #3b82f6) !important;
-  }
-
-  /* —— 6. 移动端（<=860px）：导航收成第二行，主题留在第一行右侧 —— */
+  /* —— ⑨ 移动端（<=860px）：选项卡收纳到右上角 —— */
   @media (max-width: 860px) {
-    aside {
-      height: auto !important;
-      flex-wrap: wrap !important;
-      padding: 6px 10px !important;
-      row-gap: 4px !important;
+    /* 外层仍是贴顶条；内盒子退化为 3 列网格 */
+    aside { display: block !important; padding: 0 !important; }
+    /* ⚠️ 必须写成 ID 选择器：桌面规则 `#wb-topbar-inner > .wb-tb-grid` 是
+       (1,1,0) 优先级，裸类选择器 `.wb-tb-grid` 是 (0,1,0)，
+       媒体查询再靠后也赢不了它 —— 2026-10-16 实测移动端列数仍是桌面的
+       143px 32px 143px、padding 仍是 24px、height 仍是 56px（溢出 48px inner）。
+       主题图标与收纳按钮因此被 1fr 第三列摊开、散在中间，正是「排版混乱」。 */
+    #wb-topbar-inner > .wb-tb-grid {
+      grid-template-columns: 1fr auto auto !important;
+      max-width: none !important;
+      height: 48px !important;
+      /* 与 main > div 的左右 padding 一致（16px），保证 logo 与内容左对齐 */
+      padding: 0 16px !important;
+      gap: 8px !important;
     }
-    aside > div:first-child { border-right: 0 !important; margin-right: auto !important; }
-    aside nav {
-      order: 3 !important;
-      flex: 1 0 100% !important;
-      height: 40px !important;
-      border-top: 1px solid var(--sidebar-border, rgba(120,120,120,0.14)) !important;
-      padding-top: 3px !important;
+    #wb-topbar-inner { height: 48px !important; }
+    /* logo 只留图标（窄屏放不下名字） */
+    .wb-tb-grid > div:first-child { grid-column: 1 !important; }
+    .wb-tb-grid > div:first-child div.min-w-0 { display: none !important; }
+    /* 选项卡：PC 的横排导航整体隐藏，改走收纳面板 */
+    .wb-tb-grid nav { display: none !important; }
+    /* 主题三段控件隐藏，改用单图标 */
+    #wb-theme-switch { display: none !important; }
+    /* 主题单图标 + 收纳按钮：右上角，顺序为「主题 → 收纳」 */
+    #wb-theme-mini {
+      display: inline-flex !important;
+      grid-column: 2 !important;
+      justify-self: center !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 34px !important;
+      height: 34px !important;
+      padding: 0 !important;
+      border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
+      border-radius: 9px !important;
+      background: var(--muted, rgba(120,120,120,0.1)) !important;
+      color: var(--muted-foreground, #64748b) !important;
+      cursor: pointer !important;
+      transition: background 0.15s ease, color 0.15s ease !important;
     }
-    /* 主题与收纳按钮同在第二行右侧。
-       ⚠️ 必须给收纳按钮也设 order: 2 —— 不设的话它是默认 order:0，
-       会排到 order:2 的主题**前面**去（实测 togglerAfterTheme=false，
-       第二行右侧（收纳入口已改为左上角 logo，不再有独立按钮）。 */
-    #wb-theme-switch { order: 2 !important; margin-left: auto !important; }
-    aside nav a { height: 32px !important; padding: 0 9px !important; font-size: 12.5px !important; }
-    aside nav a svg { width: 15px !important; height: 15px !important; }
-    /* 顶栏两行后，sticky 仍有效；内容区不再需要额外底部留白 */
-    main, body > div { padding-bottom: 0 !important; }
-    /* 右下角用户球避开顶栏（fixed 定位时顶栏在上方） */
+    #wb-theme-mini:hover { background: var(--accent, rgba(120,120,120,0.14)) !important; }
+    #wb-theme-mini svg { width: 16px !important; height: 16px !important; }
+    #wb-nav-toggler {
+      display: inline-flex !important;
+      grid-column: 3 !important;
+      justify-self: center !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 34px !important;
+      height: 34px !important;
+      padding: 0 !important;
+      border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
+      border-radius: 9px !important;
+      background: var(--muted, rgba(120,120,120,0.1)) !important;
+      color: var(--muted-foreground, #64748b) !important;
+      cursor: pointer !important;
+      transition: background 0.15s ease, color 0.15s ease !important;
+    }
+    #wb-nav-toggler:hover { background: var(--accent, rgba(120,120,120,0.14)) !important; }
+    #wb-nav-toggler svg { width: 17px !important; height: 17px !important; }
+    /* 收纳面板在顶栏下方、右侧弹出 */
+    #wb-nav-panel {
+      top: calc(100% + 6px) !important;
+      right: 8px !important;
+      left: auto !important;
+      bottom: auto !important;
+    }
+    /* 内容区留出底部空间（底部已无常驻栏） */
+    main > div, main > section { padding-bottom: 24px !important; }
+    #wb-overview-view .wb-ov-wrap { padding: 16px 14px 24px !important; }
+    /* KPI 2×2 */
+    #wb-ov-kpi-row, #wb-ov-kpi-row2 { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+    .wb-kpi-value { font-size: 19px !important; }
+    /* 中栏/底栏堆叠 */
+    #wb-ov-mid-row, #wb-ov-bottom-row { grid-template-columns: 1fr !important; gap: 10px !important; }
+    /* 右下角用户球避开顶部不影响，保持在右下 */
     #wb-user-orb { bottom: 16px !important; right: 12px !important; }
   }
 
-  /* —— 6.5 移动端全屏适配基础（<=860px），参考 www.baidu.com 移动端 ——
-     百度移动端的三条核心做法，全部搬过来：
-       1) viewport 禁缩放：width=device-width + minimum-scale=maximum-scale=1.0
-          + user-scalable=no（服务端已改写 meta，见 _wb_fix_viewport）
-       2) viewport-fit=cover：页面延伸到刘海/圆角区，吃满整屏；
-          再用 env(safe-area-inset-*) 把**内容**从刘海与 Home 条下面让开，
-          避免顶部被刘海压住、底部被 Home 条压住
-       3) 去掉点击蓝框：-webkit-tap-highlight-color: transparent，
-          并禁掉 iOS 上长按弹出的系统菜单，交互更像原生 App
-     另外补两条移动端常见瑕疵：
-       - text-size-adjust: 100%：防止横屏时 Chrome 自动放大正文
-       - overscroll-behavior: none on html：掐断整页 rubber-band，
-          只让 main 自己滚（否则下拉刷新会把整个页面拽动） */
-  @media (max-width: 860px) {
-    html {
-      text-size-adjust: 100% !important;
-      -webkit-text-size-adjust: 100% !important;
-      overscroll-behavior: none !important;
-    }
-    body {
-      -webkit-tap-highlight-color: transparent !important;
-      overscroll-behavior: none !important;
-      /* 禁掉长按弹出系统菜单（移动端网页常见「保存图片/拷贝」弹窗） */
-      -webkit-touch-callout: none !important;
-      -webkit-user-select: none !important;
-      user-select: none !important;
-    }
-    /* 输入框/文本区必须能选能粘 —— 上面一刀切禁了 user-select，
-       这里把可编辑元素放回来，否则设置页填不了 API Key。 */
-    input, textarea, select, [contenteditable="true"] {
-      -webkit-user-select: auto !important;
-      user-select: auto !important;
-      -webkit-touch-callout: default !important;
-    }
-    /* 顶栏让开 iPhone 刘海：padding-top 用 safe-area 上限 */
-    aside {
-      padding-top: max(6px, env(safe-area-inset-top, 0px)) !important;
-    }
-    /* 底部留出 Home 条高度；横屏时 safe-area-inset-bottom 可能是 0 或 21px，
-       用 max() 兜一个 16px 下限，避免横屏贴边。 */
-    main {
-      padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)) !important;
-    }
-    /* 右下角用户球也要避开 Home 条 */
-    #wb-user-orb {
-      bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 16px)) !important;
-    }
-    /* 收纳面板别被刘海裁掉 */
-    #wb-nav-panel {
-      top: calc(100% + max(6px, env(safe-area-inset-top, 0px))) !important;
-    }
-  }
-
-  /* —— 7. 移动端全屏滑动（<=860px）——
-     用户 2026-10-16：「做好移动端页面全屏滑动效果」。
-
-     现状（实测）：官方容器是 h-screen + overflow-hidden，滚动交给
-     main 的 overflow-y:auto。手机上这么用有三个毛病：
-       1) 地址栏显隐会改变 visual viewport 高度，h-screen 用的是
-          layout viewport，于是顶栏/底部会被顶出可见区
-       2) main 里滚动会「链式穿透」到 body（rubber-band 时整页跟着抖）
-       3) 滚动没有惯性收尾，快速一滑就停下，手感生硬
-
-     改法（全部 CSS，不引 JS）：
-       - 容器高度改用 100dvh（动态视口，跟着地址栏收缩）
-       - main 加 -webkit-overflow-scrolling: touch 恢复 iOS 惯性
-       - overscroll-behavior: contain 掐断滚动链，只让 main 滚
-       - 顶栏 position: sticky + top:0，滑动时始终吸附在顶部
-       - 顶部/底部加渐隐遮罩，提示「这里还能滚」，滑到底不再突兀 */
-  @media (max-width: 860px) {
-    body > div#root > div,
-    div.flex.h-screen {
-      height: 100dvh !important;
-      max-height: 100dvh !important;
-    }
-    main {
-      height: auto !important;
-      flex: 1 1 auto !important;
-      min-height: 0 !important;
-      overflow-y: auto !important;
-      overflow-x: hidden !important;
-      -webkit-overflow-scrolling: touch !important;
-      overscroll-behavior-y: contain !important;
-      scroll-behavior: smooth !important;
-      touch-action: pan-y !important;
-    }
-    /* 内容区留出顶栏吸附位：sticky 需要 main 有可滚动余量 */
-    main > div, main > section { padding-bottom: 24px !important; }
-    /* 底部渐隐：提示还有内容，滑到底不突兀 */
-    main::after {
-      content: "";
-      position: sticky !important;
-      bottom: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
-      display: block !important;
-      height: 28px !important;
-      margin-top: -28px !important;
-      pointer-events: none !important;
-      background: linear-gradient(to top,
-        var(--background, #0f1117) 0%,
-        color-mix(in oklab, var(--background, #0f1117) 60%, transparent) 45%,
-        transparent 100%);
-    }
-  }
-
-  /* 极窄屏（<=560px）：品牌名隐藏只留图标，5 个入口仍放得下 */
+  /* 极窄屏（<=560px） */
   @media (max-width: 560px) {
-    aside > div:first-child div.min-w-0 { display: none !important; }
-    aside nav a { padding: 0 8px !important; gap: 5px !important; }
-    aside nav a span.wb-nav-label { font-size: 11.5px !important; }
-    #wb-theme-switch .wb-ts-btn { width: 27px !important; height: 24px !important; }
+    #wb-topbar-inner > .wb-tb-grid { padding: 0 12px !important; }
+    main > div, main > section { padding-left: 12px !important; padding-right: 12px !important; }
+    #wb-overview-view .wb-ov-wrap { padding-left: 12px !important; padding-right: 12px !important; }
+    .wb-kpi { padding: 10px 11px 9px !important; }
+    .wb-kpi-value { font-size: 17px !important; }
+    .wb-ov-h1 { font-size: 22px !important; }
+    #wb-theme-mini, #wb-nav-toggler { width: 32px !important; height: 32px !important; }
+  }
+
+  /* PC 端中等宽度：选项卡压缩一点，避免与 logo/主题挤在一起 */
+  @media (min-width: 861px) and (max-width: 1080px) {
+    #wb-topbar-inner > .wb-tb-grid { padding: 0 12px !important; gap: 8px !important; }
+    .wb-tb-grid nav a { padding: 0 8px !important; font-size: 12.5px !important; gap: 5px !important; }
+    .wb-tb-grid nav a svg { width: 15px !important; height: 15px !important; }
+    .wb-tb-grid > div:first-child span { width: 24px !important; height: 24px !important; }
   }
 </style>
 <script>
@@ -2448,63 +2708,272 @@ COLLAPSE_SCRIPT = r"""
     });
   }
 
+  // ⚠️ 2026-10-16 v3 重设计后，本函数只剩「导航标签包装」这一件事。
+  // 原折叠逻辑（wb-collapsed + 右上角小按钮）已彻底废弃：
+  //   · 桌面是 64px 图标轨道，没有可折叠的纵栏
+  //   · 移动端是底部标签栏，同样不需要折叠
+  //   · aside.wb-collapsed { width: 68px !important } 特异性 (0,1,1)
+  //     会盖掉移动端 aside { width: 100% !important } 的 (0,0,1)，
+  //     导致底部条只剩 68px（实测踩过）
+  // 收纳入口 = 侧边栏右缘的 #wb-collapse-btn（和原来一样），由本函数创建。
+  /* 侧边栏收纳（v4，用户要求「增加侧边栏收纳，和原来一样」）。
+     展开 220px（图标+文字）↔ 收起 64px（只图标 + 悬停气泡）。
+     折叠按钮在侧边栏右缘（#wb-collapse-btn），状态存 localStorage。
+     移动端（<=860px）CSS 会把按钮隐藏 —— 底部标签栏没有可折叠的纵栏。 */
+  /* 把顶栏网格的左 margin 同步成内容 wrap 的实测左 margin。
+     背景：两者父容器同宽（1425）、盒模型相同（max-width 1180 + padding 24），
+     但浏览器给 wrap 算出 margin-left:115px、给 grid 算出 122.5px，差 7.5px，
+     顶栏与内容因此「差一点没对齐」（2026-10-16 实测）。
+     CSS 层面反复覆盖都无效（官方 mx-auto 的计算值会胜出），
+     所以在 DOM 就绪后直接用 JS 取 wrap 的实测值同步过来 —— 一次到位，不猜。 */
+  function wbSyncTopbarAlign() {
+    try {
+      var grid = document.querySelector("#wb-topbar-inner > .wb-tb-grid");
+      var wrap = document.querySelector("main > div, main > section");
+      if (!grid || !wrap) return;
+      var gl = grid.getBoundingClientRect(), wl = wrap.getBoundingClientRect();
+      // ⚠️ 官方 wrap 不可见时必须直接退出，绝不能"对齐"。
+      // 2026-10-16 实测踩坑：切到 hash 视图（数据总览/每日任务）时官方 wrap 被
+      // 置为 display:none，量到 0×0；此时若继续算差值，会把 margin-left 压成
+      // 0 或负值，顶栏对齐被**破坏**（实测 gridX 从 115 掉到 0，用户看到的
+      // 「顶部错位」正是这么来的）。只有拿到真实宽度才允许修正。
+      if (wl.width <= 0 || gl.width <= 0) return;
+      var dLeft = wl.x - gl.x;
+      var dW = wl.width - gl.width;
+      // 左右都对齐才算完成；宽度不同也要修
+      // （实测：设置页内容区是 max-w-3xl 768px，而顶栏网格固定 1180px，
+      // 只补左边缘会出现「顶栏比内容宽一截」的错位）。
+      if (Math.abs(dLeft) < 0.5 && Math.abs(dW) < 0.5) return;
+      // 差值过大说明页面正在切换中间态（容器还没渲染完），此时修正会抖。
+      // ⚠️ 阈值不能低于 500：设置页内容区是 max-w-3xl(768px)、顶栏 1180px，
+      // 真实宽度差 412px 是合法差异，阈值卡在 400 会把设置页永久漏掉
+      // （2026-10-16 实测：设成 400 时设置页永远对不齐）。
+      // 真正的中间态由上面的 width<=0 判断拦截，这里只兜极端异常。
+      if (Math.abs(dLeft) > 1200 || Math.abs(dW) > 1200) return;
+      var cur = parseFloat(getComputedStyle(grid).marginLeft) || 0;
+      grid.style.marginLeft = (cur + dLeft) + "px";
+      // 宽度对齐：把网格宽度钉成内容区的实测宽度（只在两者都 > 0 时）。
+      // 不写回 auto —— 一旦写成具体像素，官方响应式调整时本函数会再次修正。
+      grid.style.maxWidth = wl.width + "px";
+      grid.style.width = wl.width + "px";
+    } catch (e) {}
+  }
+
+  /* 取顶栏内盒子（#wb-topbar-inner），不存在则退回 aside。
+     所有顶栏子元素（主题控件 / 收纳按钮 / 面板）都必须挂到内盒子里，
+     否则会跑到外层贴顶条上、破坏限宽居中对齐。 */
+  function wbTopbarInner(aside) {
+    var g = document.querySelector("#wb-topbar-inner > .wb-tb-grid");
+    return g || document.getElementById("wb-topbar-inner") || aside;
+  }
+
+  /* v5：顶栏布局。侧边栏折叠概念已废弃（没有侧边栏了），
+     本函数只做三件事：
+       1) 把导航裸文本包成 span.wb-nav-label（CSS 与收纳面板都要用）
+       2) 建 PC 端主题三段控件（wbInitThemeSwitch）
+       3) 建移动端主题单图标 + 收纳按钮（wbInitMobileTopbar）
+     旧的 #wb-collapse-btn 折叠逻辑整个删除。 */
   function initCollapse() {
     const aside = document.querySelector("aside");
-    if (!aside || document.getElementById("wb-collapse-btn")) return;
-    
-    const btn = document.createElement("button");
-    btn.id = "wb-collapse-btn";
-    btn.setAttribute("title", "收起/展开侧边栏");
-    btn.innerHTML = `<svg id="wb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`;
-    
+    if (!aside) return;
+
+    // 把 aside 的原有子元素（logo / nav / 主题控件 / 收纳按钮 / 面板）
+    // 包进 #wb-topbar-inner。用户需求（2026-10-16）：「网页整体包含顶部
+    // 以盒子形式展示，顶部不要两边无限延伸」。
+    // 实测改前顶栏通铺 1425/1905px，而内容区限宽 1240px 居中，头部与内容
+    // 左右对不齐。包一层限宽居中的内盒子后两者严格对齐。
+    var inner = document.getElementById("wb-topbar-inner");
+    if (!inner) {
+      inner = document.createElement("div");
+      inner.id = "wb-topbar-inner";
+      // 再套一层 .wb-tb-grid 承载真正的三列网格（logo / 选项卡 / 主题）。
+      // 分两层的原因：#wb-topbar-inner 与 aside 同宽（100%），
+      // .wb-tb-grid 限宽 1240 居中 —— 与 main 里内容 wrap 的盒模型一致，
+      // 这样 logo 左边缘与内容左边缘严格对齐（实测单层会差 8px）。
+      var grid = document.createElement("div");
+      grid.className = "wb-tb-grid";
+      var kids = Array.prototype.slice.call(aside.childNodes);
+      kids.forEach(function (n) { grid.appendChild(n); });
+      inner.appendChild(grid);
+      aside.appendChild(inner);
+    }
+
     aside.querySelectorAll("nav a").forEach(a => {
-      var label = "";
+      // ⚠️ 官方导航链接是 React Router 的 pushState 跳转，**不触发 hashchange**，
+      // 而路径页（/token-stats、/settings 等）只靠 hashchange 同步高亮就会丢。
+      // 这里在捕获阶段挂 click：点下去先同步一次高亮（SPA 路由随后异步完成，
+      // 再由 MutationObserver 触发 run() 兜底同步）。
+      if (!a.__wbNavBound) {
+        a.__wbNavBound = true;
+        a.addEventListener("click", function () {
+          // 等一帧让 SPA 的 pushState 先落地，再按最新 URL 同步
+          requestAnimationFrame(function () { wbSyncNavActive(); });
+          setTimeout(wbSyncNavActive, 120);
+          setTimeout(wbSyncNavActive, 400);
+        }, true);
+      }
       Array.from(a.childNodes).forEach(node => {
         if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
           const span = document.createElement("span");
           span.className = "wb-nav-label";
           span.innerText = node.textContent;
-          label = node.textContent.trim();
           node.replaceWith(span);
         }
       });
-      // 收拢态只留图标：名称挪到 data 属性，悬停时用 CSS 气泡提示
-      if (label) a.setAttribute("data-wb-label", label);
+      var txt = (a.textContent || "").trim();
+      if (txt) a.setAttribute("data-wb-label", txt);
     });
 
-    // 窄屏（手机）上侧边栏不再是「可以收起」，而是**必须**收起：
-    // 它固定占 220px，在 430px 的屏幕上会吃掉一半，正文被挤成一条竖线。
-    // 这里不写进 localStorage —— 那是桌面端的手动偏好，不该被媒体查询改掉。
-    const narrowQuery = window.matchMedia("(max-width: 720px)");
-    const applyCollapsed = (on) => {
-      aside.classList.toggle("wb-collapsed", !!on);
-      const svg = btn.querySelector("svg");
-      if (svg) {
-        svg.innerHTML = on
-          ? `<polyline points="9 18 15 12 9 6"></polyline>`
-          : `<polyline points="15 18 9 12 15 6"></polyline>`;
-      }
-    };
+    // 清理旧版可能遗留的折叠按钮与 class（v4 及以前）
+    var oldBtn = document.getElementById("wb-collapse-btn");
+    if (oldBtn) oldBtn.remove();
+    aside.classList.remove("wb-collapsed");
 
-    let collapsed = localStorage.getItem("wb_sidebar_collapsed") === "true";
-    applyCollapsed(collapsed || narrowQuery.matches);
-
-    narrowQuery.addEventListener("change", (e) => {
-      applyCollapsed(e.matches || collapsed);
-    });
-
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      collapsed = !collapsed;
-      localStorage.setItem("wb_sidebar_collapsed", collapsed);
-      applyCollapsed(collapsed);
-    };
-    aside.appendChild(btn);
-
-    // 主题三段控件挂到顶栏右上角（用户 2026-10-16 明确要求）。
-    // 顶栏就是 aside 本身（新设计把它从左侧纵栏变成了顶部横条），
-    // 所以直接 append 到 aside 末尾即可排在品牌 + 导航之后。
+    // PC 端主题三段控件
     wbInitThemeSwitch(aside);
+    // 移动端主题单图标 + 收纳按钮 + 下拉面板
+    wbInitMobileTopbar(aside);
+    // 顶栏与内容区左边缘对齐（用实测差值补偿，见 wbSyncTopbarAlign）
+    wbSyncTopbarAlign();
+  }
+
+  /* 移动端顶栏右侧：主题单图标 + 收纳按钮。
+     用户需求（2026-10-16 v5）：
+       · 移动端选项卡以收纳形式放在右上角
+       · 主题切换以单个图标放在收纳按钮前方
+     PC 端这两个控件被 CSS 隐藏（display:none），只在 <=860px 显示。 */
+  var WB_THEME_MINI_SVG = {
+    system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>',
+    light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
+    dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>'
+  };
+
+  function wbInitMobileTopbar(aside) {
+    if (!aside) return;
+
+    /* ---- 主题单图标：点击在 浅色/深色 之间切换 ---- */
+    var mini = document.getElementById("wb-theme-mini");
+    if (!mini) {
+      mini = document.createElement("button");
+      mini.type = "button";
+      mini.id = "wb-theme-mini";
+      mini.setAttribute("aria-label", "切换主题");
+      // 放在收纳按钮之前 → 必须先插入（挂到内盒子）
+      wbTopbarInner(aside).appendChild(mini);
+      var syncMini = function () {
+        var cur = wbThemeCurrent();
+        // 当前是深色就显示太阳（点了变浅色），反之显示月亮
+        var dark = cur === "dark"
+          || (cur === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        mini.innerHTML = dark ? WB_THEME_MINI_SVG.light : WB_THEME_MINI_SVG.dark;
+        mini.title = dark ? "切换到浅色" : "切换到深色";
+      };
+      mini.onclick = function (e) {
+        e.stopPropagation();
+        var cur = wbThemeCurrent();
+        var dark = cur === "dark"
+          || (cur === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        wbThemeApply(dark ? "light" : "dark", true);
+        syncMini();
+      };
+      // 主题变化时同步图标（PC 端三段控件切换后这里也要跟）
+      window.addEventListener("wb-theme-changed", syncMini);
+      syncMini();
+    }
+
+    /* ---- 收纳按钮：点开 6 个选项卡的下拉面板 ---- */
+    var btn = document.getElementById("wb-nav-toggler");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = "wb-nav-toggler";
+      btn.setAttribute("aria-label", "选项卡");
+      btn.setAttribute("aria-expanded", "false");
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        + '<line x1="3" y1="6" x2="21" y2="6"></line>'
+        + '<line x1="3" y1="12" x2="21" y2="12"></line>'
+        + '<line x1="3" y1="18" x2="21" y2="18"></line></svg>';
+      // 收纳按钮在主题之后 → 后 append 即排在后面（挂到内盒子）
+      wbTopbarInner(aside).appendChild(btn);
+
+      var panel = document.getElementById("wb-nav-panel");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "wb-nav-panel";
+        panel.setAttribute("role", "menu");
+        wbTopbarInner(aside).appendChild(panel);
+      }
+
+      var rebuild = function () {
+        var nav = aside.querySelector("nav");
+        if (!nav) return;
+        panel.innerHTML = "";
+        var links = Array.prototype.slice.call(nav.querySelectorAll("a"));
+        if (!links.length) {
+          var empty = document.createElement("div");
+          empty.className = "wb-nav-panel-empty";
+          empty.textContent = "暂无导航项";
+          panel.appendChild(empty);
+          return;
+        }
+        links.forEach(function (a) {
+          var item = document.createElement("a");
+          item.className = "wb-nav-panel-item";
+          item.href = a.getAttribute("href") || "#";
+          item.setAttribute("role", "menuitem");
+          item.innerHTML = a.innerHTML;
+          // 选中态：用 wbSyncNavActive 写的 aria-current（专用信号），
+          // 不再看官方 bg-foreground/[0.06] —— 那个类是 React 的状态类，
+          // 会在 SPA 重渲染时被重新分配，导致面板里多项同时高亮。
+          var isCur = a.getAttribute("aria-current") === "page"
+            || a.classList.contains("wb-nav-active");
+          if (isCur) item.classList.add("wb-nav-panel-active");
+          item.addEventListener("click", function () { wbCloseNavPanel(); });
+          panel.appendChild(item);
+        });
+      };
+
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        var open = panel.classList.contains("wb-nav-panel-open");
+        if (open) {
+          wbCloseNavPanel();
+          return;
+        }
+        rebuild();
+        panel.classList.add("wb-nav-panel-open");
+        btn.setAttribute("aria-expanded", "true");
+        setTimeout(function () {
+          document.addEventListener("click", wbNavPanelOutside);
+          document.addEventListener("keydown", wbNavPanelEsc);
+        }, 0);
+      };
+    }
+  }
+
+  function wbCloseNavPanel() {
+    var panel = document.getElementById("wb-nav-panel");
+    if (panel) panel.classList.remove("wb-nav-panel-open");
+    var btn = document.getElementById("wb-nav-toggler");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", wbNavPanelOutside);
+    document.removeEventListener("keydown", wbNavPanelEsc);
+  }
+
+  function wbNavPanelOutside(e) {
+    var panel = document.getElementById("wb-nav-panel");
+    var btn = document.getElementById("wb-nav-toggler");
+    var mini = document.getElementById("wb-theme-mini");
+    if (panel && !panel.contains(e.target)
+        && btn && !btn.contains(e.target)
+        && mini && !mini.contains(e.target)) {
+      wbCloseNavPanel();
+    }
+  }
+
+  function wbNavPanelEsc(e) {
+    if (e.key === "Escape") wbCloseNavPanel();
   }
 
   /* ---------- 主题切换（顶栏右上角，2026-10-16）----------
@@ -2543,8 +3012,1047 @@ COLLAPSE_SCRIPT = r"""
         b.setAttribute("aria-pressed", on ? "true" : "false");
       });
     }
+    // 派发事件，让移动端主题单图标（#wb-theme-mini）同步自身图标。
+    // v5 起 PC 端用三段控件、移动端用单图标，两者都调 wbThemeApply，
+    // 靠这个事件保持一致（原先单图标只在初始化时同步，PC 端切换后移动端图标不跟）。
+    try {
+      window.dispatchEvent(new CustomEvent("wb-theme-changed", { detail: { mode: mode } }));
+    } catch (e) {}
   }
 
+  /* ==================================================================
+     Tremor 式仪表盘注入（2026-10-16 v3）
+     - wbInitTopbar：在 main 顶部注入「上下文顶栏」（页面标题 + 页面操作）
+     - wbInitKpi：注入 4 张 KPI 汇总卡（总积分/昨日消耗/可用模型/今日调用）
+     - wbInitMid：注入「近30天消耗趋势」面积图 + 「每日任务状态」卡
+     - wbInitAcctHead：注入账号明细区标题
+     全部只读现有接口，不新增后端依赖；失败静默降级，绝不影响官方页面。
+     ================================================================== */
+
+  var WB_KPI_IDS = ["wb-kpi-credits", "wb-kpi-used", "wb-kpi-models", "wb-kpi-calls"];
+
+  /* ---------- 工具：安全取 JSON ---------- */
+  function wbJson(url, timeout) {
+    return fetch(url, { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .catch(function () { return {}; });
+  }
+
+
+  /* 安全取当前路径名。
+     ⚠️ 不能直接写 location.pathname —— _test_webui_panels.py 在 Node 环境里
+     跑这段脚本，没有 location 全局对象，一执行就抛 ReferenceError，
+     整个 run() 挂掉，面板全渲染不出来（实测踩过）。
+     浏览器里 location 一定存在，这里只是给非浏览器环境兜底。 */
+  function wbPath() {
+    try {
+      return (typeof location !== "undefined" && location.pathname) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function wbFmt(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    var f = Number(v);
+    if (isNaN(f)) return String(v);
+    if (f !== 0 && Math.abs(f) < 1) return f.toFixed(2);
+    if (f === Math.round(f)) return f.toLocaleString("en-US");
+    return f.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  }
+
+  function wbPct(cur, prev) {
+    if (!prev || prev <= 0 || cur === null || prev === null) return null;
+    return (cur - prev) / prev * 100;
+  }
+
+  /* ---------- 上下文顶栏 ---------- */
+
+  /* ==================================================================
+     概览页（2026-10-16 v4）
+     用户需求：
+       1) 新增「概览」选项卡，放在第一个
+       2) 之前散在首页的重要数据（KPI 卡 / 趋势图 / 任务状态）全部移到概览页
+       3) 其他选项卡内容不变、各司其职
+
+     实现方式：复用每日任务那套 hash 路由 + 视图切换机制（#/wb-overview），
+     不新建路由体系。main 下挂一个 #wb-overview-view，切到概览时显示它、
+     隐藏其他子节点，切走时反向。这样官方页面代码一行不用改。
+     ================================================================== */
+
+  var WB_OVERVIEW_NAV_ID = "wb-nav-wb-overview";
+
+  /* ---------- 概览页导航项（插到导航最前） ---------- */
+  function injectWbOverview() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var nav = aside.querySelector("nav");
+    if (!nav) return;
+
+    var link = document.getElementById(WB_OVERVIEW_NAV_ID);
+    if (!link) {
+      link = document.createElement("a");
+      link.id = WB_OVERVIEW_NAV_ID;
+      link.href = "#/wb-overview";
+      link.innerHTML =
+        '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        + '<rect x="3" y="3" width="7" height="9" rx="1"></rect>'
+        + '<rect x="14" y="3" width="7" height="5" rx="1"></rect>'
+        + '<rect x="14" y="12" width="7" height="9" rx="1"></rect>'
+        + '<rect x="3" y="16" width="7" height="5" rx="1"></rect></svg>'
+        + '<span class="wb-nav-label">数据总览</span>';
+      link.setAttribute("data-wb-label", "数据总览");
+      // 插到最前面（用户要求「概览是第一个选项卡」）
+      if (nav.firstElementChild) nav.insertBefore(link, nav.firstElementChild);
+      else nav.appendChild(link);
+
+      link.addEventListener("click", function (e) {
+        e.preventDefault();
+        window.location.hash = "#/wb-overview";
+      });
+
+      // 点其他导航项时清掉 #/wb-overview hash，否则：
+      //   · URL 变成 /#/wb-overview 之外还留着旧 hash
+      //   · wbSyncNavActive() 判不出该高亮谁（实测从概览点「账号管理」
+      //     后高亮仍停在「概览」）
+      // 做法与 injectWbDaily 的清 hash 逻辑一致。
+      nav.querySelectorAll("a:not(#" + WB_OVERVIEW_NAV_ID + ")").forEach(function (a) {
+        a.addEventListener("click", function () {
+          if (window.location.hash === "#/wb-overview") {
+            window.location.hash = "";
+          }
+        });
+      });
+    }
+  }
+
+  /* ---------- 概览页视图 ---------- */
+  function wbCreateOverviewView() {
+    var v = document.createElement("div");
+    v.id = "wb-overview-view";
+    v.style.display = "none";
+    v.innerHTML =
+      '<div class="wb-ov-wrap">' +
+        '<div class="wb-ov-head">' +
+          '<div>' +
+            '<h1 class="wb-ov-h1">数据总览</h1>' +
+            '<p class="wb-ov-sub">账号池核心指标一屏可见：积分、消耗、模型、调用、账号与任务</p>' +
+          '</div>' +
+          '<div class="wb-ov-actions">' +
+            '<button class="wb-ov-btn" data-act="checkin" type="button">' +
+              '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="m9 16 2 2 4-4"/></svg>'
+              + '全部签到</button>' +
+            '<button class="wb-ov-btn wb-ov-btn-primary" data-act="task" type="button">' +
+              '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 13 13 10 21"/></svg>'
+              + '执行任务</button>' +
+          '</div>' +
+        '</div>' +
+
+        /* 第一行 KPI：积分与消耗（4 张） */
+        '<div id="wb-ov-kpi-row">' +
+          '<div class="wb-kpi" id="wb-kpi-credits">' +
+            '<div class="wb-kpi-label">账号池总积分</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+          '<div class="wb-kpi" id="wb-kpi-used">' +
+            /* 用户需求（2026-10-16）：「昨日消耗卡片改为今日消耗，并获取对应的
+               正确数据」。
+               口径说明：**必须用 summary.usageToday，不能再用 accounts[].daily
+               的今日累加**。
+               实测同一份 /api/credits/stats 响应里两个口径就不一致：
+                 summary.usageToday = 2347.97（准确）
+                 sum(accounts[].daily[date=today].usage) = 2669.06（偏高）
+               _reconcile_official_usage() 已经专门校准过 summary.usageToday
+               （见 web_proxy.py 该函数注释：官方 officialUsage.summary.usageToday
+               长期为 0 会把准确的顶层值覆盖掉），所以顶层这个值是当前最准的。
+               顺带修掉一个真 bug：原来的「昨天」口径取的是 new Date() 的
+               本地时间减一天，而 daily 里的 date 是后端时区的日期键，
+               跨时区/跨零点时会取错一天 —— 现在直接用后端算好的值，不再自己减。 */
+            '<div class="wb-kpi-label">今日消耗</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+          '<div class="wb-kpi" id="wb-kpi-today">' +
+            '<div class="wb-kpi-label">今日获得积分</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+          '<div class="wb-kpi" id="wb-kpi-total">' +
+            '<div class="wb-kpi-label">累计任务积分</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+        '</div>' +
+
+        /* 第二行 KPI：模型 / 调用 / 密钥 / 近 7 日消耗（4 张） */
+        '<div id="wb-ov-kpi-row2">' +
+          '<div class="wb-kpi" id="wb-kpi-models">' +
+            '<div class="wb-kpi-label">可用模型</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+          '<div class="wb-kpi" id="wb-kpi-calls">' +
+            '<div class="wb-kpi-label">今日调用</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+          '<div class="wb-kpi" id="wb-kpi-keys">' +
+            '<div class="wb-kpi-label">API 密钥</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+          '<div class="wb-kpi" id="wb-kpi-week">' +
+            '<div class="wb-kpi-label">近 7 日消耗</div>' +
+            '<div class="wb-kpi-value">—</div>' +
+            '<div class="wb-kpi-badge wb-kpi-badge-flat">读取中…</div></div>' +
+        '</div>' +
+
+        /* 中栏：趋势图 + 任务状态 */
+        '<div id="wb-ov-mid-row">' +
+          '<div class="wb-panel">' +
+            '<div class="wb-panel-head">' +
+              '<div><div class="wb-panel-title">近 30 天积分消耗</div>' +
+              '<div class="wb-panel-sub">全网按日汇总 · 与积分统计页同源</div></div>' +
+              '<span class="wb-panel-chip">30 天</span></div>' +
+            '<svg id="wb-trend-svg" viewBox="0 0 600 130" preserveAspectRatio="none"></svg>' +
+          '</div>' +
+          '<div class="wb-panel">' +
+            '<div class="wb-panel-head">' +
+              '<div><div class="wb-panel-title">每日任务</div>' +
+              '<div class="wb-panel-sub" id="wb-task-sub">下次自动执行 · 间隔 12h</div></div>' +
+              /* 执行中时这块变成「执行中 2/24」（wbOvTaskProgressTick 动态改） */
+              '<span class="wb-panel-chip" id="wb-task-chip">自动</span></div>' +
+            '<div class="wb-task-bar"><div id="wb-task-fill" style="width:0%"></div></div>' +
+            '<div class="wb-task-row"><span>已完成账号</span><b id="wb-task-acc">—</b></div>' +
+            /* 执行中：当前正在跑的账号（无任务执行时隐藏）
+               用户需求（2026-10-16）：「显示对应任务进度，比如2/24，方便用户查看」 */
+            '<div class="wb-task-row" id="wb-task-cur-row" style="display:none"><span>当前账号</span><b id="wb-task-cur">—</b></div>' +
+            '<div class="wb-task-row"><span>今日签到积分</span><b id="wb-task-checkin">—</b></div>' +
+            '<div class="wb-task-row"><span>今日任务积分</span><b id="wb-task-taskcredits">—</b></div>' +
+            '<div class="wb-task-row"><span>累计任务积分</span><b id="wb-task-total">—</b></div>' +
+            '<div class="wb-task-row"><span>最近完成</span><b id="wb-task-last">—</b></div>' +
+          '</div>' +
+        '</div>' +
+
+        /* 底栏：账号池分布 + 最近执行 */
+        '<div id="wb-ov-bottom-row">' +
+          '<div class="wb-panel">' +
+            '<div class="wb-panel-head">' +
+              '<div><div class="wb-panel-title">账号池</div>' +
+              '<div class="wb-panel-sub">启用 / 停用分布</div></div>' +
+              '<span class="wb-panel-chip" id="wb-ov-acc-chip">—</span></div>' +
+            '<div id="wb-ov-acc-bars"></div>' +
+            /* 正在调用的账号：横条 + 内部横向滚动，固定高度不撑大卡片。
+               用户需求（2026-10-16）：「账号池卡片内部很空，内部下方可以动态
+               显示正在调用的账号，如果太多采用滑动条，不要改变卡片大小」。 */
+            '<div id="wb-ov-acc-active"></div>' +
+          '</div>' +
+          '<div class="wb-panel">' +
+            '<div class="wb-panel-head">' +
+              '<div><div class="wb-panel-title">最近执行</div>' +
+              '<div class="wb-panel-sub">每日任务历史</div></div>' +
+              '<span class="wb-panel-chip" id="wb-ov-runs-chip">—</span></div>' +
+            '<div id="wb-ov-runs"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    return v;
+  }
+
+  /* ---------- 概览页视图切换（与 wb-daily 同机制） ---------- */
+  /* 统一视图管理器：main 下有三个互斥视图状态
+       ① 概览（#/wb-overview）→ 显示 #wb-overview-view，隐藏其他
+       ② 每日任务（#/wb-daily）→ 显示 #wb-daily-view，隐藏其他
+       ③ 官方页面（其余）→ 两个注入视图都隐藏，恢复官方子节点
+
+     ⚠️ 2026-10-16 修复：原先 wbUpdateOverviewView 与 wbUpdateWbDailyView
+     各自独立判断、各自恢复子节点，两者在 hashchange 上互相打架 ——
+     wbUpdateWbDailyView 的 else 分支会无条件把所有 display:none 的
+     子节点恢复成 ""，把刚被概览视图隐藏的官方内容又放出来，
+     实测「从概览点账号管理后概览视图仍可见、官方内容也同时可见」
+     （DOM 里 #wb-overview-view 与官方容器 display 都是 block）。
+     现在合成一个函数，任何状态变更都走同一条路径，杜绝竞态。 */
+  function wbApplyMainView() {
+    var main = document.querySelector("main");
+    if (!main) return;
+    var hash = window.location.hash;
+    var ov = document.getElementById("wb-overview-view");
+    var daily = document.getElementById("wb-daily-view");
+
+    var mode = "official";
+    // ⚠️ 不要在这里加 path === "/" 之类的路径条件。
+    // 实测：从「每日任务」（此时 path 停在 /credit-stats）点「概览」，
+    // SPA 只改 hash 不改 path，URL 变成 /credit-stats#/wb-overview —— 
+    // 加了 path 条件就判不出概览态，结果官方内容照显示、概览视图不出现
+    // （2026-10-16 实测踩过）。hash 本身就是这两个注入视图的唯一标识，
+    // 和 wb-daily 用同一套判断即可。
+    if (hash === "#/wb-overview") mode = "overview";
+    else if (hash === "#/wb-daily") mode = "daily";
+
+    if (mode === "overview") {
+      if (!ov) {
+        ov = wbCreateOverviewView();
+        main.appendChild(ov);
+      }
+      ov.style.display = "block";
+      if (daily) daily.style.display = "none";
+      Array.prototype.slice.call(main.children).forEach(function (c) {
+        if (c !== ov) c.style.display = "none";
+      });
+      wbLoadOverviewData();
+      return;
+    }
+
+    if (mode === "daily") {
+      if (!daily) {
+        daily = wbCreateWbDailyView();
+        main.appendChild(daily);
+        wbHoistDailyCardTitles(daily);
+      }
+      daily.style.display = "block";
+      if (ov) ov.style.display = "none";
+      Array.prototype.slice.call(main.children).forEach(function (c) {
+        if (c !== daily) c.style.display = "none";
+      });
+      // 数据新鲜度：TTL 内不重拉（避免每次切换都重渲染造成闪屏）
+      var now = Date.now();
+      if (!__wbDailyLoadedAt || (now - __wbDailyLoadedAt) > WB_DAILY_DATA_TTL_MS) {
+        __wbDailyLoadedAt = now;
+        wbLoadWbDailyData();
+      }
+      return;
+    }
+
+    // official：两个注入视图都藏起来，恢复官方子节点
+    wbOvTaskProgressStop();
+    if (ov) ov.style.display = "none";
+    if (daily) daily.style.display = "none";
+    Array.prototype.slice.call(main.children).forEach(function (c) {
+      if (c !== ov && c !== daily && c.style.display === "none") {
+        c.style.display = "";
+      }
+    });
+  }
+
+  /* 兼容旧名：内部仍有人调用 wbUpdateOverviewView */
+  function wbUpdateOverviewView() {
+    wbApplyMainView();
+    wbSyncNavActive();
+  }
+
+  /* ---------- 导航高亮统一管理 ---------- */
+  /* 导航高亮统一管理。
+     ⚠️ 2026-10-16 修复：原先直接给 <a> 加官方的 bg-foreground/[0.06] 类，
+     但那是 React 自己管理的状态类 —— SPA 重渲染时会把它按官方逻辑重新分配，
+     于是出现「离开某页后该项仍高亮」「多个项同时高亮」。
+     现在改用**专用类 wb-nav-active**：React 不认识它，不会碰，
+     高亮状态完全由我们控制；CSS 也改成用 .wb-nav-active 写样式。
+     规则：只有当前页（或点到的 hash 视图）那一项高亮，其它一律取消。 */
+  function wbSyncNavActive() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var hash = window.location.hash;
+    var path = wbPath();
+    var links = aside.querySelectorAll("nav a");
+    links.forEach(function (a) {
+      var href = a.getAttribute("href") || "";
+      var isOv = a.id === WB_OVERVIEW_NAV_ID;
+      var isDaily = a.id === "wb-nav-wb-daily";
+      var active = false;
+      if (hash === "#/wb-overview") {
+        active = isOv;                      // 概览视图：只高亮概览
+      } else if (hash === "#/wb-daily") {
+        active = isDaily;                   // 每日任务视图：只高亮它
+      } else {
+        // 普通路由页：path 精确匹配才算；hash 视图项一律不高亮
+        active = !isOv && !isDaily && path === href;
+      }
+      if (active) {
+        a.classList.add("wb-nav-active");
+      } else {
+        a.classList.remove("wb-nav-active");
+        // ⚠️ 必须同时清掉 React 官方加的高亮类 —— 它由 React Router 自己管理，
+        // 我们只切自己的类的话，官方类会残留在刚离开的选项卡上，
+        // 表现为「点了数据总览，系统设置还有底色/阴影」
+        // （2026-10-16 用户反馈的遗留问题）。
+        a.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
+        a.classList.add("text-muted-foreground");
+      }
+      a.setAttribute("aria-current", active ? "page" : "false");
+    });
+  }
+
+  /* ---------- 概览页数据 ---------- */
+  function wbLoadOverviewData() {
+    if (!window.__wbOvLoaded || (Date.now() - window.__wbOvLoaded) > 30000) {
+      window.__wbOvLoaded = Date.now();
+    } else {
+      return;   // TTL 内不重拉，避免每次切换都闪
+    }
+    // KPI + 趋势 + 任务（与原首页同一套取数逻辑，只是挂到概览视图里）
+    wbKpiInit();
+    wbMidInit();
+    // 账号池分布
+    wbJson("/api/account-pool", 15000).then(function (d) {
+      var accs = (d && d.accounts) || [];
+      var enabled = 0, disabled = 0;
+      accs.forEach(function (a) {
+        if (a && a.enabled) enabled++; else disabled++;
+      });
+      var chip = document.getElementById("wb-ov-acc-chip");
+      if (chip) chip.textContent = accs.length + " 个账号";
+      var box = document.getElementById("wb-ov-acc-bars");
+      if (!box) return;
+      var total = Math.max(1, accs.length);
+      box.innerHTML =
+        '<div class="wb-ov-bar-row">' +
+          '<span class="wb-ov-bar-k">池内启用</span>' +
+          '<div class="wb-ov-bar"><div style="width:' + (enabled / total * 100) + '%;background:#22c55e"></div></div>' +
+          '<b>' + enabled + '</b></div>' +
+        '<div class="wb-ov-bar-row">' +
+          '<span class="wb-ov-bar-k">已停用</span>' +
+          '<div class="wb-ov-bar"><div style="width:' + (disabled / total * 100) + '%;background:#f59e0b"></div></div>' +
+          '<b>' + disabled + '</b></div>';
+
+      // 「正在调用」列表：一行一个账号，左边账号名、右边调用次数。
+      // 用户需求（2026-10-16）：
+      //   a) 「动态显示一行一个，前面写账号，后面写次数，显示不下纵向添加滑动条」
+      //   b) 「按照调用顺序排列，比如正在调用的第一个，下一次另一个账号调用，
+      //       他就第二个，正在调用的第一个」
+      // b 的语义 = 按**最近一次被调用的时间**排序：最新被调用的账号排第一，
+      // 之后别的账号被调用就升到第一、原第一退到第二。
+      // 实现：/api/token-stats 的 requests 带 timestamp 与 accountId，
+      // 按 timestamp 倒序取每个账号的**首次出现序号**作为「新近度排名」，
+      // 再让 selectionCounts 按该排名排序；requests 里没有的账号
+      // （只有历史累计、近期没被调用）排在最后，按累计次数降序。
+      // 可见区域固定 108px 高，超出靠纵向滚动条，卡片高度不随账号数变化。
+      // lastSelectedAccountId 是当前实际被路由到的账号，单独高亮。
+      var sc = (d && d.selectionCounts) || [];
+      var lastId = d && d.lastSelectedAccountId;
+      var activeBox = document.getElementById("wb-ov-acc-active");
+      if (!activeBox) return;
+
+      wbJson("/api/token-stats", 15000).then(function (agg) {
+        // 汇总所有 source 的调用明细，按 timestamp 倒序，取每个账号首次出现
+        var pairs = [];
+        ((agg && agg.sources) || []).forEach(function (src) {
+          (src.requests || []).forEach(function (q) {
+            var aid = String(q.accountId || "");
+            if (!aid) return;
+            pairs.push([Number(q.timestamp || 0), aid]);
+          });
+        });
+        pairs.sort(function (x, y) { return y[0] - x[0]; });
+        var rank = {};
+        var r = 0;
+        pairs.forEach(function (p) {
+          if (rank[p[1]] === undefined) rank[p[1]] = r++;
+        });
+
+        var top = sc.filter(function (x) { return x && x.count > 0; })
+          .sort(function (a, b) {
+            var ra = rank[String(a.accountId || "")];
+            var rb = rank[String(b.accountId || "")];
+            if (ra === undefined && rb === undefined) {
+              return (b.count || 0) - (a.count || 0);
+            }
+            if (ra === undefined) return 1;
+            if (rb === undefined) return -1;
+            return ra - rb;
+          })
+          .slice(0, 40);
+        var html = '<span class="wb-aa-k">正在调用（' + top.length + '）</span>'
+          + '<div class="wb-aa-list">';
+        if (!top.length) {
+          html += '<span class="wb-aa-empty">暂无调用记录</span>';
+        } else {
+          top.forEach(function (x) {
+            var hot = (x.accountId && x.accountId === lastId) ? " wb-aa-hot" : "";
+            var nm = String(x.accountName || x.accountId || "?");
+            html += '<div class="wb-aa-item' + hot + '">'
+              + '<span class="wb-aa-name">' + nm + '</span>'
+              + '<span class="wb-aa-n">' + (x.count || 0) + ' 次</span>'
+              + '</div>';
+          });
+        }
+        html += '</div>';
+        activeBox.innerHTML = html;
+      });
+    });
+
+    // 最近执行列表（每日任务历史）
+    // 用户需求（2026-10-16）：
+    //   ① 「最近执行卡片中如果有错误的，比如就显示进程中断，未完成即可」
+    //      —— 不要再显示「退出码 0」「账号 0」这种看不懂的原始字段，
+    //         直接给一句人话状态。
+    //   ② 「点击执行记录可以直接在点击的当前任务下方显示具体信息，
+    //       比如执行了多少，什么原因失败，收益多少等等，再点击一次收纳」
+    //      —— 行可点，点在当前行下方插入一张明细卡，再点一次收起。
+    wbJson("/api/wb-daily/runs", 15000).then(function (r) {
+      var runs = (r && r.runs) || [];
+      var chip = document.getElementById("wb-ov-runs-chip");
+      if (chip) chip.textContent = runs.length ? ("近 " + Math.min(runs.length, 5) + " 次") : "暂无";
+      var box = document.getElementById("wb-ov-runs");
+      if (!box) return;
+      if (!runs.length) {
+        box.innerHTML = '<div class="wb-run-row"><span class="wb-run-detail" '
+          + 'style="text-align:left;color:var(--muted-foreground)">暂无执行记录</span></div>';
+        return;
+      }
+
+      /* 状态人话化：把 status + summary 翻译成用户能直接读的一句话。
+         顺序很重要 —— 「进程中断」要排在通用 failed 之前，
+         否则 12 条中断记录会全部显示成「失败」，等于没修。 */
+      function runStatusText(run, sm) {
+        var st = String(run.status || "");
+        var det = String(sm.detail || sm.reason || "");
+        if (st === "done") return { tone: "ok", text: "执行完成" };
+        if (st === "running") return { tone: "run", text: "执行中" };
+        if (st === "aborted") return { tone: "err", text: "已手动中止，未完成" };
+        if (det.indexOf("中断") >= 0) return { tone: "err", text: "进程中断，未完成" };
+        if (det.indexOf("超时") >= 0) return { tone: "err", text: "执行超时，未完成" };
+        if (st === "failed") return { tone: "err", text: "执行失败，未完成" };
+        return { tone: "err", text: det || "未完成" };
+      }
+
+      var html = "";
+      runs.slice(0, 5).forEach(function (run, idx) {
+        var sm = run.summary || {};
+        var stt = runStatusText(run, sm);
+        var ok = stt.tone === "ok";
+        var ts = run.finished_at || run.finishedAt || run.started_at || 0;
+        var when = "—";
+        try {
+          var dt = new Date(Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts));
+          when = (dt.getMonth() + 1) + "/" + dt.getDate() + " "
+            + String(dt.getHours()).padStart(2, "0") + ":"
+            + String(dt.getMinutes()).padStart(2, "0");
+        } catch (e) {}
+        var mode = run.mode === "scheduled" ? "定时" : (run.mode === "manual" ? "手动" : String(run.mode || "?"));
+        var accs = Number(run.accounts || 0);
+        html += '<div class="wb-run-row wb-run-clickable" data-job="' + run.job_id + '" data-idx="' + idx + '" role="button" tabindex="0" title="点击查看本轮明细，再点一次收起">'
+          + '<span class="wb-run-dot ' + (ok ? "ok" : "err") + '"></span>'
+          + '<span class="wb-run-mode">' + mode + '</span>'
+          + '<span class="wb-run-time">' + when + '</span>'
+          + '<span class="wb-run-detail">' + stt.text + (accs ? ' · ' + accs + ' 账号' : '') + '</span>'
+          + '<span class="wb-run-caret">▾</span>'
+          + '</div>'
+          /* 明细卡：默认不存在，点行时才插到该行下方（wbOvRunDetail） */
+          + '<div class="wb-run-detailbox" id="wb-ov-run-detail-' + idx + '" style="display:none"></div>';
+      });
+      box.innerHTML = html;
+
+      /* 行点击：点哪行就在哪行下方插入/移除明细卡（再点一次收纳）。
+         ⚠️ 用事件委托而不是给每行 addEventListener —— innerHTML 重渲染后
+         旧监听会失效，委托挂在 box 上只需绑一次。 */
+      box.querySelectorAll(".wb-run-clickable").forEach(function (row) {
+        row.addEventListener("click", function () {
+          wbOvToggleRunDetail(row, runs);
+        });
+      });
+    });
+
+    // 概览页任务进度轮询启动（执行中时显示 2/24）
+    wbOvTaskProgressStart();
+  }
+
+  /* ---------- 概览页「最近执行」行明细 ---------- */
+  /* 点击某一行 → 在该行正下方插入明细卡；再点一次同一行 → 收起。
+     数据源 /api/wb-daily/run-accounts/{job_id}（逐账号明细）。
+     用户需求（2026-10-16）：「点击执行记录可以直接在点击的当前任务下方显示
+     具体信息，比如执行了多少，什么原因失败，收益多少等等」。
+     ⚠️ 空明细不再显示「本轮没有账号级明细（可能是旧记录或任务未跑完）」——
+        用户明确说这类信息没有任何意义。改成按这一轮的汇总信息给出
+        「跑了多少账号 / 为什么停 / 收益多少」，哪怕是中断轮也有内容可看。 */
+  function wbOvToggleRunDetail(row, runs) {
+    var box = document.getElementById("wb-ov-runs");
+    if (!box) return;
+    var idx = row.getAttribute("data-idx");
+    var panel = document.getElementById("wb-ov-run-detail-" + idx);
+    var wasOpen = panel && panel.style.display !== "none";
+    // 先收起所有已展开的（手风琴：同时只开一个，卡片高度不会被撑爆）
+    box.querySelectorAll(".wb-run-detailbox").forEach(function (p) {
+      p.style.display = "none";
+      p.innerHTML = "";
+    });
+    box.querySelectorAll(".wb-run-clickable").forEach(function (r) {
+      r.classList.remove("wb-run-open");
+    });
+    if (wasOpen || !panel) return;      // 再点一次 = 收纳
+    row.classList.add("wb-run-open");
+    panel.style.display = "";
+    panel.innerHTML = '<div class="wb-run-detail-loading">正在加载明细…</div>';
+    wbOvRenderRunDetail(panel, runs[Number(idx)] || {});
+  }
+
+  function wbOvRenderRunDetail(panel, run) {
+    var jid = String(run.job_id || "");
+    var sm = run.summary || {};
+    var stt = (function () {
+      var st = String(run.status || "");
+      var det = String(sm.detail || sm.reason || "");
+      if (st === "done") return { tone: "ok", text: "执行完成" };
+      if (st === "running") return { tone: "run", text: "执行中" };
+      if (st === "aborted") return { tone: "err", text: "已手动中止，未完成" };
+      if (det.indexOf("中断") >= 0) return { tone: "err", text: "进程中断，未完成" };
+      if (det.indexOf("超时") >= 0) return { tone: "err", text: "执行超时，未完成" };
+      if (st === "failed") return { tone: "err", text: "执行失败，未完成" };
+      return { tone: "err", text: det || "未完成" };
+    })();
+
+    function finish(accounts) {
+      var n = accounts.length;
+      var doneN = 0, totN = 0;
+      var credits = [], actions = [];
+      accounts.forEach(function (a) {
+        doneN += Number(a.done || 0);
+        totN += Number(a.total || 0);
+        if (a.credits) credits.push(a.credits);
+        (a.actions || []).forEach(function (x) { actions.push(x); });
+      });
+      var h = '<div class="wb-rund-h"><b>' + jid + '</b>'
+        + '<span class="wb-rund-st wb-rund-st-' + stt.tone + '">' + stt.text + '</span></div>'
+        + '<div class="wb-rund-kv">'
+        + '<span>跑了多少</span><b>' + (n ? (n + ' 个账号') : (run.accounts ? run.accounts + ' 个账号' : '—')) + '</b>'
+        + '<span>任务完成</span><b>' + (totN ? (doneN + ' / ' + totN + ' 项') : '—') + '</b>'
+        + '<span>失败原因</span><b>' + (stt.tone === "ok" ? '—' : (String(sm.detail || sm.reason || stt.text))) + '</b>'
+        + '<span>积分收益</span><b>' + (credits.length ? credits.length + ' 个账号有积分数据' : '—') + '</b>'
+        + '</div>';
+      if (n) {
+        h += '<div class="wb-rund-tbl">'
+          + '<div class="wb-rund-tr wb-rund-th"><span>账号</span><span>完成</span><span>等级</span><span>连签</span></div>';
+        accounts.slice(0, 24).forEach(function (a) {
+          h += '<div class="wb-rund-tr"><span class="wb-rund-acc">' + (a.account || "?") + '</span>'
+            + '<span>' + (a.done || 0) + '/' + (a.total || 0) + '</span>'
+            + '<span>' + (a.level || "—") + '</span>'
+            + '<span>' + (a.streak || "—") + '</span></div>';
+        });
+        if (n > 24) h += '<div class="wb-rund-more">另有 ' + (n - 24) + ' 个账号…</div>';
+        h += '</div>';
+      } else {
+        // 没有逐账号明细（中断轮很常见）：给汇总，不再说「没有账号级明细」
+        h += '<div class="wb-rund-note">'
+          + '本轮没有逐账号执行数据'
+          + (stt.tone === "ok" ? '（脚本已正常结束）' : '（进程在中途停止，未产出账号明细）')
+          + '</div>';
+      }
+      if (actions.length) {
+        h += '<div class="wb-rund-acts">' + actions.slice(0, 6).map(function (x) {
+          return '<span>' + String(x).replace(/[\[\]]/g, "") + '</span>';
+        }).join("") + '</div>';
+      }
+      panel.innerHTML = h;
+    }
+
+    if (!jid) { panel.innerHTML = '<div class="wb-run-detail-loading">无记录</div>'; return; }
+    wbJson("/api/wb-daily/run-accounts/" + jid, 15000).then(function (d) {
+      finish((d && d.accounts) || []);
+    }).catch(function () { finish([]); });
+  }
+
+  /* ---------- 概览页任务进度轮询 ---------- */
+  /* 用户需求（2026-10-16）：「在数据总览的最近任务和积分任务那里，如果有对应的
+     任务在执行，则显示对应任务进度，比如2/24，方便用户查看」。
+     数据源：/api/wb-daily/jobs（wb-daily 服务的内存态任务表）。
+     Job.to_dict() 返回 accounts_total / accounts_done / progress / steps，
+     其中 steps 最后一条形如「▶ 当前：账号19」—— 正在跑的账号名从这里取。
+     ⚠️ jobs 是**进程内存态**，容器重启即丢；所以没有 running job 时
+     必须把卡片恢复成静态文案，不能停在旧进度上（否则重启后一直显示 23/24）。
+     ⚠️ 进度条口径用 accounts_done/accounts_total，不用 job.progress ——
+     后端那个百分比掺了脚本输出阶段（阶段权重），和用户要的「2/24」对不上。 */
+  function wbOvTaskProgressTick() {
+    wbJson("/api/wb-daily/jobs", 15000).then(function (d) {
+      var jobs = (d && d.jobs) || [];
+      var job = null;
+      for (var i = 0; i < jobs.length; i++) {
+        if (jobs[i] && (jobs[i].status === "running" || jobs[i].status === "pending")) {
+          job = jobs[i];
+          break;
+        }
+      }
+      var chip = document.getElementById("wb-task-chip");
+      var sub = document.getElementById("wb-task-sub");
+      var fill = document.getElementById("wb-task-fill");
+      var acc = document.getElementById("wb-task-acc");
+      var curRow = document.getElementById("wb-task-cur-row");
+      var cur = document.getElementById("wb-task-cur");
+
+      if (!job) {
+        // 只在「刚才还在执行中」时恢复一次，避免每次 tick 都写 DOM
+        if (window.__wbOvTaskRun) {
+          if (chip) chip.textContent = "自动";
+          if (sub) sub.textContent = "下次自动执行 · 间隔 12h";
+          if (curRow) curRow.style.display = "none";
+          if (acc) acc.textContent = "全部完成";
+          if (fill) fill.style.width = "100%";
+          // 任务跑完了，绕开 TTL 强制重拉一次 —— 否则用户盯在本页时
+          // 「最近执行」列表和积分会一直停在任务开始前的旧数据。
+          window.__wbOvLoaded = 0;
+          wbLoadOverviewData();
+        }
+        window.__wbOvTaskRun = false;
+        return;
+      }
+      window.__wbOvTaskRun = true;
+
+      var total = Number(job.accounts_total || 0);
+      var done = Number(job.accounts_done || 0);
+      var ratio = total > 0 ? Math.min(100, done / total * 100) : 0;
+      if (chip) chip.textContent = total > 0 ? ("执行中 " + done + "/" + total) : "执行中";
+      if (sub) sub.textContent = total > 0 ? ("本轮 " + total + " 个账号") : "正在执行…";
+      if (fill) fill.style.width = ratio + "%";
+      if (acc) acc.textContent = total > 0 ? (done + " / " + total) : "—";
+
+      if (curRow && cur) {
+        // steps 倒序找「▶ 当前：xxx」这一条
+        var steps = job.steps || [];
+        var curName = "";
+        for (var k = steps.length - 1; k >= 0; k--) {
+          var st = String(steps[k] || "");
+          if (st.indexOf("当前") >= 0) {
+            var idx = st.indexOf("：");
+            curName = idx >= 0 ? st.slice(idx + 1).trim() : st.replace("▶", "").trim();
+            break;
+          }
+        }
+        if (curName) {
+          cur.textContent = curName;
+          curRow.style.display = "";
+        } else {
+          curRow.style.display = "none";
+        }
+      }
+    });
+  }
+
+  /* 概览页任务进度轮询开关：视图可见时 3s 一次，切走就停。
+     ⚠️ 必须停：否则用户停在别的页面时，这个定时器每 3s 打一次接口。 */
+  function wbOvTaskProgressStart() {
+    if (window.__wbOvTaskTimer) return;
+    wbOvTaskProgressTick();
+    window.__wbOvTaskTimer = setInterval(wbOvTaskProgressTick, 3000);
+  }
+
+  function wbOvTaskProgressStop() {
+    if (window.__wbOvTaskTimer) {
+      clearInterval(window.__wbOvTaskTimer);
+      window.__wbOvTaskTimer = null;
+    }
+  }
+
+  /* ---------- 概览页操作按钮 ---------- */
+  function wbBindOverviewActions() {
+    var view = document.getElementById("wb-overview-view");
+    if (!view || view.dataset.wbBound === "1") return;
+    view.dataset.wbBound = "1";
+    var cb = view.querySelector('[data-act="checkin"]');
+    var tb = view.querySelector('[data-act="task"]');
+    /* ⚠️ 2026-10-16 修复两个真 bug（用户反馈「点击执行任务，失败，错误未知」）：
+       1) 「全部签到」原先调 /api/checkin/run —— 这个端点**不存在**，
+          请求落到 SPA 兜底路由返回 HTML，r.json() 直接抛错，
+          永远走 catch 显示「签到请求失败」。
+       2) 「执行任务」判的是 d.ok，但 /api/wb-daily/run 真实返回
+          {job_id, status:"started"}，没有 ok 字段 → 永远走失败分支。
+       现在两个按钮都走 /api/wb-daily/run（每日任务服务本来就在做签到），
+       并统一按 job_id 判定成功，与每日任务页的 wbManualCheckin 一致。 */
+    function wbOvRun(label, btn) {
+      btn.disabled = true;
+      btn.textContent = "执行中…";
+      fetch("/api/wb-daily/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (d) {
+          btn.disabled = false;
+          btn.textContent = label;
+          if (d && d.job_id) {
+            wbToast("已触发" + label + "，可在「每日任务」页看进度");
+            window.__wbOvLoaded = 0;   // 让下次进概览页重拉数据
+          } else {
+            wbToast(label + "启动失败：" + ((d && (d.detail || d.error)) || "未知原因"), "err");
+          }
+        })
+        .catch(function () {
+          btn.disabled = false;
+          btn.textContent = label;
+          wbToast("请求失败，请刷新页面后重试", "err");
+        });
+    }
+    if (cb) cb.onclick = function () { wbOvRun("全部签到", this); };
+    if (tb) tb.onclick = function () { wbOvRun("执行任务", this); };
+  }
+  /* ---------- KPI 汇总卡 ---------- */
+  /* KPI 卡填数。
+     ⚠️ v4 起 KPI 卡 DOM 由概览视图（wbCreateOverviewView）建好，
+     本函数只负责**填数**，不再往首页注入 —— 用户要求
+     「重要数据移动到概览页面，其他选项卡内容不变」。
+     DOM 不存在（不在概览页）时静默返回。 */
+  /* KPI 卡填数（v5：8 张）。
+     ⚠️ 只填数不注入 —— DOM 由 wbCreateOverviewView() 建好。 */
+  function wbKpiInit() {
+    if (!document.getElementById("wb-kpi-credits")) return;
+
+    var cs = wbJson("/api/credits/stats", 15000);       // 总积分 / 按日消耗
+    var gi = wbJson("/api/gateway-info", 15000);        // 模型数
+    var csum = wbJson("/api/wb-daily/credit-summary", 15000);  // 今日/累计积分
+    var keys = wbJson("/api/api-keys", 15000);          // 密钥
+
+    Promise.all([cs, gi, csum, keys]).then(function (r) {
+      var stats = r[0] || {};
+      var info = r[1] || {};
+      var csum2 = r[2] || {};
+      var keys2 = r[3] || {};
+
+      var summ = stats.summary || {};
+      var accs = stats.accounts || [];
+
+      var today = new Date();
+      var yd = new Date(today.getTime() - 86400000);
+      var byd = new Date(today.getTime() - 2 * 86400000);
+      function key(d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+          + "-" + String(d.getDate()).padStart(2, "0");
+      }
+      var yKey = key(yd), byKey = key(byd), tKey = key(today);
+      var yUsed = null, byUsed = null, wUsed = null;
+      accs.forEach(function (a) {
+        (a.daily || []).forEach(function (row2) {
+          var d = String(row2.date || "");
+          var u = Number(row2.usage || 0);
+          if (d === yKey) yUsed = (yUsed || 0) + u;
+          if (d === byKey) byUsed = (byUsed || 0) + u;
+          if (d >= key(new Date(today.getTime() - 6 * 86400000))) {
+            wUsed = (wUsed || 0) + u;
+          }
+        });
+      });
+
+      // —— 第一行：积分相关 ——
+      /* 账号池总积分卡的徽标 = **今日获得 − 今日消耗**（净值）。
+         用户 2026-10-16 指出：「第一个账号总积分下方今日增加的数据应该是
+         获得的积分-消耗积分，当前为何和消耗积分相同」。
+         根因：这里原先直接用了 summ.usageToday（纯消耗），
+         于是徽标永远显示成消耗值，与旁边的「今日消耗」卡一模一样。
+         现在改为：
+           净值 = csum2.todayCredits（今日签到+任务获得）
+                 − summ.usageToday（今日消耗）
+         两个数来自不同接口但都是「今日」口径，可相减：
+           · csum2 来自 /api/wb-daily/credit-summary（任务台账，落库的真实收益）
+           · usageToday 来自 /api/credits/stats 的 summary
+             （已由 _reconcile_official_usage 校准，见该函数注释）
+         净值为正 → 绿箭头（积分在涨）；为负 → 红箭头（积分在掉）。 */
+      setKpi("wb-kpi-credits", wbFmt(summ.currentRemaining), function (badge) {
+        var gain = (csum2 && csum2.todayCredits != null) ? Number(csum2.todayCredits) : null;
+        var used = summ.usageToday != null ? Number(summ.usageToday) : 0;
+        if (gain === null) {
+          // 拿不到收益数据时退回显示消耗，至少不是空白
+          badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+          badge.textContent = "今日消耗 " + wbFmt(used);
+          return;
+        }
+        var net = gain - used;
+        if (net > 0) {
+          badge.className = "wb-kpi-badge wb-kpi-badge-up";
+          badge.textContent = "▲ 今日 +" + wbFmt(net);
+        } else if (net < 0) {
+          badge.className = "wb-kpi-badge wb-kpi-badge-down";
+          badge.textContent = "▼ 今日 " + wbFmt(net);
+        } else {
+          badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+          badge.textContent = "今日持平";
+        }
+      });
+
+      // 今日消耗：用 summary.usageToday（已由 _reconcile_official_usage 校准的准确值）
+      // 徽标改为与昨日对比，仍用 accounts[].daily 的昨日累加作参照 —— 那个维度
+      // 没有更准的顶层字段可用，作为「较昨日」的百分比基准足够。
+      var tUsed = summ.usageToday != null ? Number(summ.usageToday) : null;
+      setKpi("wb-kpi-used", tUsed === null ? "—" : wbFmt(tUsed), function (badge) {
+        var p = wbPct(tUsed, yUsed);
+        if (p === null || yUsed === null) {
+          badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+          badge.textContent = "较昨日 —";
+        } else if (p >= 0) {
+          badge.className = "wb-kpi-badge wb-kpi-badge-up";
+          badge.textContent = "▲ 较昨日 +" + p.toFixed(0) + "%";
+        } else {
+          badge.className = "wb-kpi-badge wb-kpi-badge-down";
+          badge.textContent = "▼ 较昨日 " + p.toFixed(0) + "%";
+        }
+      });
+
+      // 今日获得积分（签到+任务）
+      var todayC = (csum2 && csum2.todayCredits != null) ? Number(csum2.todayCredits) : null;
+      setKpi("wb-kpi-today", todayC === null ? "—" : wbFmt(todayC), function (badge) {
+        badge.className = "wb-kpi-badge "
+          + (todayC !== null && todayC > 0 ? "wb-kpi-badge-up" : "wb-kpi-badge-flat");
+        badge.textContent = (todayC !== null && todayC > 0) ? "▲ 任务已获得" : "今日暂无获得";
+      });
+
+      // 累计任务积分
+      setKpi("wb-kpi-total", wbFmt(csum2 && csum2.totalCredits), function (badge) {
+        badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+        badge.textContent = "台账累计";
+      });
+
+      // —— 第二行：模型 / 调用 / 密钥 / 近 7 日 ——
+      // ⚠️ autoDiscovered 用接口返回值，不要自己 count 减基准
+      var models = (info.models && info.models.count) || 0;
+      var auto = (info.models && info.models.autoDiscovered) || 0;
+      setKpi("wb-kpi-models", wbFmt(models), function (badge) {
+        badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+        badge.textContent = "自动发现 " + auto;
+      });
+
+      // 今日调用（网关账本按日聚合）
+      wbJson("/api/token-stats", 15000).then(function (agg) {
+        var calls = 0;
+        ((agg && agg.sources) || []).forEach(function (s2) {
+          (s2.daily || []).forEach(function (row3) {
+            if (String(row3.key) === tKey) calls += Number(row3.records || 0);
+          });
+        });
+        setKpi("wb-kpi-calls", wbFmt(calls), function (badge) {
+          badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+          badge.textContent = accs.length + " 账号在线";
+        });
+      });
+
+      // API 密钥（启用数 / 总数）
+      var kArr = (keys2 && keys2.keys) || [];
+      var kOn = kArr.filter(function (k) { return k && k.enabled; }).length;
+      setKpi("wb-kpi-keys", wbFmt(kArr.length), function (badge) {
+        badge.className = "wb-kpi-badge "
+          + (kArr.length ? "wb-kpi-badge-up" : "wb-kpi-badge-flat");
+        badge.textContent = kArr.length ? (kOn + " 个启用") : "未创建";
+      });
+
+      // 近 7 日消耗
+      setKpi("wb-kpi-week", wUsed === null ? "—" : wbFmt(wUsed), function (badge) {
+        badge.className = "wb-kpi-badge wb-kpi-badge-flat";
+        badge.textContent = "含今日";
+      });
+
+      // 任务状态卡（今日签到 / 今日任务 / 累计）
+      var set = function (id, v) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = v;
+      };
+      set("wb-task-checkin", wbFmt(csum2 && csum2.todayCheckinCredits));
+      set("wb-task-taskcredits", wbFmt(csum2 && csum2.todayTaskCredits));
+      set("wb-task-total", wbFmt(csum2 && csum2.totalCredits));
+      var fill = document.getElementById("wb-task-fill");
+      if (fill) fill.style.width = (todayC !== null && todayC > 0) ? "100%" : "0%";
+      set("wb-task-acc", (todayC !== null && todayC > 0) ? "全部完成" : "未开始");
+    });
+
+    function setKpi(id, val, badgeFn) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.querySelector(".wb-kpi-value").textContent = val;
+      var badge = el.querySelector(".wb-kpi-badge");
+      if (badge && badgeFn) badgeFn(badge);
+    }
+  }
+
+  /* ---------- 趋势图 + 任务状态 ---------- */
+  /* 趋势图 + 任务状态填数。
+     ⚠️ v4 起 DOM 由概览视图建好，本函数只填数不注入。 */
+  function wbMidInit() {
+    if (!document.getElementById("wb-trend-svg")) return;
+
+    // —— 趋势图数据：官方 credits/stats 的顶层 daily（按日序列）——
+    wbJson("/api/credits/stats", 15000).then(function (d) {
+      var daily = (d && d.daily) || [];
+      // 兼容两种形态：数组 [{date,usage}] 或对象 {date:usage}
+      var arr = [];
+      if (Array.isArray(daily)) {
+        arr = daily.map(function (r) {
+          return { d: String(r.date || r.key || ""), v: Number(r.usage || r.credit || 0) };
+        });
+      } else if (typeof daily === "object") {
+        Object.keys(daily).forEach(function (k) { arr.push({ d: k, v: Number(daily[k] || 0) }); });
+      }
+      // 若顶层没有，从 accounts[].daily 聚合
+      if (!arr.length && Array.isArray(d.accounts)) {
+        var agg = {};
+        d.accounts.forEach(function (a) {
+          (a.daily || []).forEach(function (r) {
+            var k = String(r.date || "");
+            agg[k] = (agg[k] || 0) + Number(r.usage || 0);
+          });
+        });
+        Object.keys(agg).forEach(function (k) { arr.push({ d: k, v: agg[k] }); });
+      }
+      arr = arr.filter(function (x) { return x.d; }).sort(function (a, b) { return a.d < b.d ? -1 : 1; }).slice(-30);
+      wbDrawTrend(arr);
+    });
+
+    // —— 任务状态：wb-daily 汇总 ——
+    wbJson("/api/wb-daily/credit-summary", 15000).then(function (d) {
+      var todayC = d && d.todayCredits != null ? Number(d.todayCredits) : null;
+      var totalC = d && d.totalCredits != null ? Number(d.totalCredits) : null;
+      var set = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+      set("wb-task-credits", wbFmt(todayC));
+      set("wb-task-total", wbFmt(totalC));
+      // 进度：有今日积分视为已完成（口径与任务页一致）
+      var fill = document.getElementById("wb-task-fill");
+      if (fill) fill.style.width = (todayC !== null && todayC > 0) ? "100%" : "0%";
+      set("wb-task-acc", (todayC !== null && todayC > 0) ? "全部完成" : "未开始");
+      // 最近完成时间
+      wbJson("/api/wb-daily/runs", 15000).then(function (r2) {
+        var runs = (r2 && r2.runs) || [];
+        if (runs.length) {
+          var last = runs[0];
+          var ts = last.finishedAt || last.finished_at || last.startedAt || 0;
+          if (ts) {
+            var dt = new Date(Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts));
+            set("wb-task-last", dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0")
+              + "-" + String(dt.getDate()).padStart(2, "0"));
+          }
+        }
+      });
+    });
+  }
+
+  function wbDrawTrend(arr) {
+    var svg = document.getElementById("wb-trend-svg");
+    if (!svg) return;
+    var W = 600, H = 130, PAD_L = 4, PAD_R = 4, PAD_T = 8, PAD_B = 16;
+    if (!arr.length) {
+      svg.innerHTML = '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle">暂无消耗数据</text>';
+      return;
+    }
+    var max = 0;
+    arr.forEach(function (x) { if (x.v > max) max = x.v; });
+    if (max <= 0) max = 1;
+    var n = arr.length;
+    var iw = W - PAD_L - PAD_R, ih = H - PAD_T - PAD_B;
+    var pts = arr.map(function (x, i) {
+      var px = PAD_L + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+      var py = PAD_T + ih - (x.v / max) * ih;
+      return { x: px, y: py, d: x.d, v: x.v };
+    });
+    var line = pts.map(function (p, i) {
+      return (i === 0 ? "M" : "L") + p.x.toFixed(1) + " " + p.y.toFixed(1);
+    }).join(" ");
+    var area = line + " L" + pts[pts.length - 1].x.toFixed(1) + " " + (H - PAD_B)
+      + " L" + pts[0].x.toFixed(1) + " " + (H - PAD_B) + " Z";
+    var html = '<path class="wb-trend-area" d="' + area + '"/>'
+      + '<path class="wb-trend-line" d="' + line + '"/>'
+      + '<line class="wb-trend-axis" x1="' + PAD_L + '" y1="' + (H - PAD_B) + '" x2="' + (W - PAD_R) + '" y2="' + (H - PAD_B) + '"/>'
+      // 末点高亮
+      + '<circle class="wb-trend-dot" cx="' + pts[pts.length - 1].x.toFixed(1) + '" cy="' + pts[pts.length - 1].y.toFixed(1) + '" r="3"/>';
+    // 三个时间标签：首 / 中 / 末
+    [0, Math.floor(n / 2), n - 1].forEach(function (idx) {
+      if (!pts[idx]) return;
+      var anchor = idx === 0 ? "start" : (idx === n - 1 ? "end" : "middle");
+      var label = pts[idx].d.slice(5).replace("-", "/");
+      html += '<text x="' + pts[idx].x.toFixed(1) + '" y="' + (H - 4) + '" text-anchor="' + anchor + '">' + label + '</text>';
+    });
+    // 峰值标注
+    var peak = pts.reduce(function (a, b) { return b.v > a.v ? b : a; }, pts[0]);
+    if (peak && peak.v > 0) {
+      html += '<text x="' + Math.min(peak.x, W - 40).toFixed(1) + '" y="' + Math.max(peak.y - 4, 9).toFixed(1) + '" text-anchor="middle">峰值 ' + wbFmt(peak.v) + '</text>';
+    }
+    svg.innerHTML = html;
+  }
   function wbInitThemeSwitch(aside) {
     if (!aside || document.getElementById("wb-theme-switch")) return;
 
@@ -2575,13 +4083,11 @@ COLLAPSE_SCRIPT = r"""
       box.appendChild(b);
     });
 
-    aside.appendChild(box);
+    // v5：挂到顶栏内盒子（限宽居中的那一层），由 CSS grid 第 3 列推到右侧。
+    wbTopbarInner(aside).appendChild(box);
     wbThemeApply(wbThemeCurrent(), false);
 
-    // 收纳按钮：放在主题切换**后面**（顶栏最右），双端统一。
-    // 用户 2026-10-16：「在右上角主题切换后面加一个收纳按钮，
-    // 将5个选项卡收纳进去，双端统一」。
-    wbInitNavToggler(aside);
+
 
     // 系统外观变化时，只有当前处于「系统」模式才跟着变
     try {
@@ -2593,156 +4099,6 @@ COLLAPSE_SCRIPT = r"""
       else if (mq.addListener) mq.addListener(onSysChange);
     } catch (e) {}
   }
-
-  /* ---------- 顶栏收纳按钮（2026-10-16）----------
-     把 5 个导航项收进一个下拉面板，顶栏只留品牌 + 收纳按钮 + 主题。
-
-     设计取舍：
-       - **双端统一**：PC 与移动端用同一个按钮、同一个面板、同一套交互，
-         不用两套代码路径（移动端原来靠横向滚动，现在也能收纳）
-       - 状态存 localStorage，刷新后保持
-       - 面板是 absolute 浮层，不参与文档流，不会把内容顶下去
-       - 点击面板外自动关闭；Esc 关闭
-       - 收纳态下顶栏高度从 54px 降到 46px（品牌 + 右侧控件）
-  */
-  var WB_NAV_COLLAPSED_KEY = "wb_nav_collapsed";
-
-  function wbNavCollapsed() {
-    try { return localStorage.getItem(WB_NAV_COLLAPSED_KEY) === "true"; }
-    catch (e) { return false; }
-  }
-
-  /* 收纳态生效：给 aside 加 .wb-nav-collapsed（CSS 负责隐藏 nav、
-     把顶栏压成一行），并同步 logo 的 aria 状态。 */
-  function wbApplyNavCollapsed(on) {
-    var aside = document.querySelector("aside");
-    if (!aside) return;
-    aside.classList.toggle("wb-nav-collapsed", !!on);
-    var brand = document.getElementById("wb-brand-trigger");
-    if (brand) {
-      brand.classList.toggle("wb-brand-on", !!on);
-      brand.title = on ? "导航已收纳 · 点击展开" : "收纳 / 展开导航";
-    }
-    // 收纳时必须关掉已打开的面板
-    if (on) wbCloseNavPanel();
-  }
-
-  function wbCloseNavPanel() {
-    var panel = document.getElementById("wb-nav-panel");
-    if (panel) panel.classList.remove("wb-nav-panel-open");
-    var brand = document.getElementById("wb-brand-trigger");
-    if (brand) brand.setAttribute("aria-expanded", "false");
-    document.removeEventListener("click", wbNavPanelOutside);
-    document.removeEventListener("keydown", wbNavPanelEsc);
-  }
-
-  function wbNavPanelOutside(e) {
-    var panel = document.getElementById("wb-nav-panel");
-    var brand = document.getElementById("wb-brand-trigger");
-    if (panel && !panel.contains(e.target)
-        && brand && !brand.contains(e.target)) {
-      wbCloseNavPanel();
-    }
-  }
-
-  function wbNavPanelEsc(e) {
-    if (e.key === "Escape") wbCloseNavPanel();
-  }
-
-  /* 收纳入口 = 左上角 logo（用户 2026-10-16 第二次调整）：
-     「取消右上角收纳按钮，改为收纳到左上角logo图标，也就是说logo收纳
-     五个选项卡，然后原本选项卡直接清除」。
-
-     因此这里**不再创建独立按钮**，而是把品牌区整块变成可点击：
-       - 默认态（未收纳）：logo 就是普通品牌展示，点击可展开面板看看入口
-       - 收纳态：5 个导航项全部收起，只留 logo，点 logo 弹出面板
-     logo 上加 aria/role，键盘与读屏都能用。 */
-  function wbInitNavToggler(aside) {
-    if (!aside || document.getElementById("wb-nav-panel")) return;
-    var brand = aside.querySelector("div:first-child");
-    if (!brand) return;
-
-    brand.id = "wb-brand-trigger";
-    brand.setAttribute("role", "button");
-    brand.setAttribute("tabindex", "0");
-    brand.setAttribute("aria-expanded", "false");
-    brand.setAttribute("aria-haspopup", "menu");
-    brand.title = "收纳 / 展开导航";
-    brand.style.cursor = "pointer";
-
-    var panel = document.createElement("div");
-    panel.id = "wb-nav-panel";
-    panel.setAttribute("role", "menu");
-    aside.appendChild(panel);
-
-    function rebuildPanel() {
-      var nav = aside.querySelector("nav");
-      if (!nav) return;
-      panel.innerHTML = "";
-      var links = Array.prototype.slice.call(nav.querySelectorAll("a"));
-      if (!links.length) {
-        var empty = document.createElement("div");
-        empty.className = "wb-nav-panel-empty";
-        empty.textContent = "暂无导航项";
-        panel.appendChild(empty);
-        return;
-      }
-      links.forEach(function (a) {
-        var item = document.createElement("a");
-        item.className = "wb-nav-panel-item";
-        item.href = a.getAttribute("href") || "#";
-        item.setAttribute("role", "menuitem");
-        item.innerHTML = a.innerHTML;
-        // 选中态：aria-current="page" 是官方唯一可靠信号。
-        // ⚠️ 不能用 className.indexOf("bg-foreground") —— 未选中项**全都**带
-        // hover:bg-foreground/[0.04]，会把 5 项全判成 active（踩过）。
-        var isCur = a.getAttribute("aria-current") === "page"
-          || String(a.className).indexOf("bg-foreground/[0.06]") >= 0;
-        if (isCur) {
-          item.classList.add("wb-nav-panel-active");
-          item.setAttribute("aria-current", "page");
-        }
-        item.addEventListener("click", function () { wbCloseNavPanel(); });
-        panel.appendChild(item);
-      });
-    }
-
-    function togglePanel(e) {
-      e.stopPropagation();
-      var isOpen = panel.classList.contains("wb-nav-panel-open");
-      if (isOpen) {
-        wbCloseNavPanel();
-        return;
-      }
-      rebuildPanel();
-      panel.classList.add("wb-nav-panel-open");
-      brand.setAttribute("aria-expanded", "true");
-      setTimeout(function () {
-        document.addEventListener("click", wbNavPanelOutside);
-        document.addEventListener("keydown", wbNavPanelEsc);
-      }, 0);
-    }
-
-    brand.addEventListener("click", togglePanel);
-    brand.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        togglePanel(e);
-      }
-    });
-
-    wbApplyNavCollapsed(wbNavCollapsed());
-
-    try {
-      var nav = aside.querySelector("nav");
-      if (nav) {
-        new MutationObserver(function () {
-          if (panel.classList.contains("wb-nav-panel-open")) rebuildPanel();
-        }).observe(nav, {childList: true, subtree: true});
-      }
-    } catch (e) {}
-  }
-
 
   /* 隐藏设置页里的官方「主题」项（用户 2026-10-16 反馈：
      「设置页主题取消，和右上角重复」）。
@@ -5747,59 +7103,20 @@ COLLAPSE_SCRIPT = r"""
   var __wbDailyLoadedAt = 0;
   var WB_DAILY_DATA_TTL_MS = 30000;
 
+  /* 兼容旧名：内部/历史调用点仍在用 wbUpdateWbDailyView。
+     视图切换已统一到 wbApplyMainView()（见概览节），这里只做委托，
+     不再自己判断 hash —— 否则它和 wbApplyMainView 会在 hashchange 上
+     互相恢复对方刚隐藏的节点（2026-10-16 实测踩过：概览页切走后
+     #wb-overview-view 仍是 block，官方内容也同时显示）。 */
   function wbUpdateWbDailyView() {
-    var isDaily = window.location.hash === "#/wb-daily";
-    var navLink = document.getElementById("wb-nav-wb-daily");
-    var aside = document.querySelector("aside");
-    if (!aside) return;
-
-    if (navLink) {
-      if (isDaily) {
-        navLink.classList.add("bg-foreground/[0.06]", "font-medium", "text-foreground");
-        navLink.classList.remove("text-muted-foreground");
-        var otherLinks = aside.querySelectorAll("nav a:not(#wb-nav-wb-daily)");
-        otherLinks.forEach(function(link) {
-          link.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
-          link.classList.add("text-muted-foreground");
-        });
-      } else {
-        navLink.classList.remove("bg-foreground/[0.06]", "font-medium", "text-foreground");
-        navLink.classList.add("text-muted-foreground");
-      }
-    }
-
-    var main = document.querySelector("main");
-    if (!main) return;
-
-    var dailyView = document.getElementById("wb-daily-view");
-    if (isDaily) {
-      if (!dailyView) {
-        dailyView = wbCreateWbDailyView();
-        main.appendChild(dailyView);
-        wbHoistDailyCardTitles(dailyView);
-      }
-      dailyView.style.display = "block";
-      Array.prototype.slice.call(main.children).forEach(function(child) {
-        if (child !== dailyView) child.style.display = "none";
-      });
-      // 只在数据缺失/过期时才重拉：每次切换都重渲染会让页面闪一下
-      // （实测切换瞬间 DOM mutation 上百次，视觉上就是闪屏）。
-      var __now = Date.now();
-      if (!__wbDailyLoadedAt || (__now - __wbDailyLoadedAt) > WB_DAILY_DATA_TTL_MS) {
-        __wbDailyLoadedAt = __now;
-        wbLoadWbDailyData();
-      }
-    } else {
-      if (dailyView) dailyView.style.display = "none";
-      Array.prototype.slice.call(main.children).forEach(function(child) {
-        if (child !== dailyView && child.style.display === "none") {
-          child.style.display = "";
-        }
-      });
-    }
+    wbApplyMainView();
+    wbSyncNavActive();
   }
 
-  window.addEventListener("hashchange", wbUpdateWbDailyView);
+  // 三个旧监听（wbUpdateWbDailyView / wbUpdateOverviewView / wbSyncNavActive）
+  // 收敛成一个：那两个函数现在都是 wbApplyMainView() + wbSyncNavActive() 的
+  // 薄封装，分别挂会重复跑两遍。留一个即可。
+  window.addEventListener("hashchange", wbUpdateOverviewView);
 
   /* 把每日任务页每个卡片的标题「外提」为卡片外的二级标题，
      结构从 CARD>三级标题+内容 改为 SECTION>[H2, CARD(内容)]，
@@ -5882,23 +7199,118 @@ COLLAPSE_SCRIPT = r"""
           '<div id="wb-dl-progress-accounts" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>' +
         '</div>' +
 
+        /* ── 签到调度 / 任务调度拆分（用户 2026-10-16 需求）──
+           「自动签到和任务调度混合，需要你在每日任务界面将其分开，用户可以分别
+            配置，避免签到和任务相互影响」。
+           做法：两张独立的卡片，各管自己的开关、间隔、上次/下次执行时间。
+           跑的时候后端按类型给上游脚本传不同任务过滤：
+             · 签到轮 → 只跑 checkin
+             · 任务轮 → 跑除 checkin 以外的全部
+           任一边单独停用不影响另一边；总开关关掉则两边都不自动跑。 */
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
-              '<div class="wb-api-label">自动签到与调度</div>' +
-              '<div class="wb-api-desc">签到的唯一配置入口（原在设置页，已并入本页）。按间隔自动执行一轮；「仅查询」模式只读积分/用量/成长，不产生任何任务状态变更。</div>' +
+              '<div class="wb-api-label">签到调度</div>' +
+              '<div class="wb-api-desc">只负责每日签到，独立间隔、独立开关。任务跑多久都不会影响签到的时间。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wb-api-row wb-api-row-stack">' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;width:100%">' +
+              '<div style="display:flex;align-items:center;gap:8px">' +
+                '<input id="wb-dl-checkin-sched" type="checkbox" style="width:16px;height:16px">' +
+                '<span class="wb-api-label" style="margin:0">启用签到调度</span>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">签到间隔（小时）</div>' +
+                '<input id="wb-dl-checkin-interval" type="number" min="1" max="72" class="wb-api-input" style="width:100%;margin-top:4px" value="12">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">签到上次执行</div>' +
+                '<div id="wb-dl-checkin-lastrun" class="wb-api-input" style="display:flex;align-items:center;margin-top:4px;color:var(--muted-foreground)">—</div>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">签到下次到期</div>' +
+                '<div id="wb-dl-checkin-nextdue" class="wb-api-input" style="display:flex;align-items:center;margin-top:4px;color:var(--muted-foreground)">—</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">任务调度</div>' +
+              '<div class="wb-api-desc">除每日签到以外的全部任务（成长 / 玩法 / 开学季 / 领奖）。独立间隔、独立开关，签到跑多久都不会影响任务的时间。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wb-api-row wb-api-row-stack">' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;width:100%">' +
+              '<div style="display:flex;align-items:center;gap:8px">' +
+                '<input id="wb-dl-task-sched" type="checkbox" style="width:16px;height:16px">' +
+                '<span class="wb-api-label" style="margin:0">启用任务调度</span>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">任务间隔（小时）</div>' +
+                '<input id="wb-dl-task-interval" type="number" min="1" max="72" class="wb-api-input" style="width:100%;margin-top:4px" value="12">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">任务上次执行</div>' +
+                '<div id="wb-dl-task-lastrun" class="wb-api-input" style="display:flex;align-items:center;margin-top:4px;color:var(--muted-foreground)">—</div>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">任务下次到期</div>' +
+                '<div id="wb-dl-task-nextdue" class="wb-api-input" style="display:flex;align-items:center;margin-top:4px;color:var(--muted-foreground)">—</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        /* ── 任务巡检（用户 2026-10-16 需求）──
+           背景：任务被中断（容器重启 / 被 kill / 超时）后，原先只能等下一轮
+           调度（默认 12h）才恢复 —— 中断当天的剩余账号要等到第二天才跑，
+           直接错过当天收益。巡检是一个更短的周期，到点就检查最近一轮是否
+           中断，是则立即从剩余账号续跑。
+           ⚠️ 巡检间隔必须小于上面的执行间隔才有意义 —— 否则等巡检到点时
+              下一轮调度也到期了，巡检等于没做。 */
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">任务巡检</div>' +
+              '<div class="wb-api-desc">任务被中断（容器重启、被终止、超时）后自动从剩余账号继续，不用等下一轮调度。巡检间隔需小于上面的执行间隔，否则没有意义。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wb-api-row wb-api-row-stack">' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;width:100%">' +
+              '<div style="display:flex;align-items:center;gap:8px">' +
+                '<input id="wb-dl-patrol-enabled" type="checkbox" style="width:16px;height:16px">' +
+                '<span class="wb-api-label" style="margin:0">启用任务巡检</span>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">巡检间隔（分钟）</div>' +
+                '<input id="wb-dl-patrol-interval" type="number" min="5" max="1440" class="wb-api-input" style="width:100%;margin-top:4px" value="60" title="默认 60 分钟。范围 5–1440；必须小于执行间隔，否则等巡检到点时下一轮也到期了。">' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">待恢复的中断任务</div>' +
+                '<div id="wb-dl-patrol-pending" class="wb-api-input" style="display:flex;align-items:center;margin-top:4px;color:var(--muted-foreground)">—</div>' +
+              '</div>' +
+              '<div>' +
+                '<div class="wb-api-label">下次巡检</div>' +
+                '<div id="wb-dl-patrol-next" class="wb-api-input" style="display:flex;align-items:center;margin-top:4px;color:var(--muted-foreground)">—</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        /* 执行模式与账号保活：与调度拆分无关，仍归到一张公共卡片里 */
+        '<div class="wb-api-card">' +
+          '<div class="wb-api-row">' +
+            '<div class="wb-api-main">' +
+              '<div class="wb-api-label">执行模式与账号保活</div>' +
+              '<div class="wb-api-desc">「仅查询」模式只读积分/用量/成长，不产生任何任务状态变更。保活与惰性刷新控制账号凭据的续期节奏。</div>' +
             '</div>' +
           '</div>' +
           '<div class="wb-api-row wb-api-row-stack">' +
             '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;width:100%">' +
-              '<div style="display:flex;align-items:center;gap:8px">' +
-                '<input id="wb-dl-enabled" type="checkbox" style="width:16px;height:16px">' +
-                '<span class="wb-api-label" style="margin:0">启用定时调度</span>' +
-              '</div>' +
-              '<div>' +
-                '<div class="wb-api-label">执行间隔（小时）</div>' +
-                '<input id="wb-dl-interval" type="number" min="1" max="72" class="wb-api-input" style="width:100%;margin-top:4px" value="12">' +
-              '</div>' +
               '<div>' +
                 '<div class="wb-api-label">执行模式</div>' +
                 '<select id="wb-dl-mode" class="wb-api-input" style="width:100%;margin-top:4px">' +
@@ -5920,17 +7332,28 @@ COLLAPSE_SCRIPT = r"""
               '</div>' +
             '</div>' +
           '</div>' +
+        '</div>' +
+
+        /* 操作按钮：**独立成一张卡**，紧跟三张调度卡之后。
+           用户 2026-10-16 反馈：「调度和巡检为何没有保存按钮，改动之后用户
+           无法保存」—— 原先这行按钮被塞进了「执行模式与账号保活」卡片的
+           内部，视觉上归到了保活那一卡，用户改完调度/巡检配置后找不到
+           保存入口，以为那两个区块没有保存按钮。
+           现在独立成卡、紧跟调度卡，改完就能看到；且保存范围覆盖上面
+           全部配置（签到调度 / 任务调度 / 巡检 / 执行模式 / 保活）。 */
+        '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
               '<div class="wb-api-desc">上次执行：<span id="wb-dl-lastrun" class="wb-api-mono">—</span>　下次到期：<span id="wb-dl-nextdue" class="wb-api-mono">—</span></div>' +
             '</div>' +
-            '<div style="display:flex;gap:8px">' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
               '<button id="wb-dl-abort" class="wb-api-btn wb-api-btn-danger" style="display:none">中止</button>' +
               '<button id="wb-dl-save" class="wb-api-btn">保存配置</button>' +
               '<button id="wb-dl-run" class="wb-api-btn wb-api-btn-primary">立即执行</button>' +
             '</div>' +
           '</div>' +
-          '<!-- 账号签到与凭据：一账号一行，同时显示今日签到状态与凭据状态（原「参与账号」卡片已并入此处，不再重复渲染） -->' +
+        '</div>' +
+        '</div>' +
           '<div class="wb-api-row wb-api-row-stack" style="border-bottom:0;padding-top:14px">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:6px">' +
               '<span class="wb-api-label">账号签到与凭据（最近 30 天）</span>' +
@@ -6076,12 +7499,21 @@ COLLAPSE_SCRIPT = r"""
     fetch("/api/wb-daily/config").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
       var cfg = (d && d.config) || {};
       var el;
-      el = document.getElementById("wb-dl-enabled"); if (el) el.checked = cfg.enabled !== false;
-      el = document.getElementById("wb-dl-interval"); if (el) el.value = cfg.interval_hours != null ? cfg.interval_hours : 12;
       el = document.getElementById("wb-dl-mode"); if (el) el.value = cfg.run_mode === "query" ? "query" : "full";
       el = document.getElementById("wb-dl-checkin"); if (el) el.checked = cfg.checkin_enabled !== false;
       el = document.getElementById("wb-dl-keep"); if (el) el.value = cfg.keepalive_days != null ? cfg.keepalive_days : 30;
       el = document.getElementById("wb-dl-lazy"); if (el) el.value = cfg.lazy_refresh_hours != null ? cfg.lazy_refresh_hours : 6;
+      // 巡检（用户 2026-10-16 需求）
+      el = document.getElementById("wb-dl-patrol-enabled"); if (el) el.checked = cfg.patrol_enabled !== false;
+      el = document.getElementById("wb-dl-patrol-interval");
+      if (el) el.value = (cfg.patrol_interval_minutes != null ? cfg.patrol_interval_minutes : 60);
+      // 签到 / 任务调度拆分（用户 2026-10-16 需求）
+      el = document.getElementById("wb-dl-checkin-sched"); if (el) el.checked = cfg.checkin_schedule_enabled !== false;
+      el = document.getElementById("wb-dl-checkin-interval");
+      if (el) el.value = cfg.checkin_interval_hours != null ? cfg.checkin_interval_hours : 12;
+      el = document.getElementById("wb-dl-task-sched"); if (el) el.checked = cfg.task_schedule_enabled !== false;
+      el = document.getElementById("wb-dl-task-interval");
+      if (el) el.value = cfg.task_interval_hours != null ? cfg.task_interval_hours : 12;
     }).catch(function() {});
     fetch("/api/wb-daily/health").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
       var badge = document.getElementById("wb-dl-state");
@@ -6100,6 +7532,36 @@ COLLAPSE_SCRIPT = r"""
       if (abortBtn) abortBtn.style.display = d && d.running ? "" : "none";
       var lr = document.getElementById("wb-dl-lastrun"); if (lr) lr.textContent = wbFmtTs(d && d.last_run_at);
       var nd = document.getElementById("wb-dl-nextdue"); if (nd) nd.textContent = d && d.enabled ? wbFmtTs(d.next_due_at) : "—（调度停用）";
+
+      // 签到 / 任务拆分：各自的上次执行与下次到期（用户 2026-10-16 需求）
+      var ch = (d && d.checkin_schedule) || {};
+      var tk = (d && d.task_schedule) || {};
+      var clr = document.getElementById("wb-dl-checkin-lastrun");
+      if (clr) clr.textContent = ch.enabled === false ? "—（签到调度已停用）" : wbFmtTs(ch.last_run_at);
+      var cnd = document.getElementById("wb-dl-checkin-nextdue");
+      if (cnd) cnd.textContent = ch.enabled === false ? "—（签到调度已停用）" : wbFmtTs(ch.next_due_at);
+      var tlr = document.getElementById("wb-dl-task-lastrun");
+      if (tlr) tlr.textContent = tk.enabled === false ? "—（任务调度已停用）" : wbFmtTs(tk.last_run_at);
+      var tnd = document.getElementById("wb-dl-task-nextdue");
+      if (tnd) tnd.textContent = tk.enabled === false ? "—（任务调度已停用）" : wbFmtTs(tk.next_due_at);
+
+      // 巡检状态（用户 2026-10-16 需求）
+      var pt = (d && d.patrol) || {};
+      var pp = document.getElementById("wb-dl-patrol-pending");
+      if (pp) {
+        if (pt.pending_run_id) {
+          pp.textContent = pt.pending_run_id + "（"
+            + (pt.pending_kind === "checkin" ? "签到轮" : "任务轮") + "，"
+            + (pt.pending_status === "aborted" ? "已中止" : "中断") + "）";
+          pp.style.color = "#b45309";
+        } else {
+          pp.textContent = "无（上一轮已正常完成）";
+          pp.style.color = "";
+        }
+      }
+      var pn = document.getElementById("wb-dl-patrol-next");
+      if (pn) pn.textContent = pt.enabled === false ? "—（巡检已停用）" : wbFmtTs(pt.next_check_at);
+
       if (d && d.running && d.running_job_id) wbDailyPoll(d.running_job_id);
       else wbRenderDailyProgress(null);
     }).catch(function() {});
@@ -6558,17 +8020,35 @@ COLLAPSE_SCRIPT = r"""
 
   function wbDailySaveConfig() {
     // 参与账号自动关联账号池，不再有手填入口。
+    // 签到 / 任务调度拆分 + 巡检（用户 2026-10-16 需求）：
+    //   · 旧字段 enabled / interval_hours 保留并作为「总开关 + 兜底间隔」
+    //     —— 两边各自的时间戳都为空时会退回它，保证拆分上线后不会立刻重跑。
+    //   · 巡检间隔夹在 5–1440 分钟，越界时用边界值而不是 NaN。
+    var patrolMin = parseInt(document.getElementById("wb-dl-patrol-interval").value, 10);
+    if (!(patrolMin > 0)) patrolMin = 60;
+    patrolMin = Math.max(5, Math.min(1440, patrolMin));
     var payload = {
-      enabled: document.getElementById("wb-dl-enabled").checked,
-      interval_hours: parseFloat(document.getElementById("wb-dl-interval").value) || 12,
       run_mode: document.getElementById("wb-dl-mode").value,
       checkin_enabled: document.getElementById("wb-dl-checkin").checked,
       keepalive_days: parseInt(document.getElementById("wb-dl-keep").value, 10) || 0,
-      lazy_refresh_hours: parseInt(document.getElementById("wb-dl-lazy").value, 10) || 6
+      lazy_refresh_hours: parseInt(document.getElementById("wb-dl-lazy").value, 10) || 6,
+      // 巡检
+      patrol_enabled: document.getElementById("wb-dl-patrol-enabled").checked,
+      patrol_interval_minutes: patrolMin,
+      // 签到 / 任务拆分
+      checkin_schedule_enabled: document.getElementById("wb-dl-checkin-sched").checked,
+      checkin_interval_hours: parseFloat(document.getElementById("wb-dl-checkin-interval").value) || 12,
+      task_schedule_enabled: document.getElementById("wb-dl-task-sched").checked,
+      task_interval_hours: parseFloat(document.getElementById("wb-dl-task-interval").value) || 12
     };
+    // 巡检间隔若大于等于两边的执行间隔，明确告知用户「这样等于没做」
+    var minIv = Math.min(payload.checkin_interval_hours, payload.task_interval_hours);
+    if (payload.patrol_enabled && patrolMin >= minIv * 60) {
+      wbToast("已保存，但巡检间隔 " + patrolMin + " 分钟 ≥ 执行间隔 " + minIv + " 小时，巡检不会生效", "warn");
+    }
     fetch("/api/wb-daily/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function() { wbToast("配置已保存", "ok"); })
+      .then(function() { if (!(payload.patrol_enabled && patrolMin >= minIv * 60)) wbToast("配置已保存", "ok"); })
       .catch(function(e) { wbToast("保存失败: " + (e && e.message || e), "err"); });
   }
 
@@ -6759,6 +8239,9 @@ COLLAPSE_SCRIPT = r"""
     wbCiyuanRename();
     wbCheckAuth();
     initCollapse();
+    injectWbOverview();
+    wbUpdateOverviewView();
+    wbBindOverviewActions();
     // 主题已挪到顶栏右上角，设置页那个官方主题项要藏掉（重复入口）
     wbHideSettingsTheme();
     sanitizeMacUI();
@@ -6779,6 +8262,11 @@ COLLAPSE_SCRIPT = r"""
     injectAbout();
     wbPinAboutLast();
     injectWbDaily();
+    // 顶栏与内容区对齐（宽度 + 左边缘都要跟当前页一致）。
+    // 放在 run() 末尾：此时各页内容 wrap 已由 React 渲染出来，能量到真实宽度。
+    wbSyncTopbarAlign();
+    // 导航高亮同步（run() 每次跑都重新判一次，覆盖 SPA 重渲染后的残留）
+    wbSyncNavActive();
   }
 
   // 去抖窗口。
@@ -6968,7 +8456,9 @@ COLLAPSE_SCRIPT = r"""
       }, delay);
     });
   });
-  window.addEventListener("hashchange", function() { wbUpdateWbDailyView(); });
+  // 注：hashchange 监听已在上面统一挂过（wbUpdateOverviewView →
+  // wbApplyMainView + wbSyncNavActive），这里不再重复挂 ——
+  // 挂两份会让每次切 tab 都跑两遍 wbApplyMainView()。
 })();
 </script>
 """

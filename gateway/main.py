@@ -82,7 +82,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "0.9.87"
+VERSION_DEFAULT = "0.9.88"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -547,10 +547,12 @@ def _collect_daily_report() -> tuple:
         from gateway import token_tracker as _tt
         agg = _tt.get_aggregated_token_stats() or {}
         # 实测结构：sources[].daily[]（{key, records, ...}），records 才是请求数
-        _today = time.strftime("%Y-%m-%d")
+        # ⚠️ 2026-10-16 修复（用户反馈「给我的是今天的数据，凌晨 0 点推送
+        # 所以永远为 0」）：日报在 00:05 发送，此刻「今天」才过去 5 分钟，
+        # 按今天统计必然接近 0。改按**昨日**统计，与积分部分同一口径。
         for _s in (agg.get("sources") or []):
             for _row in (_s.get("daily") or []):
-                if str(_row.get("key")) == _today:
+                if str(_row.get("key")) == y_date:
                     today_calls += int(_row.get("records") or 0)
     except Exception:
         pass
@@ -568,7 +570,7 @@ def _collect_daily_report() -> tuple:
     title, lines = _notify_mod.build_daily_report(
         {"date": y_date, "checkin": y_checkin, "task": y_task, "total": y_total,
          "used": y_used, "totalCredits": total_credits, "remaining": remaining},
-        {"keyCount": key_count, "todayCalls": today_calls, "totalCalls": total_calls},
+        {"keyCount": key_count, "yesterdayCalls": today_calls, "totalCalls": total_calls},
         models_info)
     lines.append("")
     lines.append("🔔 通知链路：%s" % link_state)

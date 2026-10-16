@@ -30,6 +30,14 @@ CONFIG_FILE = DATA_DIR / "notify_config.json"
 _LOCK = threading.Lock()
 _CACHE: Dict[str, Any] = {"mtime": 0.0, "data": None}
 
+# 推送去重状态：记录每个 scene 上一次成功推送的内容指纹。
+# 用户需求（2026-10-16）：「消息推送，比如巡检，如果两次消息一模一样则过滤，
+# 不用推送，直到有不同内容再推送」。
+# 放在独立文件里而不是 notify_config.json —— 那是用户可编辑配置，
+# 去重指纹是运行时状态，混在一起会让设置页把内部字段也渲染出来。
+DEDUP_FILE = DATA_DIR / "notify_last_sent.json"
+_DEDUP_CACHE: Dict[str, str] = {}
+
 # ---------------------------------------------------------------------------
 # 渠道注册表：每个渠道声明自己的配置字段（前端据此渲染表单）。
 # secret=True 的字段：GET 时只回 has_secret 布尔，不回值。
@@ -473,6 +481,49 @@ def send_test(channel: str, text: str) -> Dict[str, Any]:
                              text or "AutoBuddy 通知测试 · %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
+def _dedup_fingerprint(scene: str, body: str) -> str:
+    """内容指纹：scene + 正文的 sha1 前 16 位。
+
+    用指纹而不是明文比对：落盘体积恒定，且不会把推送正文
+    （可能含账号手机号等敏感信息）明文写到状态文件里。
+    """
+    import hashlib
+    h = hashlib.sha1()
+    h.update(scene.encode("utf-8"))
+    h.update(b"\x00")
+    h.update(body.encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def _dedup_load() -> Dict[str, str]:
+    """读上次推送指纹（读不到/损坏 → 空表，不影响推送）。"""
+    global _DEDUP_CACHE
+    if _DEDUP_CACHE:
+        return _DEDUP_CACHE
+    try:
+        if DEDUP_FILE.exists():
+            data = json.loads(DEDUP_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                _DEDUP_CACHE = {str(k): str(v) for k, v in data.items()}
+    except Exception:
+        _DEDUP_CACHE = {}
+    return _DEDUP_CACHE
+
+
+def _dedup_mark(scene: str, fp: str) -> None:
+    """记录本次成功推送的指纹（原子落盘，失败不影响主流程）。"""
+    global _DEDUP_CACHE
+    _DEDUP_CACHE[scene] = fp
+    try:
+        DEDUP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = DEDUP_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_DEDUP_CACHE, ensure_ascii=False),
+                       encoding="utf-8")
+        os.replace(tmp, DEDUP_FILE)
+    except Exception:
+        pass
+
+
 def send_scene(scene: str, title: str, lines: List[str]) -> Dict[str, Any]:
     """按场景推送通知（渠道订阅过滤 + 总开关）。
 
@@ -484,6 +535,21 @@ def send_scene(scene: str, title: str, lines: List[str]) -> Dict[str, Any]:
     if not cfg.get("enabled"):
         return {"ok": False, "error": "通知总开关未开启", "scene": scene}
     body = title + "\n" + "\n".join(lines) if lines else title
+
+    # —— 内容去重（2026-10-16 用户需求）——
+    # 「如果两次消息一模一样则过滤，不用推送，直到有不同内容再推送」。
+    # 典型场景：巡检每 3 小时跑一轮，结果全是「无变化」，旧实现会把这句
+    # 原样推一遍又一遍。现在按 scene + 正文指纹比对，相同就直接返回，
+    # 只有内容真的变了才放行。
+    # ⚠️ 只对「成功推送过」的场景生效：上一次失败不能算数，否则一次
+    # 网络抖动之后，即使内容没变也永远不再推送了。
+    fp = _dedup_fingerprint(scene, body)
+    _last = _dedup_load().get(scene)
+    if _last == fp:
+        return {"ok": True, "scene": scene, "deduped": True,
+                "skipped": "内容与上次相同，已跳过推送",
+                "results": {}, "sent_to": []}
+
     results: Dict[str, Any] = {}
     sent_to: List[str] = []
     for c in CHANNELS:
@@ -502,8 +568,11 @@ def send_scene(scene: str, title: str, lines: List[str]) -> Dict[str, Any]:
         results[key] = r
         if r.get("ok"):
             sent_to.append(key)
-    return {"ok": bool(sent_to), "scene": scene, "results": results,
-            "sent_to": sent_to}
+    # 至少有一个渠道成功才记指纹 —— 全失败时下次仍会尝试推送
+    if sent_to:
+        _dedup_mark(scene, fp)
+    return {"ok": bool(sent_to), "scene": scene,
+            "deduped": False, "results": results, "sent_to": sent_to}
 
 
 # ---------------------------------------------------------------------------
@@ -2003,7 +2072,7 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
 
     yesterday_credits: {"date": "2026-10-12", "checkin": x, "task": y, "total": z,
                         "totalCredits": 总积分, "remaining": 剩余积分}
-    api_keys_stats:    {"keyCount": n, "totalCalls": 累计, "todayCalls": 当天}
+    api_keys_stats:    {"keyCount": n, "totalCalls": 累计, "yesterdayCalls": 当天}
     models_info:       {"total": n, "autoDiscovered": m, "disabled": k, "manual": j}
     """
     d = str(yesterday_credits.get("date") or "昨日")
@@ -2021,10 +2090,11 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
     lines = [
         "📅 报告日期：%s（凌晨 0 点推送）" % d,
         "",
-        "💰 积分四项",
+        "💰 积分五项",
         "  · 昨日签到积分：%s" % checkin_txt,
         "  · 昨日任务积分：%s" % _fmt_num(yesterday_credits.get("task")),
-        "  · 昨日消耗合计：%s" % used_txt,
+        "  · 昨日总积分：%s" % _fmt_num(yesterday_credits.get("total")),
+        "  · 昨日消耗积分：%s" % used_txt,
         "  · 累计任务积分：%s" % _fmt_num(yesterday_credits.get("totalCredits")),
         "  · 账号池剩余积分：%s" % _fmt_num(yesterday_credits.get("remaining")),
         "",
@@ -2036,7 +2106,7 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
         "",
         "🔌 API 调用",
         "  · 密钥数：%s" % api_keys_stats.get("keyCount", "?"),
-        "  · 当天调用：%s 次" % api_keys_stats.get("todayCalls", "?"),
+        "  · 昨日调用：%s 次" % api_keys_stats.get("yesterdayCalls", "?"),
         "  · 累计调用：%s 次" % api_keys_stats.get("totalCalls", "?"),
     ]
     return ("🌅 AutoBuddy 每日报告（%s）" % d, lines)
@@ -2054,7 +2124,6 @@ def build_checkin_done(checkin_credits: float, remaining: float,
     改为各自带明确归属：余额归账号池，累计归任务台账，不再并排比较。
     """
     lines = [
-        "✅ 签到成功",
         "  · 本次签到积分：%s" % _fmt_num(checkin_credits),
         "  · 账号池剩余积分：%s" % _fmt_num(remaining),
         "  · 累计任务积分：%s" % _fmt_num(total),
@@ -2077,8 +2146,9 @@ def build_task_failed_analysis(detail: str, accounts_done: int = 0,
     """
     reason, advice = _classify_task_failure(detail)
     mins = int(duration_sec // 60) if duration_sec else 0
+    # ⚠️ 删掉正文首行「🔍 每日任务失败分析」—— 标题已经是同一句，
+    # 推送出来两行完全重复（用户 2026-10-16 反馈）。正文直接从数据开始。
     lines = [
-        "🔍 每日任务失败分析",
         "  · 原因：%s" % reason,
         "  · 建议：%s" % advice,
     ]
@@ -2173,7 +2243,9 @@ def build_health_done(result: Dict[str, Any], models_info: Dict[str, Any]) -> tu
 def build_model_change(added: List[str], removed: List[str],
                        models_info: Dict[str, Any]) -> tuple:
     """⑤ 上游模型变化：变化明细 + 当前可用模型。"""
-    lines = ["📦 上游模型目录变化"]
+    # ⚠️ 删掉正文首行「📦 上游模型目录变化」—— 与标题语义重复
+    # （用户 2026-10-16 反馈）。正文直接从变化明细开始。
+    lines = []
     if added:
         lines.append("  · ➕ 新增 %d 个：%s" % (len(added), ", ".join(added[:12])))
     if removed:

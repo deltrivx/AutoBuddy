@@ -138,6 +138,18 @@ def init_db() -> None:
                 cursor.execute("ALTER TABLE wb_daily_accounts ADD COLUMN actions TEXT")
         except Exception as e:
             print(f"[Database] wb_daily_accounts 表结构迁移失败: {e}")
+
+        # 表结构平滑迁移：补齐 kind 列（签到/任务拆分，用户 2026-10-16 需求）。
+        # 旧库没有这一列时全部按 'task' 处理 —— 拆分上线前跑过的轮次
+        # 都是完整轮，归到任务轮是对的。
+        try:
+            cursor.execute("PRAGMA table_info(wb_daily_runs)")
+            cols = [c[1] for c in cursor.fetchall()]
+            if "kind" not in cols:
+                cursor.execute("ALTER TABLE wb_daily_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'")
+                print("[Database] wb_daily_runs 已补齐 kind 列")
+        except Exception as e:
+            print(f"[Database] wb_daily_runs 表结构迁移失败: {e}")
         
         # 认证用户与环境变量动态同步：
         # 支持环境变量 AUTH_USERNAME / AUTH_USER / AUTH_DEFAULT_USER
@@ -437,12 +449,15 @@ def save_wb_daily_run(job_id: str, mode: str, status: str, started_at: float,
                       finished_at: Optional[float], accounts: int,
                       summary: Any = None, log: Any = None,
                       account_rows: Optional[List[Dict[str, Any]]] = None,
-                      task_rows: Optional[List[Dict[str, Any]]] = None) -> None:
+                      task_rows: Optional[List[Dict[str, Any]]] = None,
+                      kind: str = "task") -> None:
     """落盘一轮每日任务（汇总行 + 逐账号明细），并顺手剪掉超出保留额的老记录。
 
     日志存全文（上限由调用方控制），因为面板要能回看失败的账号到底卡在哪。
     写入用 INSERT OR REPLACE：同一 job_id 会随状态推进多次落盘
     （开始时先记 running，结束时覆盖成最终结果）。
+    ``kind`` = checkin / task（签到/任务拆分，用户 2026-10-16 需求）——
+    巡检靠它直接判断中断的那一轮该补哪一种，不必再从任务台账反推。
     """
     now = time.time()
     try:
@@ -450,12 +465,13 @@ def save_wb_daily_run(job_id: str, mode: str, status: str, started_at: float,
             cursor = conn.cursor()
             cursor.execute("""
             INSERT OR REPLACE INTO wb_daily_runs
-                (job_id, mode, status, started_at, finished_at, accounts, summary, log)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (job_id, mode, status, started_at, finished_at, accounts, summary, log, kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (str(job_id), str(mode), str(status), float(started_at),
                   float(finished_at) if finished_at else None, int(accounts),
                   json.dumps(summary, ensure_ascii=False) if summary is not None else None,
-                  json.dumps(log, ensure_ascii=False) if log is not None else None))
+                  json.dumps(log, ensure_ascii=False) if log is not None else None,
+                  str(kind) if kind in ("checkin", "task") else "task"))
             if account_rows:
                 cursor.execute("DELETE FROM wb_daily_accounts WHERE job_id = ?", (str(job_id),))
                 for row in account_rows:
@@ -512,6 +528,48 @@ def save_wb_daily_tasks(job_id: str, task_rows: Optional[List[Dict[str, Any]]]) 
             conn.commit()
     except Exception as e:
         print(f"[wb-daily] 写任务台账出错: {e}")
+
+
+def get_wb_daily_tasks(job_id: str) -> List[Dict[str, Any]]:
+    """取某一轮的任务台账（按 job_id 过滤）。
+
+    与 list_wb_daily_tasks 的区别：那边是「最近 N 条」的全局视图，
+    这边是「指定这一轮有哪些任务」—— 巡检要靠它判断中断的那一轮
+    是签到轮还是任务轮（用户 2026-10-16 需求）。
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT job_id, account, task_key, task_name, group_name, result, detail,
+                   checked_in_dates, streak_days, total_credits, occurred_at
+            FROM wb_daily_tasks WHERE job_id = ?
+            ORDER BY occurred_at DESC
+            """, (str(job_id),))
+            out = []
+            for row in cursor.fetchall():
+                dates = []
+                try:
+                    dates = json.loads(row["checked_in_dates"]) if row["checked_in_dates"] else []
+                except Exception:
+                    dates = []
+                out.append({
+                    "job_id": row["job_id"],
+                    "account": row["account"],
+                    "task_key": row["task_key"],
+                    "task_name": row["task_name"],
+                    "group_name": row["group_name"],
+                    "result": row["result"],
+                    "detail": row["detail"],
+                    "checked_in_dates": dates,
+                    "streak_days": row["streak_days"],
+                    "total_credits": row["total_credits"],
+                    "occurred_at": row["occurred_at"],
+                })
+            return out
+    except Exception as e:
+        print(f"[wb-daily] 读单轮任务台账出错: {e}")
+        return []
 
 
 def list_wb_daily_tasks(limit: int = 200, account: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -664,7 +722,7 @@ def list_wb_daily_runs(limit: int = 20) -> List[Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-            SELECT job_id, mode, status, started_at, finished_at, accounts, summary
+            SELECT job_id, mode, status, started_at, finished_at, accounts, summary, kind
             FROM wb_daily_runs ORDER BY started_at DESC LIMIT ?
             """, (int(limit),))
             out = []
@@ -674,6 +732,11 @@ def list_wb_daily_runs(limit: int = 20) -> List[Dict[str, Any]]:
                     summary = json.loads(row["summary"]) if row["summary"] else None
                 except Exception:
                     summary = None
+                # kind 列是后来加的，老库/异常情况下可能取不到，兜底 "task"
+                try:
+                    kind = row["kind"] or "task"
+                except Exception:
+                    kind = "task"
                 out.append({
                     "job_id": row["job_id"],
                     "mode": row["mode"],
@@ -682,6 +745,7 @@ def list_wb_daily_runs(limit: int = 20) -> List[Dict[str, Any]]:
                     "finished_at": row["finished_at"],
                     "accounts": row["accounts"],
                     "summary": summary,
+                    "kind": kind if kind in ("checkin", "task") else "task",
                 })
             return out
     except Exception as e:

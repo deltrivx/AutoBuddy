@@ -92,7 +92,43 @@ DEFAULT_CONFIG = {
     "keepalive_days": 30,     # 保活阈值（天）；0 表示每天无条件刷新
     "lazy_refresh_hours": 6,  # 惰性刷新（小时）
     "checkin_enabled": True,  # 启动时核验服务端状态，未签到账号自动补签
+    # ---- 任务巡检（用户 2026-10-16 需求）----
+    # 背景：任务被中断（容器重启 / 被 kill / 超时）后，原先只能等下一轮调度
+    # （默认 12h，用户配到 24h 就更久）才恢复 —— 中断当天的剩余账号要等到
+    # 第二天才跑，直接错过当天收益。
+    # 巡检是一个**独立于 interval_hours 的更短周期**：到点就检查最近一轮
+    # 是否中断，是则立即从剩余账号续跑。
+    # ⚠️ 巡检间隔必须小于 interval_hours 才有意义（用户明确要求）——
+    #    否则等巡检到点时下一轮调度也到期了，巡检等于没做。
+    "patrol_enabled": True,        # 巡检总开关
+    "patrol_interval_minutes": 60, # 巡检周期（分钟），默认 1 小时
+    # ---- 签到 / 任务调度拆分（用户 2026-10-16 需求）----
+    # 「自动签到和任务调度混合，需要你在每日任务界面将其分开，用户可以分别
+    #  配置，避免签到和任务相互影响」。
+    # 做法：两套独立的 enabled + interval_hours，跑的时候给 vendor 脚本
+    # 传不同的任务过滤参数（--tasks / --skip-tasks），互不干扰：
+    #   · 签到轮 = 只跑 checkin（每日签到）
+    #   · 任务轮 = 跑除 checkin 以外的全部（成长/玩法/开学季/领奖）
+    # 任意一边单独停用，不影响另一边；两边都停用则完全不自动跑。
+    "checkin_schedule_enabled": True,   # 签到定时开关
+    "checkin_interval_hours": 12,       # 签到轮间隔（小时）
+    "task_schedule_enabled": True,      # 任务定时开关
+    "task_interval_hours": 12,          # 任务轮间隔（小时）
+    # 拆分后各自记录上次执行时间（与旧 last_run_at 并存，互不覆盖）
+    "checkin_last_run_at": None,
+    "task_last_run_at": None,
 }
+
+# 巡检周期下限（分钟）：设得比这更短会让循环空转，没有实际意义。
+PATROL_MIN_INTERVAL_MINUTES = 5
+# 巡检周期上限（分钟）：超过 1 天就失去「快速恢复」的意义。
+PATROL_MAX_INTERVAL_MINUTES = 1440
+
+# 签到轮的任务代号（vendor 脚本 want() 的白名单）。
+CHECKIN_TASK_CODES = ("checkin",)
+# 任务轮要排除的代号 = 签到 —— 用黑名单而不是白名单枚举，
+# 因为任务轮要跑的是「除签到以外的全部」，上游新增任务时不用回来改这里。
+TASK_ROUND_SKIP_CODES = ("checkin",)
 
 # 冷配置：模块导入时读一次的 env 常量（改了**必须重启容器**才生效）。
 # 与「面板配置热生效」区分开 —— 用户改了 env 却期待立即生效，是最常见的误解。
@@ -235,6 +271,70 @@ def build_account_store(cfg: dict | None = None) -> dict:
     return store
 
 
+def _masked_account_key(label: str) -> str | None:
+    """从逐账号明细的账号名里提取「可跨轮次匹配」的键。
+
+    明细里的账号名是上游脚本脱敏后的格式（实测）：
+        '1  13*******60'  → 序号 1 + 前 2 位 + 后 2 位
+    账号池侧的键是**全号手机号**（如 '13666135560'）。
+    两边唯一稳定的公共信息就是「前 2 位 + 后 2 位」：
+        - 只用后 2 位不够 —— 22 个账号里 '03' 和 '41' 各出现 2 次（实测）；
+        - 加上前 2 位后组合唯一（实测 19/19 全部 OK）。
+    匹配不上时返回 None，由调用方按「未跑过」处理（宁可多跑，不能漏跑）。
+    """
+    m = re.match(r"^\s*\d+\s+(\d{2})\*+(\d{2})\s*$", str(label or ""))
+    if not m:
+        return None
+    return m.group(1) + m.group(2)
+
+
+def _store_account_key(user: str) -> str | None:
+    """账号池侧取同样的「前2 + 后2」键；非手机号形态返回 None。"""
+    u = str(user or "").strip()
+    if len(u) >= 4 and u[:2].isdigit() and u[-2:].isdigit():
+        return u[:2] + u[-2:]
+    return None
+
+
+def _already_done_accounts(job) -> set:
+    """上一轮中断前已跑完的账号键集合（断点续跑用）。
+
+    只认**最近一轮**没跑完的记录：
+      - 上游脚本是「账号串行」跑的，中断时前面的账号已经真跑完了
+        （明细里能查到 done/total、积分、连签等完整数据）；
+      - 那些账号当天的任务已经完成，重跑一遍没有收益，只会多打一次接口；
+      - 所以下一轮从「剩下的账号」继续，这就是用户要的
+        「22个跑了4个能否结算这4个收益，下次自动从剩下的账号继续」。
+    收益结算不在这里做 —— 已跑完的 4 个账号的积分/连签/等级
+    在中断那一刻就已由 _record_task / accounts_summary 落库，
+    面板的积分统计与任务台账读的就是那份数据，天然已结算。
+    """
+    try:
+        rows = db.list_wb_daily_runs(limit=1)
+    except Exception:
+        return set()
+    if not rows:
+        return set()
+    last = rows[0]
+    if str(last.get("status")) == "done":
+        return set()          # 上一轮整轮完成，没有「剩下」可言
+    jid = last.get("job_id")
+    if not jid:
+        return set()
+    try:
+        accs = db.get_wb_daily_accounts(jid)
+    except Exception:
+        return set()
+    done: set = set()
+    for a in accs:
+        k = _masked_account_key(a.get("account"))
+        if k:
+            done.add(k)
+    if done:
+        job.log_line("断点续跑：上一轮 %s 已完成 %d 个账号，本轮从剩余账号继续" % (jid, len(done)))
+    return done
+
+
 def accounts_preview(cfg: dict | None = None) -> dict:
     cfg = cfg or load_config()
     store = build_account_store(cfg)
@@ -257,6 +357,25 @@ def accounts_preview(cfg: dict | None = None) -> dict:
 
 class DailyJob:
     """一轮每日任务的执行记录（子进程托管 vendor 脚本）。"""
+
+    def __init__(self, jid: str, mode: str, kind: str = "task"):
+        self.id = jid
+        self.mode = mode
+        self.kind = kind if kind in ("checkin", "task") else "task"
+        self.status = "running"
+        self.progress = 0
+        self.log: list[str] = []
+        self.result = None
+        self.created_at = time.time()
+        self.finished_at: float | None = None
+        self.proc: asyncio.subprocess.Process | None = None
+        self.accounts_total = 0      # 本轮参与账号数
+        self.accounts_done = 0       # 已跑完的账号数
+        self.accounts_summary: list[dict] = []   # 逐账号汇总（落库用）
+        self.tasks_summary: list[dict] = []      # 任务台账（任务维度，落库用）
+        self._cur_account: dict | None = None    # 当前正在跑的账号
+        self._checkin_notified = False           # 本轮签到通知是否已发（幂等）
+        self._failed_notified = False            # 本轮失败分析通知是否已发（幂等）
 
     # 从上游脚本输出行推断进度。
     #
@@ -748,6 +867,29 @@ async def _execute(job: DailyJob):
         job.log_line("没有可参与的账号（账号池无 cn 账号，也未配置补充账号）")
         job.finish("failed", "无可用账号")
         return
+
+    # 断点续跑（用户 2026-10-16 需求）：「如果没跑完的比如22个跑了4个能否结算
+    # 这4个收益，下次自动从剩下的账号继续」。
+    # 上一轮是中断结束（failed / aborted 且非整轮 done）时，把这轮已经跑完的
+    # 账号从本轮剔除 —— 上游脚本按账号串行执行，中断点之前的账号当天任务
+    # 已经真做完，明细也早已落库（积分/连签/等级/任务台账），
+    # 所以「结算这 4 个收益」不需要额外动作，数据已经在库里；
+    # 本轮只需要把剩下的 18 个跑完。
+    # ⚠️ 只认最近一轮：更早的轮次状态可能与当前账号池不一致，盲目跳过会漏跑。
+    resume_skip = _already_done_accounts(job)
+    if resume_skip:
+        kept = {u: e for u, e in store.items()
+                if (_store_account_key(u) or u) not in resume_skip}
+        if kept and len(kept) < len(store):
+            job.log_line("本轮参与账号 %d → %d（跳过上一轮已完成的 %d 个）"
+                         % (len(store), len(kept), len(store) - len(kept)))
+            store = kept
+        elif not kept:
+            job.log_line("上一轮已全部完成，无需续跑")
+            job.finish("done", {"detail": "上一轮已全部完成，无需续跑"})
+            _persist_run(job, [])
+            return
+        # 一个都没匹配上时保持全量 —— 宁可重跑，不能漏跑
     if not VENDOR_SCRIPT.exists():
         job.log_line(f"内置脚本缺失: {VENDOR_SCRIPT}")
         job.finish("failed", "vendor 脚本缺失")
@@ -766,6 +908,19 @@ async def _execute(job: DailyJob):
     if run_mode == "query":
         script_args.append("--query")
     job.log_line(f"执行模式: {run_mode}（full=签到/玩法/领奖全量，query=仅查询）")
+
+    # 签到 / 任务拆分（用户 2026-10-16 需求）：按本轮 kind 给 vendor 传任务过滤。
+    #   checkin 轮 → --tasks checkin        （只跑每日签到）
+    #   task 轮    → --skip-tasks checkin   （跑除签到以外的全部）
+    # 手动执行的「立即执行」按钮不带 kind（默认 task），行为与拆分前的完整轮一致。
+    # ⚠️ 必须走命令行参数而不是只设 env：env 在容器里可能已被外部注入
+    #    （WORKBUDDY_TASKS），命令行参数在 vendor 里是后解析的，优先级更高。
+    if job.kind == "checkin":
+        script_args += ["--tasks", ",".join(CHECKIN_TASK_CODES)]
+        job.log_line("任务范围：仅每日签到（签到/任务拆分，本轮为签到轮）")
+    else:
+        script_args += ["--skip-tasks", ",".join(TASK_ROUND_SKIP_CODES)]
+        job.log_line("任务范围：除每日签到以外的全部任务（签到/任务拆分，本轮为任务轮）")
 
     env = dict(os.environ)
     env["TZ"] = env.get("TZ", "Asia/Shanghai")
@@ -995,16 +1150,24 @@ def _persist_run(job: DailyJob, all_lines: list[str]) -> None:
             log=_tail_summary(all_lines, 200),
             account_rows=job.accounts_summary,
             task_rows=job.tasks_summary,
+            kind=job.kind,
         )
     except Exception as e:
         print(f"[wb-daily] 落库执行记录失败: {e}")
 
 
-async def start_job(mode: str = "manual") -> DailyJob:
+async def start_job(mode: str = "manual", kind: str = "task") -> DailyJob:
+    """启动一轮任务。
+
+    ``kind`` 区分本轮要跑哪一类（用户 2026-10-16 要求签到与任务调度拆分）：
+      · ``"checkin"`` —— 只跑每日签到（给 vendor 传 --tasks checkin）
+      · ``"task"``     —— 跑除签到以外的全部（给 vendor 传 --skip-tasks checkin）
+    巡检触发的续跑沿用上一轮的 kind，保证「签到中断就补签到、任务中断就补任务」。
+    """
     running = [j for j in JOBS.values() if j.status == "running"]
     if running:
         raise HTTPException(status_code=409, detail=f"已有任务在执行（{running[0].id}）")
-    job = DailyJob(uuid.uuid4().hex[:12], mode)
+    job = DailyJob(uuid.uuid4().hex[:12], mode, kind=kind)
     JOBS[job.id] = job
     # 先落一条 running：进程若在中途被 SIGKILL / 容器重建，DB 里也留得下一具
     # 「没跑完」的尸体，供启动时的 _reconcile_orphan_runs() 收尾标记。
@@ -1037,24 +1200,153 @@ async def _guard(job: DailyJob):
         global _last_run_at
         _last_run_at = time.time()
         # 回写持久化：重启后调度以此为基准，不会立即重跑一轮。
+        # 签到/任务拆分后各自记各自的时间戳（用户 2026-10-16 需求）——
+        # 若还共用 last_run_at，跑完签到就会把任务轮的下次执行时间也推后 12h，
+        # 两边相互影响，正是用户要避免的。
         try:
-            save_config({"last_run_at": _last_run_at})
+            if job.kind == "checkin":
+                save_config({"last_run_at": _last_run_at,
+                             "checkin_last_run_at": _last_run_at})
+            else:
+                save_config({"last_run_at": _last_run_at,
+                             "task_last_run_at": _last_run_at})
         except Exception:
             pass
 
 
-async def _scheduler_loop():
-    """轻量定时调度：每 5 分钟检查一次是否到期（到期 = 上次执行 + 间隔小时）。"""
+# ── 任务巡检（用户 2026-10-16 需求）──
+# 背景：任务被中断（容器重启 / 被 kill / 超时）后，原先只能等下一轮调度
+# （默认 12h）才恢复 —— 中断当天的剩余账号要等到第二天才跑，直接错过当天收益。
+# 巡检是一个独立于 interval_hours 的更短周期：到点就检查最近一轮是否中断，
+# 是则立即从剩余账号续跑（复用断点续跑逻辑）。
+# ⚠️ 巡检间隔必须小于 interval_hours 才有意义（用户明确要求）：
+#    否则等巡检到点时下一轮调度也到期了，巡检等于没做。
+
+
+def _last_interrupted_run() -> dict | None:
+    """最近一条「没跑完」的执行记录（failed / aborted 且非整轮 done）。
+
+    与 _already_done_accounts 的判定保持一致：只认最近一轮。
+    返回 None 表示上一轮是正常完成的（或没有记录），无需巡检恢复。
+    """
+    try:
+        rows = db.list_wb_daily_runs(limit=1)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    last = rows[0]
+    if str(last.get("status")) == "done":
+        return None
+    return last
+
+
+def _interrupted_run_kind(last: dict) -> str:
+    """从中断记录推断它属于签到轮还是任务轮。
+
+    优先用 ``kind`` 列（签到/任务拆分时写入，用户 2026-10-16 需求）——
+    这是最直接的依据，不依赖任务台账是否已落库。
+    列缺失或是拆分上线前的老记录时，退回用任务台账反推：
+    明细里有签到任务就按签到轮补，否则按任务轮补
+    （任务轮要跑的东西更多，补一轮不会漏签到）。
+    """
+    k = str(last.get("kind") or "")
+    if k in ("checkin", "task"):
+        return k
+    jid = last.get("job_id")
+    if not jid:
+        return "task"
+    try:
+        rows = db.get_wb_daily_tasks(jid)
+    except Exception:
+        return "task"
+    for r in (rows or []):
+        if str(r.get("task_key") or "") == "checkin":
+            return "checkin"
+    return "task"
+
+
+# 巡检循环上一次的「计划醒来时间」，仅供面板显示「下次巡检」。
+# 定义必须在 _patrol_loop / health_api 之前 —— Python 的 global 声明只认
+# 模块级已存在的名字，后置定义会让首次赋值直接 NameError。
+_PATROL_NEXT_CHECK_AT: float | None = None
+
+
+def _patrol_next_check_at():
+    return _PATROL_NEXT_CHECK_AT
+
+
+async def _patrol_loop():
+    """巡检循环：按 patrol_interval_minutes 检查一次，发现中断就立即续跑。"""
     while True:
         try:
             cfg = load_config()
-            if cfg.get("enabled"):
-                interval_h = float(cfg.get("interval_hours") or 12)
-                base = _last_run_at if _last_run_at is not None else cfg.get("last_run_at")
-                due = base is None or (time.time() - float(base)) >= interval_h * 3600
-                if due and not [j for j in JOBS.values() if j.status == "running"]:
-                    print("[wb-daily] 到期，自动开始本轮执行")
-                    await start_job(mode="scheduled")
+            # 巡检关着、或总调度关着，都不跑（总开关是最高优先级）
+            if not cfg.get("patrol_enabled") or not cfg.get("enabled"):
+                await asyncio.sleep(60)
+                continue
+            # 已有任务在跑就别插手 —— 续跑本身也是一轮完整任务，会互相抢
+            if [j for j in JOBS.values() if j.status == "running"]:
+                await asyncio.sleep(60)
+                continue
+            last = _last_interrupted_run()
+            if last:
+                kind = _interrupted_run_kind(last)
+                print(f"[wb-daily] 巡检：发现中断的任务 {last.get('job_id')}"
+                      f"（{last.get('status')}），以 {kind} 轮立即恢复")
+                try:
+                    await start_job(mode="scheduled", kind=kind)
+                except HTTPException as e:
+                    print(f"[wb-daily] 巡检启动失败: {e.detail}")
+                except Exception as e:
+                    print(f"[wb-daily] 巡检异常: {e}")
+        except Exception as e:
+            print(f"[wb-daily] 巡检检查异常: {e}")
+        # 睡眠长度按配置走，落在合法区间内
+        try:
+            cfg = load_config()
+            mins = float(cfg.get("patrol_interval_minutes") or 60)
+        except Exception:
+            mins = 60
+        mins = max(PATROL_MIN_INTERVAL_MINUTES, min(PATROL_MAX_INTERVAL_MINUTES, mins))
+        global _PATROL_NEXT_CHECK_AT
+        _PATROL_NEXT_CHECK_AT = time.time() + mins * 60
+        await asyncio.sleep(mins * 60)
+
+
+async def _scheduler_loop():
+    """轻量定时调度：每 5 分钟检查一次是否到期（到期 = 上次执行 + 间隔小时）。
+
+    签到与任务已拆分（用户 2026-10-16 需求）：两套独立的 enabled + interval_hours，
+    各自判断各自是否到期，互不干扰。任一边单独停用不影响另一边。
+    旧字段 enabled / interval_hours 保留作为「总开关 + 兜底」：
+    总开关关掉时两边都不自动跑；开着时以各自的开关为准。
+    """
+    while True:
+        try:
+            cfg = load_config()
+            now = time.time()
+            if cfg.get("enabled") and not [j for j in JOBS.values() if j.status == "running"]:
+                # ── 签到轮 ──
+                if cfg.get("checkin_schedule_enabled", True):
+                    ch_base = (cfg.get("checkin_last_run_at")
+                               or cfg.get("last_run_at"))
+                    ch_iv = float(cfg.get("checkin_interval_hours") or 12)
+                    ch_due = ch_base is None or (now - float(ch_base)) >= ch_iv * 3600
+                    if ch_due:
+                        print("[wb-daily] 签到轮到期，自动开始执行")
+                        await start_job(mode="scheduled", kind="checkin")
+                        continue     # 本轮只起一个任务，剩下的下一轮再判
+                # ── 任务轮 ──
+                if cfg.get("task_schedule_enabled", True):
+                    tk_base = (cfg.get("task_last_run_at")
+                               or cfg.get("last_run_at"))
+                    tk_iv = float(cfg.get("task_interval_hours") or 12)
+                    tk_due = tk_base is None or (now - float(tk_base)) >= tk_iv * 3600
+                    if tk_due:
+                        print("[wb-daily] 任务轮到期，自动开始执行")
+                        await start_job(mode="scheduled", kind="task")
+                        continue
         except Exception as e:
             print(f"[wb-daily] 调度检查异常: {e}")
         await asyncio.sleep(300)
@@ -1077,10 +1369,13 @@ def _reconcile_orphan_runs() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_scheduler_loop())
+    sched = asyncio.create_task(_scheduler_loop())
+    # 巡检循环（用户 2026-10-16 需求）：中断任务自动恢复，不等下一轮调度。
+    patrol = asyncio.create_task(_patrol_loop())
     _reconcile_orphan_runs()
     yield
-    task.cancel()
+    sched.cancel()
+    patrol.cancel()
 
 
 app = FastAPI(title="wb-daily", lifespan=lifespan)
@@ -1098,6 +1393,14 @@ class ConfigBody(BaseModel):
     keepalive_days: int | None = None
     lazy_refresh_hours: int | None = None
     checkin_enabled: bool | None = None
+    # ---- 任务巡检（用户 2026-10-16 需求）----
+    patrol_enabled: bool | None = None
+    patrol_interval_minutes: int | None = None
+    # ---- 签到 / 任务调度拆分（用户 2026-10-16 需求）----
+    checkin_schedule_enabled: bool | None = None
+    checkin_interval_hours: float | None = None
+    task_schedule_enabled: bool | None = None
+    task_interval_hours: float | None = None
 
 
 @app.post("/api/wb-daily/config")
@@ -1216,19 +1519,59 @@ async def abort_api(job_id: str):
 async def health_api():
     cfg = load_config()
     running = [j for j in JOBS.values() if j.status == "running"]
-    next_due = None
-    if cfg.get("enabled"):
-        base = _last_run_at or cfg.get("last_run_at")
-        if base:
-            next_due = float(base) + float(cfg.get("interval_hours") or 12) * 3600
+    now = time.time()
+
+    def _next_due(base, interval_h):
+        if base is None:
+            return None
+        try:
+            return float(base) + float(interval_h or 12) * 3600
+        except Exception:
+            return None
+
+    # ── 签到轮 / 任务轮各自的下次执行时间（用户 2026-10-16 拆分需求）──
+    # 各自的时间戳缺省时退回共用 last_run_at，保证拆分上线后的第一轮
+    # 不会因为新字段为空就立刻重跑一轮。
+    ch_base = cfg.get("checkin_last_run_at") or cfg.get("last_run_at")
+    tk_base = cfg.get("task_last_run_at") or cfg.get("last_run_at")
+    ch_due = _next_due(ch_base, cfg.get("checkin_interval_hours"))
+    tk_due = _next_due(tk_base, cfg.get("task_interval_hours"))
+
+    # 巡检状态（用户 2026-10-16 需求）
+    last = _last_interrupted_run()
+    patrol = {
+        "enabled": bool(cfg.get("patrol_enabled")),
+        "interval_minutes": int(cfg.get("patrol_interval_minutes") or 60),
+        "pending_run_id": (last or {}).get("job_id"),
+        "pending_kind": _interrupted_run_kind(last) if last else None,
+        "pending_status": (last or {}).get("status"),
+        "next_check_at": _patrol_next_check_at(),
+    }
+
     return {
         "ok": True,
         "enabled": bool(cfg.get("enabled")),
         "interval_hours": cfg.get("interval_hours"),
         "running": bool(running),
         "running_job_id": running[0].id if running else None,
+        "running_kind": running[0].kind if running else None,
         "last_run_at": _last_run_at or cfg.get("last_run_at"),
-        "next_due_at": next_due,
+        "next_due_at": _next_due(_last_run_at or cfg.get("last_run_at"),
+                                 cfg.get("interval_hours")),
+        # ── 签到 / 任务拆分（用户 2026-10-16 需求）──
+        "checkin_schedule": {
+            "enabled": bool(cfg.get("checkin_schedule_enabled", True)),
+            "interval_hours": cfg.get("checkin_interval_hours"),
+            "last_run_at": ch_base,
+            "next_due_at": ch_due,
+        },
+        "task_schedule": {
+            "enabled": bool(cfg.get("task_schedule_enabled", True)),
+            "interval_hours": cfg.get("task_interval_hours"),
+            "last_run_at": tk_base,
+            "next_due_at": tk_due,
+        },
+        "patrol": patrol,
         # ── 热 / 冷口径 ──
         # hot：面板改的这些键**立即生效** —— _scheduler_loop 每 5 分钟重读、_execute 每次 load_config()，
         #      不需要重启（实测：改 enabled / interval_hours 后下一轮调度即按新值走）。
@@ -1240,6 +1583,7 @@ async def health_api():
             "cold_env": list(_COLD_ENV_KEYS),
         },
     }
+
 
 
 if __name__ == "__main__":
