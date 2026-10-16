@@ -358,25 +358,6 @@ def accounts_preview(cfg: dict | None = None) -> dict:
 class DailyJob:
     """一轮每日任务的执行记录（子进程托管 vendor 脚本）。"""
 
-    def __init__(self, jid: str, mode: str, kind: str = "task"):
-        self.id = jid
-        self.mode = mode
-        self.kind = kind if kind in ("checkin", "task") else "task"
-        self.status = "running"
-        self.progress = 0
-        self.log: list[str] = []
-        self.result = None
-        self.created_at = time.time()
-        self.finished_at: float | None = None
-        self.proc: asyncio.subprocess.Process | None = None
-        self.accounts_total = 0      # 本轮参与账号数
-        self.accounts_done = 0       # 已跑完的账号数
-        self.accounts_summary: list[dict] = []   # 逐账号汇总（落库用）
-        self.tasks_summary: list[dict] = []      # 任务台账（任务维度，落库用）
-        self._cur_account: dict | None = None    # 当前正在跑的账号
-        self._checkin_notified = False           # 本轮签到通知是否已发（幂等）
-        self._failed_notified = False            # 本轮失败分析通知是否已发（幂等）
-
     # 从上游脚本输出行推断进度。
     #
     # 关键词一律带 emoji 前缀做**精确子串**匹配，不用宽泛词：
@@ -399,9 +380,15 @@ class DailyJob:
     # 多账号时用它把总进度推到「尚未结束」的合理区间。
     _ACCOUNT_START = "╭─ 👤 账号"
 
-    def __init__(self, job_id: str, mode: str):
+    def __init__(self, job_id: str, mode: str, kind: str = "task"):
+        """``kind`` = checkin / task（签到 / 任务调度拆分，用户 2026-10-16 需求）。
+
+        巡检恢复中断任务时按它决定补哪一种轮次，执行时按它给上游脚本
+        传不同的任务过滤参数（--tasks checkin / --skip-tasks checkin）。
+        """
         self.id = job_id
         self.mode = mode
+        self.kind = kind if kind in ("checkin", "task") else "task"
         self.status = "running"
         self.progress = 0
         self.log: list[str] = []
@@ -1228,6 +1215,13 @@ def _last_interrupted_run() -> dict | None:
 
     与 _already_done_accounts 的判定保持一致：只认最近一轮。
     返回 None 表示上一轮是正常完成的（或没有记录），无需巡检恢复。
+
+    ⚠️ `running` 不算中断（2026-10-17 修复）：`start_job()` 一开始就落一条
+    running 行，所以「正在跑」和「中断留下」在表里是同一条记录的两种状态。
+    原先只排除 done，于是巡检每次醒来都把正在执行的那轮当成欠账 ——
+    health 的 `patrol.pending_run_id` 显示为当前运行中的 job，
+    面板上看起来「巡检一直在报同一件事没处理」，实际它已经拉起来了。
+    现在显式排除 running，只有 failed / aborted 才算需要恢复的中断。
     """
     try:
         rows = db.list_wb_daily_runs(limit=1)
@@ -1236,7 +1230,8 @@ def _last_interrupted_run() -> dict | None:
     if not rows:
         return None
     last = rows[0]
-    if str(last.get("status")) == "done":
+    status = str(last.get("status"))
+    if status in ("done", "running"):
         return None
     return last
 

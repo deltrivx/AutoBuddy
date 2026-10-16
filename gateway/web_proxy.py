@@ -1528,6 +1528,24 @@ COLLAPSE_SCRIPT = r"""
   .wb-run-clickable { cursor: pointer; transition: background 0.15s ease; }
   .wb-run-clickable:hover { background: var(--accent, rgba(120,120,120,0.13)); }
   .wb-run-clickable:focus-visible { outline: 2px solid var(--ring, #3b82f6); outline-offset: 1px; }
+
+  /* 顶栏导航焦点环（2026-10-17 修复「顶部选项卡焦点问题」）。
+     根因：官方导航链接的 className 里带 Tailwind 的 `outline-none`
+     （实测 6 个官方项 + 注入的「每日任务」全都带），
+     于是键盘用户按 Tab 切换选项卡时**完全看不到焦点在哪** ——
+     outlineStyle 实测为 none，:focus-visible 也无任何可见样式。
+     鼠标点击有 hover/active 兜底看不出问题，纯键盘操作就等于盲人摸象。
+     这里给顶栏内所有可聚焦元素补一个 :focus-visible 焦点环，
+     用官方 --ring 变量，深浅主题自动跟随；
+     只在键盘聚焦时出现（:focus-visible 不会因鼠标点击而触发），
+     不影响既有视觉。 */
+  #wb-topbar-inner nav a:focus-visible,
+  #wb-topbar-inner button:focus-visible,
+  #wb-theme-mini:focus-visible,
+  #wb-nav-toggler:focus-visible {
+    outline: 2px solid var(--ring, #3b82f6) !important;
+    outline-offset: 2px !important;
+  }
   /* 展开指示箭头：默认朝下，展开时翻转朝上 */
   .wb-run-caret {
     flex: 0 0 auto; font-size: 9px; line-height: 1; margin-left: 2px;

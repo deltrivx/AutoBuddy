@@ -31,6 +31,37 @@
 
 ---
 
+## [v0.9.89] - 2026-10-17
+
+<!-- summary: 修复 v0.9.88 巡检完全失效的回归（重复 __init__ 覆盖 kind 参数）与顶栏选项卡键盘焦点不可见 -->
+
+### 修复
+
+- **任务巡检完全失效（v0.9.88 回归）**：`DailyJob` 里出现了两个 `__init__`，
+  Python 按**后定义者生效**，我加的那个带 `kind` 参数的构造器被原有构造器
+  整个覆盖，成了死代码。后果是巡检每轮都抛
+  `DailyJob.__init__() got an unexpected keyword argument 'kind'`，
+  中断的任务一次都没恢复成 —— 从日志看它已经连续失败了 8 次以上。
+  现在删掉重复的那个，把 `kind` 合进唯一的构造器。
+  已实测：`DailyJob("x", "manual", kind="checkin").kind == "checkin"`。
+- **顶栏选项卡键盘焦点不可见**：官方导航链接的 className 里带 Tailwind 的
+  `outline-none`（实测 6 个官方项 + 注入的「每日任务」全都带），
+  于是键盘用户按 Tab 切换选项卡时**完全看不到焦点在哪**
+  （`outlineStyle` 实测为 `none`，`:focus-visible` 也无任何可见样式）。
+  鼠标操作有 hover 兜底看不出问题，纯键盘操作等于盲人摸象。
+  现给顶栏内所有可聚焦元素补 `:focus-visible` 焦点环，
+  用官方 `--ring` 变量，深浅主题自动跟随；
+  只在键盘聚焦时出现，不影响鼠标点击的既有视觉。
+
+### 变更
+
+- **巡检不再把「正在执行」当成中断欠账**：`start_job()` 一开始就落一条
+  running 行，所以「正在跑」和「中断留下」在表里是同一条记录的两种状态。
+  原判定只排除 `done`，于是巡检每次醒来都把正在执行的那轮当成欠账 ——
+  health 的 `patrol.pending_run_id` 显示为当前运行中的 job，
+  面板上看起来「巡检一直在报同一件事没处理」，实际它已经拉起来了。
+  现在显式排除 `running`，只有 `failed` / `aborted` 才算需要恢复的中断。
+
 ## [v0.9.88] - 2026-10-17
 
 <!-- summary: 每日任务新增巡检自动恢复与签到/任务调度拆分，数据总览改为 Tremor 式仪表盘并统一六页宽度，另修今日消耗口径、断点续跑与通知去重 -->
@@ -4647,7 +4678,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.88...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.89...HEAD
+[v0.9.89]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.88...v0.9.89
 [v0.9.88]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.87...v0.9.88
 [v0.9.87]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.86...v0.9.87
 [v0.9.86]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.85...v0.9.86
