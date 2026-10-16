@@ -5339,8 +5339,12 @@ COLLAPSE_SCRIPT = r"""
         line.appendChild(wbEl("span", "wb-api-keyname", k.name || "未命名"));
         line.appendChild(wbChip(k.maskedKey));
 
-        var meta = wbEl("span", "wb-api-badge", "调用 " + (k.callCount || 0) + " 次");
-        meta.title = "创建于 " + wbTime(k.createdAt) + " · 最近使用 " + wbTime(k.lastUsedAt);
+        /* 行内不再放「调用 N 次」badge：累计调用已由下面的统计子行展示，
+           同一个数字出现两处只会让人觉得「是不是两个口径」。
+           badge 改成只显示创建/最近使用时间，hover 有完整信息。 */
+        var meta = wbEl("span", "wb-api-badge", "最近使用 " + wbTime(k.lastUsedAt));
+        meta.title = "创建于 " + wbTime(k.createdAt) + " · 累计调用 "
+          + (k.callCount || 0) + " 次 · 最近使用 " + wbTime(k.lastUsedAt);
         line.appendChild(meta);
 
         /* 按密钥的调用 / 积分 / 词元统计（用户 2026-10-17 需求：
@@ -5350,25 +5354,35 @@ COLLAPSE_SCRIPT = r"""
            不编造 0 —— 「没有记录」和「真的是 0」是两件事。 */
         var ks = keyStats[k.id] || null;
         var statRow = wbEl("div", "wb-api-keystat");
+        /* ⚠️ 2026-10-17 修复（用户反馈「Default 的 API 调用 45644 次，
+           下面却说累计调用 62 次，原来的没取消，新的还不对」）：
+           累计调用**必须用 k.callCount**（api_keys 的权威计数，从密钥诞生
+           起每次成功调用都记，含全部历史），不能用 byKey.calls ——
+           byKey 只统计「带了 keyId 归因」的记录，而 keyId 记账是这次才加的，
+           历史记录全都没有，于是 Default 显示 62 而徽标显示 45644，自相矛盾。
+           今日调用与词元消耗只有 byKey 一个来源（历史记录无 keyId，无法回溯），
+           取不到时显示「—」而不是 0 —— 「没有记录」和「真的是 0」是两件事。 */
+        var fmtN = function (n) {
+          n = Number(n || 0);
+          if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+          if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+          if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+          return String(n);
+        };
+        var totalCalls = Number(k.callCount || 0);
+        statRow.appendChild(wbKeyStat("累计调用", fmtN(totalCalls) + " 次"));
         if (ks) {
-          var fmtN = function (n) {
-            n = Number(n || 0);
-            if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
-            if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
-            if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
-            return String(n);
-          };
           statRow.appendChild(wbKeyStat("今日调用", fmtN(ks.todayCalls) + " 次"));
-          statRow.appendChild(wbKeyStat("累计调用", fmtN(ks.calls) + " 次"));
           statRow.appendChild(wbKeyStat("今日词元", fmtN(ks.todayTokens)));
           statRow.appendChild(wbKeyStat("累计词元", fmtN(ks.totalTokens)));
           statRow.appendChild(wbKeyStat("输入 / 输出",
             fmtN(ks.inputTokens) + " / " + fmtN(ks.outputTokens)));
           statRow.title = "最后使用：" + wbTime(ks.lastAt)
-            + "　缓存命中：" + fmtN(ks.cacheRead);
+            + "　缓存命中：" + fmtN(ks.cacheRead)
+            + "\n今日调用与词元消耗自 v0.9.90 启用密钥归因起开始统计，不含更早的历史；累计调用为权威值（含全部历史）。";
         } else {
           statRow.appendChild(wbEl("span", "wb-api-keystat-empty",
-            "暂无调用明细（该密钥还未被使用，或使用时间早于统计启用）"));
+            "今日调用与词元消耗暂无明细（统计自 v0.9.90 启用密钥归因起）"));
         }
         line.appendChild(statRow);
 
