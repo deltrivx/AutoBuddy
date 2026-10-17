@@ -31,6 +31,26 @@
 
 ---
 
+## [v0.9.99] - 2026-10-17
+
+<!-- summary: 修复 v0.9.94–v0.9.98 连续五个版本 CI 构建失败（源码契约测试未随代码同步，导致 test job 失败、镜像未推送） -->
+
+### 修复
+
+- **CI 连续五个版本构建失败**：v0.9.94 至 v0.9.98 的 `Build and Push Docker Image`
+  workflow 全部 `failure`，`test` job 里的「Run unit tests」步骤失败，
+  导致 `build-and-push` job 被跳过 —— **这五个版本的 Docker 镜像从未推送到 ghcr.io**。
+  根因是两处源码契约测试没跟着代码一起改：
+  - `_test_assistant.py`：v0.9.95 把第二轮从「单次请求 + 失败回落」改成
+    「双变体重试（tool_choice=none / 不带 tools）」，断言仍在匹配旧写法
+    `if _is_tool_echo(final):` 与 `if not (msg2.get("tool_calls") or []):`。
+    已同步为新写法 `if cand and not _is_tool_echo(cand):` 与
+    `if msg2.get("tool_calls"):` + `continue`。
+  - `_test_orphan_runs.py`：v0.9.92 在 `lifespan` 里加了巡检循环
+    `asyncio.create_task(_patrol_loop())`，断言仍匹配
+    `asyncio.create_task(_scheduler_loop())\n    _reconcile_orphan_runs()`
+    这段连续文本。已改为三个独立子串判定。
+
 ## [v0.9.98] - 2026-10-17
 
 <!-- summary: 概览页「近 30 天积分消耗」趋势图改为固定 31 天窗口，缺失日期补 0，图表尺寸与位置不变 -->
@@ -4940,7 +4960,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.98...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.99...HEAD
+[v0.9.99]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.98...v0.9.99
 [v0.9.98]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.97...v0.9.98
 [v0.9.97]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.96...v0.9.97
 [v0.9.96]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.95...v0.9.96

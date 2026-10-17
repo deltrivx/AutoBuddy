@@ -90,12 +90,12 @@ check("tool_echo 识别（hy3 实测回吐 tool_calls 原文）", "_is_tool_echo
 check("tool_echo 正则匹配 <tool_calls / <tool_call",
       'r"^\\s*<\\s*tool_call[s]?\\b"' in SRC_AS)
 check("tool_echo 判为无效输出（回落到工具结果）",
-      "if _is_tool_echo(final):" in SRC_AS and "final = \"\"" in SRC_AS)
+      "if cand and not _is_tool_echo(cand):" in SRC_AS and "final = cand" in SRC_AS)
 check("第二轮用 tool_choice=none 强制出正文", 'payload2["tool_choice"] = "none"' in SRC_AS)
 check("tool_choice=none 不被支持时退回无 tools 重试",
       'payload2.pop("tools", None)' in SRC_AS)
-check("第二轮模型又发起工具调用时不采纳正文",
-      "if not (msg2.get(\"tool_calls\") or []):" in SRC_AS)
+check("第二轮模型又发起工具调用时换下一个变体（不采纳正文）",
+      "if msg2.get(\"tool_calls\"):" in SRC_AS and "continue" in SRC_AS)
 # 只读保证：工具函数里不得出现对 **AutoBuddy 自身写端点**的调用。
 # 2026-10-15 修订：_tool_web_search 会用 POST 调 Tavily 搜索接口
 # （https://api.tavily.com/search）—— 那是外部只读检索，HTTP 方法是 POST

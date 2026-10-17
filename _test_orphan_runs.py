@@ -57,7 +57,9 @@ check("补 finished_at（COALESCE 不覆盖已有值）",
       "finished_at = COALESCE(finished_at, ?)" in SRC_DB)
 check("wb_daily 启动调用收尾", "_reconcile_orphan_runs()" in SRC_WD)
 check("lifespan 内调用（启动时）",
-      "asyncio.create_task(_scheduler_loop())\n    _reconcile_orphan_runs()" in SRC_WD)
+      "asyncio.create_task(_scheduler_loop())" in SRC_WD
+      and "asyncio.create_task(_patrol_loop())" in SRC_WD
+      and "_reconcile_orphan_runs()" in SRC_WD)
 check("start_job 先落 running",
       "JOBS[job.id] = job\n    # 先落一条 running" in SRC_WD and "_persist_run(job, [])" in SRC_WD)
 
