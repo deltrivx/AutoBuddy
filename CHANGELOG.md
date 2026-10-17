@@ -31,6 +31,18 @@
 
 ---
 
+## [v0.9.98] - 2026-10-17
+
+<!-- summary: 概览页「近 30 天积分消耗」趋势图改为固定 31 天窗口，缺失日期补 0，图表尺寸与位置不变 -->
+
+### 修复
+
+- **概览趋势图只有近 3 天**：上游 `/api/credits/stats` 的 `daily` 只保留 3 天，
+  趋势图直接取来就画，于是图上只有 3 个点。现改为**固定 31 天窗口**
+  （今天往前推 30 天），缺失日期补 0 —— 与官方积分统计页的窗口口径一致
+  （见本文件 `_rebuild_official_usage` 里 `_days` 的构造方式）。
+  图表尺寸（724×130）与位置均不变，随天数累积会自然填满。
+
 ## [v0.9.97] - 2026-10-17
 
 <!-- summary: 顶栏与导航继续整体放大（顶栏 72px、品牌图标 38px、导航 46px 高、移动端按钮 42px） -->
@@ -4928,7 +4940,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.97...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.98...HEAD
+[v0.9.98]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.97...v0.9.98
 [v0.9.97]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.96...v0.9.97
 [v0.9.96]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.95...v0.9.96
 [v0.9.95]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.94...v0.9.95

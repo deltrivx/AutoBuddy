@@ -4081,8 +4081,24 @@ COLLAPSE_SCRIPT = r"""
         });
         Object.keys(agg).forEach(function (k) { arr.push({ d: k, v: agg[k] }); });
       }
-      arr = arr.filter(function (x) { return x.d; }).sort(function (a, b) { return a.d < b.d ? -1 : 1; }).slice(-30);
-      wbDrawTrend(arr);
+      // 固定 31 天窗口：今天往前推 30 天，**缺失日期补 0**。
+      // 用户需求（2026-10-17）：「统计页面不就是 30 天的吗？数据没有的 0 就是了，
+      // 后面随着时间推移不就完整了」。官方积分统计页同样是 31 天窗口
+      // （见本文件 _rebuild_official_usage 里 _days 的构造方式）。
+      // 上游 credits/stats 的 daily 只保留 3 天，不自己补窗口的话
+      // 趋势图永远只有 3 个点，看着像「只有近 3 天」。
+      var byDay = {};
+      arr.forEach(function (x) { byDay[x.d] = x.v; });
+      var win = [];
+      var base = new Date();
+      base.setHours(0, 0, 0, 0);
+      for (var wi = 30; wi >= 0; wi--) {
+        var wd = new Date(base.getTime() - wi * 86400000);
+        var wk = wd.getFullYear() + "-" + String(wd.getMonth() + 1).padStart(2, "0")
+          + "-" + String(wd.getDate()).padStart(2, "0");
+        win.push({ d: wk, v: Number(byDay[wk] || 0) });
+      }
+      wbDrawTrend(win);
     });
 
     // —— 任务状态：wb-daily 汇总 ——
