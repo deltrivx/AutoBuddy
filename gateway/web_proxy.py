@@ -2846,17 +2846,24 @@ COLLAPSE_SCRIPT = r"""
     }
 
     aside.querySelectorAll("nav a").forEach(a => {
-      // ⚠️ 官方导航链接是 React Router 的 pushState 跳转，**不触发 hashchange**，
-      // 而路径页（/token-stats、/settings 等）只靠 hashchange 同步高亮就会丢。
+      // ⚠️ 官方导航链接是 React Router 的 pushState 跳转，**既不触发 hashchange
+      // 也不触发 popstate**，而路径页（/token-stats、/settings 等）
+      // 只靠 hashchange 同步高亮就会丢。
       // 这里在捕获阶段挂 click：点下去先同步一次高亮（SPA 路由随后异步完成，
       // 再由 MutationObserver 触发 run() 兜底同步）。
+      //
+      // 2026-10-17 修复：必须调 wbUpdateOverviewView() 而不是只调
+      // wbSyncNavActive() —— 数据总览占用默认主页（"/"）之后，
+      // 从数据总览点官方页时路径变了但没有任何事件通知我们
+      // （pushState 不触发 hashchange/popstate），
+      // 实测页面仍显示数据总览、官方内容被盖住。
       if (!a.__wbNavBound) {
         a.__wbNavBound = true;
         a.addEventListener("click", function () {
           // 等一帧让 SPA 的 pushState 先落地，再按最新 URL 同步
-          requestAnimationFrame(function () { wbSyncNavActive(); });
-          setTimeout(wbSyncNavActive, 120);
-          setTimeout(wbSyncNavActive, 400);
+          requestAnimationFrame(function () { wbUpdateOverviewView(); });
+          setTimeout(wbUpdateOverviewView, 120);
+          setTimeout(wbUpdateOverviewView, 400);
         }, true);
       }
       Array.from(a.childNodes).forEach(node => {
@@ -7347,6 +7354,16 @@ COLLAPSE_SCRIPT = r"""
   // 收敛成一个：那两个函数现在都是 wbApplyMainView() + wbSyncNavActive() 的
   // 薄封装，分别挂会重复跑两遍。留一个即可。
   window.addEventListener("hashchange", wbUpdateOverviewView);
+
+  /* ⚠️ 2026-10-17 修复：官方导航是 React Router 的 pushState 跳转，
+     **不触发 hashchange**。数据总览占用默认主页（"/"）之后，
+     从数据总览点「词元统计」/「系统设置」这类官方页时，URL 变了但
+     没有任何事件通知我们 —— 实测页面仍显示数据总览，官方内容被盖住。
+     原先只挂 hashchange 是够的（那时默认主页是账号管理，
+     路径变化不涉及注入视图的显隐），现在默认主页就是注入视图，
+     路径变化同样要重新应用视图状态。
+     popstate 覆盖 pushState + 浏览器前进/后退两条路径。 */
+  window.addEventListener("popstate", wbUpdateOverviewView);
 
   /* 把每日任务页每个卡片的标题「外提」为卡片外的二级标题，
      结构从 CARD>三级标题+内容 改为 SECTION>[H2, CARD(内容)]，

@@ -31,6 +31,23 @@
 
 ---
 
+## [v0.9.94] - 2026-10-17
+
+<!-- summary: 修从数据总览点官方页时页面不切换（pushState 不触发任何事件，视图应用从未运行） -->
+
+### 修复
+
+- **从数据总览点「词元统计」「系统设置」页面不切换**：URL 与高亮都变了，
+  但页面仍显示数据总览、官方内容被盖住。
+  根因是官方导航走 React Router 的 `history.pushState`，
+  **既不触发 `hashchange` 也不触发 `popstate`**，
+  而视图应用（`wbApplyMainView()`）只挂在 `hashchange` 上；
+  导航点击处理器又只调 `wbSyncNavActive()`（只管高亮，不管视图显隐）。
+  数据总览占用默认主页（`/`）之前这个洞看不出来 ——
+  那时路径变化不涉及注入视图的显隐，现在默认主页本身就是注入视图。
+  两处修复：点击处理器改调 `wbUpdateOverviewView()`
+  （内部同时应用视图状态与高亮），并补 `popstate` 监听覆盖浏览器前进/后退。
+
 ## [v0.9.93] - 2026-10-17
 
 <!-- summary: 修带查询串打开时视图 hash 判定失效（每日任务退回官方页、高亮丢失），改用归一化后的视图 hash -->
@@ -4813,7 +4830,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.93...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.94...HEAD
+[v0.9.94]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.93...v0.9.94
 [v0.9.93]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.92...v0.9.93
 [v0.9.92]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.91...v0.9.92
 [v0.9.91]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.90...v0.9.91
