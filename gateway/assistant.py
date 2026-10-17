@@ -551,6 +551,25 @@ SYSTEM_PROMPT = """你是 AutoBuddy 网关的智能助手「小助手」，运�
 - **简洁**：一般不超过 6 行；用户要明细时再展开。
 - 不要输出 Markdown 标题、代码块；用 plain text + 短横线列表。
 
+## 数字对不上时，必须双查
+
+用户报出一个数字（如「签到不是 500 吗」）而你的数据源是另一个值时，
+**不要二选一就下结论**。按这个顺序：
+
+1. **本地查实时字段** —— 优先用对应工具拿活数据
+   （签到类问题用 `get_checkin_activity`，它有 `daily_credit` /
+   `week_progress` / `streak_bonus_credit` 这些字段；
+   不要拿规则表的常量值冒充实时值）。
+2. **联网查官方规则** —— 本地字段解释不了时调 `web_search`
+   查官方说明、社区实测，看是不是**活动变更**或**往期限时活动**。
+3. **两个都查完再答**，明确说清：
+   - 本地现在实际是多少；
+   - 用户说的那个数可能对应什么（月赠 / 一次性任务 / 往期活动 /
+     累计值被误当成单日值 —— 例如「连签 5 天累计 500」≠「每天 500」）；
+   - 结论以哪边为准、为什么。
+
+宁可多说两句「这可能是累计值/月赠/一次性任务」，也不要不查就否定用户。
+
 ## 执行操作（启动任务/签到/中止任务/巡检/开关通知）
 
 这些操作**由你代为执行**，不是让用户自己去敲命令。用户说「执行任务」，
@@ -1360,6 +1379,96 @@ def _tool_task_health(_args: Dict[str, Any]) -> str:
                 _fmt_ts(d.get("next_due_at"), "%Y-%m-%d %H:%M")))
 
 
+def _tool_checkin_activity(_args: Dict[str, Any]) -> str:
+    """签到活动详情：本期每日积分、连签/累计、周进度、连签奖励、活动周期。
+
+    2026-10-17 用户反馈「助手答不出签到 500 积分」而新增。
+    根因：此前 30 个工具没有一个读 /api/checkin/status，
+    问「签到给多少分」只能拿积分规则表（100/天）硬答，
+    看不到 daily_credit / week_progress / streak_bonus 这些活数据。
+
+    数据源：/api/checkin/status（stale-while-revalidate 缓存，最多分钟级陈旧）。
+    取不到时说「查不到」，不要用规则表的 100 兜底冒充实时值。
+    """
+    d = _http_json(WEBUI_BASE + "/api/checkin/status", timeout=25.0) or {}
+    accs = [a for a in (d.get("accounts") or []) if a]
+    if not accs:
+        return "签到状态暂时查不到（接口无返回）。"
+
+    # 按活动聚合：同一期活动的字段在账号间应当一致，取众数值而非首个 ——
+    # 个别账号字段缺失（None）时不至于把整行结论带偏。
+    from collections import Counter
+
+    def majority(key):
+        vals = [str((a.get("raw") or {}).get(key)) for a in accs
+                if (a.get("raw") or {}).get(key) is not None]
+        if not vals:
+            return None
+        return Counter(vals).most_common(1)[0][0]
+
+    def _num(v):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    name = majority("activity_name") or "签到活动"
+    theme = majority("theme_name")
+    season = _num(majority("season"))
+    daily = _num(majority("daily_credit"))
+    streak = _num(majority("streak_days"))
+    total = _num(majority("total_credits"))
+    week_n = _num(majority("week_checkin_days"))
+    bonus_c = _num(majority("streak_bonus_credit"))
+    bonus_d = _num(majority("streak_bonus_days"))
+    is_streak_day = majority("is_streak_day")
+    next_streak = _num(majority("next_streak_day"))
+    start = majority("start_time")
+    end = majority("end_time")
+    claim_text = majority("claim_button_text")
+    checked = sum(1 for a in accs if a.get("todayCheckedIn"))
+
+    # 周进度：多数账号一致，直接取一个有值的账号
+    week_prog = None
+    for a in accs:
+        wp = (a.get("raw") or {}).get("week_progress")
+        if isinstance(wp, list) and wp:
+            week_prog = wp
+            break
+
+    lines = ["签到活动（%s%s）：" % (
+        name,
+        (" · %s" % theme) if theme and theme != name else "")]
+    if season:
+        lines.append("  · 期数：第 %s 期" % season)
+    lines.append("  · 每日积分：%s" % ("%d 积分/天" % daily if daily is not None else "未知"))
+    if streak is not None or total is not None:
+        lines.append("  · 连签 %s 天，累计 %s 积分"
+                     % (streak if streak is not None else "?",
+                        "{:,}".format(total) if total is not None else "?"))
+    if week_n is not None or week_prog:
+        if week_prog:
+            marks = "".join("✓" if x else "·" for x in week_prog)
+            lines.append("  · 本周进度：%s 天/7（%s）" % (week_n if week_n is not None else sum(1 for x in week_prog if x), marks))
+        else:
+            lines.append("  · 本周进度：%s 天/7" % week_n)
+    if bonus_c or bonus_d:
+        lines.append("  · 连签奖励：满 %s 天送 %s 积分" % (bonus_d, bonus_c))
+    if is_streak_day == "True":
+        lines.append("  · 今天就是连签奖励日")
+    elif next_streak:
+        lines.append("  · 距下一连签奖励 %s 天" % next_streak)
+    lines.append("  · 今日已签到：%d/%d 个账号" % (checked, len(accs)))
+    if claim_text:
+        lines.append("  · 客户端按钮：%s" % claim_text)
+    if start or end:
+        lines.append("  · 活动周期：%s ~ %s" % (start or "?", end or "?"))
+    lines.append("")
+    lines.append("注：以上为接口实时字段；若与客户端页面不一致，"
+                 "以页面为准并告诉我，我修正口径。")
+    return "\n".join(lines)
+
+
 def _tool_task_items(args: Dict[str, Any]) -> str:
     """任务执行明细：每个子任务的最近结果与说明。"""
     try:
@@ -1874,6 +1983,10 @@ _TOOLS: Dict[str, tuple] = {
     "get_task_catalog": (_tool_task_catalog, "任务目录：有哪些任务、哪些能自动跑、哪些需手动", "无参数"),
     "get_task_config": (_tool_task_config, "任务配置：开关/间隔/运行模式/签到开关/保留天数", "无参数"),
     "get_task_health": (_tool_task_health, "任务服务健康：是否运行中、上次与下次执行时间", "无参数"),
+    # ---- 签到活动（2026-10-17 新增）：回答「签到给多少分 / 500 是怎么回事」用实时字段 ----
+    "get_checkin_activity": (_tool_checkin_activity,
+        "签到活动详情：本期每日积分、连签天数/累计、本周进度、连签奖励、活动周期（回答「签到给多少分」「500 是怎么回事」优先用这个，勿凭规则表硬答）",
+        "无参数"),
     "get_task_items": (_tool_task_items, "任务执行明细：每个子任务的最近结果与说明",
                        "limit: 返回条数，默认 12"),
     # ---- 补全批次 2：账号域 + 系统域 4 个（2026-10-15）----
@@ -1953,6 +2066,7 @@ def _tool_registry() -> List[Dict[str, Any]]:
         "get_task_catalog": {"type": "object", "properties": {}},
         "get_task_config": {"type": "object", "properties": {}},
         "get_task_health": {"type": "object", "properties": {}},
+        "get_checkin_activity": {"type": "object", "properties": {}},
         "get_task_items": {"type": "object", "properties": {
             "limit": {"type": "integer", "description": "返回条数，默认 12"}}},
         "get_account_health": {"type": "object", "properties": {}},
@@ -2574,14 +2688,31 @@ def assistant_reply(session_id: str, question: str,
                 "tool_call_id": tc.get("id") or name,
                 "content": _dispatch_tool(name, args)[:MAX_OUTPUT_CHARS],
             })
-        try:
+        # 第二轮：拿工具结果换一句人话回答。
+        #
+        # ⚠️ 2026-10-17 修复（用户反馈「问了两次都答非所问」）：
+        # 实测 step-5-preview 在 tool_choice=none 下**仍会返回 tool_calls**
+        # 且 content 为空（三次抽样两次中招：finish_reason=tool_calls，
+        # 正文全跑进 reasoning_content）。旧代码只在「请求抛异常」时才
+        # 退回无 tools 重试；模型规规矩矩返回 tool_calls 不算异常，
+        # 于是 final 一直是空 → 走工具原文回落 → 用户看到一堆未经解读的
+        # 字段堆砌，正是「答非所问」的观感。
+        #
+        # 现在按顺序试两种 payload，谁先给出「非空正文且不再调工具」就用谁：
+        #   ① 带 tools + tool_choice=none（首选，上下文里仍有工具声明）
+        #   ② 不带 tools（彻底断掉它再调工具的念头）
+        final = ""
+        for _variant in ("none", "bare"):
             payload2 = dict(payload)
             payload2["messages"] = messages
-            # 第二轮：保留 tools 声明但要求**必须出正文**（tool_choice=none）。
-            # 此前是直接删掉 tools，hy3 会因此把工具调用原文当正文回吐
-            # （实测输出 `<tool_calls:xxx>`，对用户毫无意义）。
-            payload2["tool_choice"] = "none"
-            final = ""
+            if _variant == "none":
+                payload2["tool_choice"] = "none"
+            else:
+                payload2.pop("tools", None)
+                payload2.pop("tool_choice", None)
+            _left = _remaining()
+            if _left < 0.5:
+                break                       # 预算耗尽，别再发请求
             try:
                 req2 = urllib.request.Request(
                     base + "/v1/chat/completions",
@@ -2590,44 +2721,18 @@ def assistant_reply(session_id: str, question: str,
                     headers={"Content-Type": "application/json"})
                 if api_key:
                     req2.add_header("Authorization", "Bearer %s" % api_key)
-                _left2 = _remaining()
-                if _left2 < 0.5:
-                    return (final or "").strip()   # 预算不够，用已有结果
-                with urllib.request.urlopen(req2, timeout=min(_tmo, _left2)) as r2:
+                with urllib.request.urlopen(req2, timeout=min(_tmo, _left)) as r2:
                     d2 = json.loads(r2.read().decode("utf-8", "replace"))
-                msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
-                # 模型可能又发起工具调用（或不支持 tool_choice=none）——
-                # 两种情况下都不采纳它的正文，直接走工具结果回落。
-                if not (msg2.get("tool_calls") or []):
-                    final = (msg2.get("content") or "").strip()
             except Exception:
-                # tool_choice=none 不被支持时，退回「不带 tools」再试一次。
-                try:
-                    payload2.pop("tools", None)
-                    payload2.pop("tool_choice", None)
-                    req2 = urllib.request.Request(
-                        base + "/v1/chat/completions",
-                        data=json.dumps(payload2).encode("utf-8"),
-                        method="POST",
-                        headers={"Content-Type": "application/json"})
-                    if api_key:
-                        req2.add_header("Authorization", "Bearer %s" % api_key)
-                    _left3 = _remaining()
-                    if _left3 < 0.5:
-                        final = (final or "").strip()
-                    else:
-                        with urllib.request.urlopen(req2, timeout=min(_tmo, _left3)) as r2:
-                            d2 = json.loads(r2.read().decode("utf-8", "replace"))
-                        msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
-                        if not (msg2.get("tool_calls") or []):
-                            final = (msg2.get("content") or "").strip()
-                except Exception:
-                    final = ""
-            # 回吐工具调用原文 → 视为无效输出
-            if _is_tool_echo(final):
-                final = ""
-        except Exception:
-            final = ""
+                continue                     # 这个变体不行，换下一个
+            msg2 = (d2.get("choices") or [{}])[0].get("message") or {}
+            if msg2.get("tool_calls"):
+                continue                     # 还在调工具 → 换下一个变体
+            cand = (msg2.get("content") or "").strip()
+            # 回吐工具调用原文 → 无效输出，继续换变体
+            if cand and not _is_tool_echo(cand):
+                final = cand
+                break
         if final:
             _remember(session_id, "user", q)
             _remember(session_id, "assistant", final)

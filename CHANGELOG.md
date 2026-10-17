@@ -31,6 +31,36 @@
 
 ---
 
+## [v0.9.95] - 2026-10-17
+
+<!-- summary: 助手新增签到活动查询工具与「数字对不上必须双查」规则，并修掉第二轮 LLM 返回空正文导致答非所问的 bug -->
+
+### 新增
+
+- **助手工具 `get_checkin_activity`**：返回签到活动实时字段 —— 本期每日积分、
+  连签天数/累计、本周进度、连签奖励、活动周期、今日已签到账号数。
+  数据源 `/api/checkin/status`（stale-while-revalidate 缓存）。
+  此前 32 个工具没有一个读签到活动，问「签到给多少分」只能拿规则表常量
+  硬答，看不到 `daily_credit` / `week_progress` / `streak_bonus_credit` 这些活数据。
+- **「数字对不上必须双查」规则**（写入 SYSTEM_PROMPT）：用户报出的数字与数据源
+  不一致时，禁止二选一就下结论。顺序为：① 本地查实时字段（签到类优先用
+  `get_checkin_activity`，不拿规则表常量冒充实时值）→ ② 联网查官方规则与社区实测
+  （`web_search`，判断是否活动变更或往期限时活动）→ ③ 两个都查完再答，
+  明确说清本地实际值、用户那个数可能对应什么（月赠/一次性任务/往期活动/
+  累计值被误当单日值）、以及结论以哪边为准。
+
+### 修复
+
+- **助手第二轮返回空正文 → 答非所问**：用户反馈「问两次都答非所问」。
+  实测 `step-5-preview` 在 `tool_choice=none` 下**仍会返回 tool_calls**
+  且 content 为空（三次抽样两次中招，正文全跑进 `reasoning_content`），
+  旧代码只在「请求抛异常」时才退回无 tools 重试 —— 模型规规矩矩返回
+  tool_calls 不算异常，于是 final 一直是空，走工具原文回落，
+  用户看到一堆未经解读的字段堆砌。
+  现改为按顺序试两种 payload（带 tools + `tool_choice=none` / 完全不带 tools），
+  谁先给出「非空正文且不再调工具」就用谁。
+  实测同问题连跑 5 次，答非所问 0/5。
+
 ## [v0.9.94] - 2026-10-17
 
 <!-- summary: 修从数据总览点官方页时页面不切换（pushState 不触发任何事件，视图应用从未运行） -->
@@ -4830,7 +4860,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.94...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.95...HEAD
+[v0.9.95]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.94...v0.9.95
 [v0.9.94]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.93...v0.9.94
 [v0.9.93]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.92...v0.9.93
 [v0.9.92]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.91...v0.9.92
