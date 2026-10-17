@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.1](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.1)
+**当前稳定版：** [v1.0.2](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.2)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.2](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.2) | 2026-10-18 | 修复移动端「账号管理」误跳数据总览（下拉面板丢失导航语义），并根治日报「昨日签到积分」「昨日调用」恒为 0（跨进程缓存失效 + 跨天聚合链抖动，改直连官方接口 + SQLite 精确计数兜底） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.2.md) |
 | [v1.0.1](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.1) | 2026-10-18 | 修复上游 401 英文错误页原样透传（改为中文「登录已过期」），并落地刷新令牌四项防复发改造（单飞锁、失败隔离、批量熔断告警、节奏限制），应对上游 session 批量重置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.1.md) |
 | [v1.0.0](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.0) | 2026-10-17 | 正式版发布。六大页面样式完全统一、数据总览仪表盘、任务巡检与断点续跑、签到/任务调度拆分、智能助手双查能力，以及顶栏导航整体放大 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.0.md) |
 | [v0.9.99](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.99) | 2026-10-17 | 修复 v0.9.94–v0.9.98 连续五个版本 CI 构建失败（源码契约测试未随代码同步，导致 test job 失败、镜像未推送） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.99.md) |
@@ -194,7 +195,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.1    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.2    # 锁定版本
 ```
 
 ## 部署产物

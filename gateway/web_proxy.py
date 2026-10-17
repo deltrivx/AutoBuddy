@@ -3013,7 +3013,26 @@ COLLAPSE_SCRIPT = r"""
           var isCur = a.getAttribute("aria-current") === "page"
             || a.classList.contains("wb-nav-active");
           if (isCur) item.classList.add("wb-nav-panel-active");
-          item.addEventListener("click", function () { wbCloseNavPanel(); });
+          /* ⚠️ 移动端下拉面板的导航项是「复制 href + 关面板」的简化实现，
+             丢了原始导航项上 injectWbOverview / injectWbDaily 绑定的点击语义。
+             尤其「账号管理」的官方 href 是 "/"，而 "/" 现在被数据总览占用 ——
+             直接跳 href 会把用户带到数据总览，而不是账号管理。
+             这里按原始导航项的 id 复刻正确语义：三个注入视图项各自 pushState
+             到自己的 hash 路由，官方路径项保持默认 href 跳转（React Router 处理）。 */
+          item.addEventListener("click", function (e) {
+            var aid = a.id;
+            if (aid === WB_OVERVIEW_NAV_ID) {
+              e.preventDefault();
+              wbPushUrl("/");
+            } else if (aid === WB_ACCOUNTS_NAV_ID) {
+              e.preventDefault();
+              wbPushUrl("/#/accounts");
+            } else if (aid === "wb-nav-wb-daily") {
+              e.preventDefault();
+              wbPushUrl(window.location.pathname + "#/wb-daily");
+            }
+            wbCloseNavPanel();
+          });
           panel.appendChild(item);
         });
       };

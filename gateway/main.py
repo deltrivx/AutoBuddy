@@ -87,7 +87,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.1"
+VERSION_DEFAULT = "1.0.2"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -515,24 +515,41 @@ def _collect_daily_report() -> tuple:
         # db.summarize_wb_daily_credits() 只从 wb_daily_tasks 的 detail 文本
         # 解析「+N积分」，而 checkin 行的 detail 恒为「✅签到: 今天已签到」
         # —— **不含任何数字**，所以签到奖励在这里恒为 0。
-        # 页面上的签到积分是 HTTP 层 _merge_checkin_credits() 用账号签到状态
-        # 里的 raw.daily_credit + raw.checkin_dates 补出来的。
-        # 日报原先直接读 DB，绕过了那层合并，于是永远报 0。
-        # 这里改为复用同一套合并逻辑，保证「页面看到的」与「日报报的」一致。
-        try:
-            from gateway import web_proxy as _wp
-            summ = _wp._merge_checkin_credits(summ)
-            for row in (summ.get("days") or []):
-                if str(row.get("date")) == y_date:
-                    y_checkin = float(row.get("checkin") or 0)
-                    y_task = float(row.get("task") or 0)
-                    y_total = float(row.get("total") or 0)
-                    break
-        except Exception as _e:
-            print(f"[daily-report] 合并签到积分失败: {_e}")
+        # 签到奖励的真实来源是官方签到状态里每个账号的 raw.daily_credit
+        # + raw.checkin_dates（页面上的签到积分正是这么补出来的）。
+        # ⚠️ 2026-10-18 再修复（上一版依赖 _wp._merge_checkin_credits 仍报 0）：
+        # _merge_checkin_credits 依赖 web_proxy 模块的**进程内缓存**
+        # `_CHECKIN_STATUS_CACHE`，它只在 WebUI 进程（18090）处理
+        # `/api/checkin/status` 请求时预热；而日报跑在网关进程（18091）
+        # 的后台循环里，这里的 web_proxy 是另一个独立模块实例，缓存恒为空
+        # → _merge_checkin_credits 直接 return data，签到积分补不进去。
+        # 根因是「跨进程复用内存缓存」：日报必须**直接**向官方签到状态接口
+        # 取数，自己算昨日签到积分，不能借别的进程的缓存。
         total_credits = float(summ.get("totalCredits") or 0)
     except Exception:
         total_credits = 0.0
+    # 昨日签到积分（直接向官方签到状态接口取，不依赖 WebUI 进程的内存缓存）
+    try:
+        import urllib.request as _urq2
+        _raw2 = _urq2.urlopen("http://127.0.0.1:57890/api/checkin/status", timeout=10).read()
+        _st = json.loads(_raw2.decode("utf-8", "replace"))
+        _checkin_sum = 0.0
+        for _a in (_st.get("accounts") or []):
+            _raw_a = (_a or {}).get("raw") or {}
+            try:
+                _dc = float(_raw_a.get("daily_credit") or 0)
+            except (TypeError, ValueError):
+                _dc = 0.0
+            if _dc <= 0:
+                continue
+            _dates = _raw_a.get("checkin_dates") or []
+            if y_date in [str(d) for d in _dates]:
+                _checkin_sum += _dc
+        y_checkin = _checkin_sum
+        # 昨日总积分 = 签到 + 任务（DB 侧 task 是可信的，签到已从官方补全）
+        y_total = round(y_checkin + y_task, 2)
+    except Exception:
+        pass
     # 昨日真实消耗（官方底层 loopback，与页面图表同源；失败不影响日报其余部分）
     try:
         import urllib.request as _urq
@@ -591,6 +608,17 @@ def _collect_daily_report() -> tuple:
                 if _v > per_day.get(_k, 0):
                     per_day[_k] = _v
         today_calls = per_day.get(y_date, 0)
+        # ⚠️ 2026-10-18 兜底（「昨日调用：0」的根治）：
+        # 聚合链在跨天瞬间（日报 00:09 生成）可能因
+        # get_official_cloud_requests 的 3s timeout / flush_pending 攒批时序
+        # 而暂时取不到昨日完整记录，报成 0。此时**直接**按 SQLite 明细
+        # 精确计数兜底（详见 token_store.count_calls_on_date 的注释）。
+        if not today_calls:
+            try:
+                from gateway import token_store as _ts
+                today_calls = int(_ts.count_calls_on_date(y_date) or 0)
+            except Exception:
+                pass
     except Exception:
         pass
     # 模型信息（日报 / 巡检通知 / 模型变化通知共用一份口径）

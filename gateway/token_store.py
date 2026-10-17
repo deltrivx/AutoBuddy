@@ -425,6 +425,37 @@ def count_detail() -> int:
         conn.close()
 
 
+def count_calls_on_date(date: str) -> int:
+    """精确统计某一天的**真实调用次数**（供日报「昨日调用」兜底）。
+
+    为什么单独给日报一条精确计数路径（2026-10-18 修复「昨日调用：0」）：
+    日报「昨日调用」原先走 ``get_aggregated_token_stats()`` 的
+    ``sources[].daily[]`` 聚合链，那条链要过
+    ``get_official_cloud_requests``（3 秒 timeout 的官方底层调用）+
+    ``flush_pending``（内存攒批落盘）+ variant 分流 —— 在**跨天瞬间**
+    （00:09 左右生成日报）这些环节任一抖动，``daily`` 就可能暂时取不到
+    昨日那天的完整记录，于是报成 0。而 SQLite 里的明细行其实一直都在。
+
+    这里直接对 ``usage_logs`` 按 ``date`` 精确计数（明细每行 = 1 次调用），
+    再叠加 ``usage_rollup`` 里该天被折算掉的 ``records``（历史聚合行），
+    得到与聚合链 ``records`` 完全一致的口径，但不经过任何 timeout / 攒批 /
+    云端流水环节，是跨天时刻最稳的单一数据源。
+    """
+    init_db()
+    conn = _connect()
+    try:
+        detail_n = int(conn.execute(
+            "SELECT COUNT(*) FROM usage_logs WHERE date = ?", (date,)
+        ).fetchone()[0])
+        rollup_n = int(conn.execute(
+            "SELECT COALESCE(SUM(records), 0) FROM usage_rollup WHERE date = ?",
+            (date,)
+        ).fetchone()[0])
+        return detail_n + rollup_n
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # 保留策略（按时间裁剪，超期明细先折算进聚合）
 # ---------------------------------------------------------------------------
