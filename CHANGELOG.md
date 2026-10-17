@@ -31,6 +31,44 @@
 
 ---
 
+## [v0.9.92] - 2026-10-17
+
+<!-- summary: 数据总览改为默认主页（URL 无后缀）、账号管理改走 #/accounts 后缀，新增部署前自动中止任务的脚本，并取消密钥统计里的版本号提示 -->
+
+### 变更
+
+- **数据总览成为默认主页**：打开站点根路径 `/` 直接进入数据总览，
+  URL 上不再带 `#/wb-overview` 后缀。地址栏干净，也经得起刷新 ——
+  之前刷新会把 hash 冲掉、回到账号管理。
+- **账号管理改用页面后缀**：`/#/accounts`。之所以不能占用 `/`，
+  是因为官方 SPA 只认 `/` `/token-stats` `/credit-stats` `/settings`
+  四条路由（实测 pushState 到 `/accounts` 会被打回 `/`），
+  而 `/` 现在是数据总览的地盘，账号管理要一个可访问的独立地址只能走 hash 后缀。
+- **新增部署脚本 `scripts/deploy.sh`**：部署前先 `DELETE /api/wb-daily/abort/{id}`
+  软中止正在执行的每日任务，等它真正结束（最多 30 秒）再重启容器。
+  直接 `docker restart` 会把任务硬杀，那一轮明细停在最后一次增量落库上，
+  看起来像「任务莫名失败」；先 abort 则走正常收尾路径（落库 + 标记 aborted），
+  巡检稍后自动从剩余账号续跑。`--sync` 参数额外把 `gateway/*.py` 同步进容器，
+  并清理陈旧 `__pycache__`。
+- **导航切换改用 `pushState` + `popstate`**：官方 SPA 只认 popstate，
+  仅 pushState 不派发事件时页面内容会停在旧路由上（实测确认）。
+  新增 `wbPushUrl()` 统一封装「改地址 + 通知 SPA + 同步视图」。
+- 密钥统计里「统计自 v0.9.90 启用密钥归因起」这类版本号提示已取消，
+  改为「今日调用与词元消耗暂无明细」。
+
+### 修复
+
+- **账号管理链接拦截错对象**：`nav.querySelector('a[href="/"]')`
+  会先命中新插入的数据总览链接（它的 href 现在也是 `/`），
+  把它的 id 改成 `wb-nav-accounts`、拦截器绑错元素 ——
+  实测六个选项卡一个都不高亮。现显式排除两个注入的视图链接。
+- **点「每日任务」后后缀被清掉**：清 hash 的通用处理器绑在了所有非概览链接上，
+  把每日任务刚设好的 `#/wb-daily` 当成「残留后缀」抹掉，
+  导致 URL 变回 `/`、高亮错成「数据总览」，刷新也回不去。现只给官方链接挂。
+- **视图状态指纹防循环**：`wbApplyMainView()` 增加 `hash|path` 指纹比对，
+  掐断「pushState → popstate → SPA 重渲染 → MutationObserver → run()」
+  这条链，否则会无限循环。
+
 ## [v0.9.91] - 2026-10-17
 
 <!-- summary: 修密钥统计累计调用数口径错误（显示 92 而实际 45673），改为始终使用 api_keys 权威计数，并消除行内徽标与统计行的重复展示 -->
@@ -4760,7 +4798,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.91...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.92...HEAD
+[v0.9.92]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.91...v0.9.92
 [v0.9.91]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.90...v0.9.91
 [v0.9.90]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.89...v0.9.90
 [v0.9.89]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.88...v0.9.89

@@ -3128,6 +3128,26 @@ COLLAPSE_SCRIPT = r"""
      ================================================================== */
 
   var WB_OVERVIEW_NAV_ID = "wb-nav-wb-overview";
+  /* 账号管理导航项的 id（用户 2026-10-17 要求「账户管理加页面后缀」）。
+     官方那一项的 href 是 "/"，现在数据总览占用了 "/" 作为默认主页，
+     账号管理改走 hash 后缀 #/accounts —— 给它一个 id 才能被
+     wbSyncNavActive 精确识别并高亮。 */
+  var WB_ACCOUNTS_NAV_ID = "wb-nav-accounts";
+  /* 数据总览 / 每日任务在 URL 里的 hash 后缀。账号管理的后缀也在这里登记，
+     点官方导航项时要把这些后缀清掉，否则会留在 URL 里造成状态错乱。 */
+  var WB_VIEW_HASHES = ["#/wb-overview", "#/wb-daily", "#/accounts"];
+
+  /* 用 pushState 导航到指定 URL，并派发 popstate 让官方 SPA（React Router）
+     响应 —— 实测仅 pushState 不派发事件时 SPA 不会重渲染，
+     页面内容停在旧路由上（2026-10-17 实测确认）。 */
+  function wbPushUrl(url) {
+    try {
+      window.history.pushState({ __wb: 1 }, "", url);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { __wb: 1 } }));
+    } catch (e) {}
+    // 双保险：SPA 的 MutationObserver 兜底链路有时序差，这里直接同步一次
+    try { wbApplyMainView(); wbSyncNavActive(); } catch (e) {}
+  }
 
   /* ---------- 概览页导航项（插到导航最前） ---------- */
   function injectWbOverview() {
@@ -3140,7 +3160,11 @@ COLLAPSE_SCRIPT = r"""
     if (!link) {
       link = document.createElement("a");
       link.id = WB_OVERVIEW_NAV_ID;
-      link.href = "#/wb-overview";
+      /* href 用 "/" 而不是 hash：数据总览现在是默认主页（用户 2026-10-17
+         要求「数据总览取消页面后缀作为默认主页」），鼠标悬停时地址栏预览
+         也应该是真实的 "/"。万一点击处理器没接住，浏览器默认跳转的也是
+         数据总览，不会跑到别的页面去。 */
+      link.href = "/";
       link.innerHTML =
         '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
         + '<rect x="3" y="3" width="7" height="9" rx="1"></rect>'
@@ -3155,7 +3179,8 @@ COLLAPSE_SCRIPT = r"""
 
       link.addEventListener("click", function (e) {
         e.preventDefault();
-        window.location.hash = "#/wb-overview";
+        /* 数据总览 = 默认主页，统一推到 "/"（无任何 hash 后缀）。 */
+        wbPushUrl("/");
       });
 
       // 点其他导航项时清掉 #/wb-overview hash，否则：
@@ -3163,10 +3188,44 @@ COLLAPSE_SCRIPT = r"""
       //   · wbSyncNavActive() 判不出该高亮谁（实测从概览点「账号管理」
       //     后高亮仍停在「概览」）
       // 做法与 injectWbDaily 的清 hash 逻辑一致。
-      nav.querySelectorAll("a:not(#" + WB_OVERVIEW_NAV_ID + ")").forEach(function (a) {
+      /* 点其他导航项时清掉视图 hash 后缀，否则：
+           · URL 里留着旧后缀（如 /token-stats#/accounts）
+           · wbSyncNavActive() 判不出该高亮谁
+         官方链接由 React Router 自己 pushState，hash 会被自然清掉；
+         这里只兜「hash 没被清」的情况（例如 SPA 路由跳到了同一个路径）。 */
+      /* 账号管理：官方那一项 href="/"，但 "/" 现在是数据总览的地盘。
+         在捕获阶段拦下点击、自己 pushState 到 "/#/accounts"。
+         ⚠️ 必须 stopPropagation：React 17+ 把 onClick 委托到根容器，
+         不拦的话 React Router 仍会导航到 "/"（那是数据总览），
+         随后我们再补 hash 就会闪一下概览页。 */
+      /* ⚠️ 必须排除自己插入的两个视图链接：它们的 href 也可能是 "/"
+         （数据总览现在就是 "/"），不排除的话 querySelector 会先命中概览链接，
+         把它的 id 改成 wb-nav-accounts、拦截器绑错元素 ——
+         2026-10-17 实测就是这么踩坑的：概览链接 id 被抢，
+         wbSyncNavActive 的 isOv 判定全失效，六个选项卡一个都不高亮。 */
+      var accLink = nav.querySelector('a[href="/"]:not(#' + WB_OVERVIEW_NAV_ID
+        + '):not(#wb-nav-wb-daily)');
+      if (accLink && !accLink.__wbAccBound) {
+        accLink.__wbAccBound = true;
+        accLink.id = WB_ACCOUNTS_NAV_ID;
+        accLink.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          wbPushUrl("/#/accounts");
+        }, true);
+      }
+
+      /* ⚠️ 必须排除**两个**注入的视图链接：它们自己的点击处理器刚刚
+         把 hash 设成 #/wb-daily / #/accounts，这个通用处理器随后又把 hash
+         当成「残留后缀」清掉 —— 2026-10-17 实测踩坑：点「每日任务」后
+         URL 变成 "/"、高亮错成「数据总览」，刷新页面也回不到每日任务。
+         只给官方链接（真实路径）挂这个清理逻辑。 */
+      nav.querySelectorAll("a:not(#" + WB_OVERVIEW_NAV_ID + "):not(#wb-nav-wb-daily)")
+        .forEach(function (a) {
         a.addEventListener("click", function () {
-          if (window.location.hash === "#/wb-overview") {
-            window.location.hash = "";
+          if (WB_VIEW_HASHES.indexOf(window.location.hash) >= 0) {
+            window.history.replaceState(null, "",
+              window.location.pathname + window.location.search);
           }
         });
       });
@@ -3320,15 +3379,43 @@ COLLAPSE_SCRIPT = r"""
     var ov = document.getElementById("wb-overview-view");
     var daily = document.getElementById("wb-daily-view");
 
+    var path = wbPath();
+    /* 视图状态指纹：hash + path 都没变就说明已经应用过，直接返回。
+       两个作用：
+         · 省掉重复的 DOM 显隐操作（SPA 路由变化会频繁触发本函数）；
+         · 掐断「pushState → popstate → SPA 重渲染 → MutationObserver →
+           run() → 本函数」这条链，否则会无限循环（2026-10-17 实测踩过）。 */
+    var viewKey = window.location.hash + "|" + path;
+    if (viewKey === window.__wbViewKey) return;
+    window.__wbViewKey = viewKey;
+
     var mode = "official";
-    // ⚠️ 不要在这里加 path === "/" 之类的路径条件。
-    // 实测：从「每日任务」（此时 path 停在 /credit-stats）点「概览」，
-    // SPA 只改 hash 不改 path，URL 变成 /credit-stats#/wb-overview —— 
-    // 加了 path 条件就判不出概览态，结果官方内容照显示、概览视图不出现
-    // （2026-10-16 实测踩过）。hash 本身就是这两个注入视图的唯一标识，
-    // 和 wb-daily 用同一套判断即可。
-    if (hash === "#/wb-overview") mode = "overview";
-    else if (hash === "#/wb-daily") mode = "daily";
+    /* 路由规则（用户 2026-10-17 要求「数据总览取消页面后缀作为默认主页，
+       账户管理加页面后缀」）：
+         · 数据总览 = 默认主页，URL 就是 "/"（无 hash）
+         · 账号管理 = hash 后缀 #/accounts（背后是官方 "/" 页面）
+         · 每日任务 = hash 后缀 #/wb-daily
+         · 其余官方路径按 path 匹配
+       ⚠️ 为什么账号管理不能占用 "/"：官方 SPA 只认 / /token-stats
+       /credit-stats /settings 四条路由（实测 pushState 到 /accounts
+       会被打回 /），要给它一个可访问的地址只能走 hash 后缀。 */
+    if (hash === "#/wb-daily") mode = "daily";
+    else if (hash === "#/accounts") mode = "accounts";
+    else if (hash === "#/wb-overview") mode = "overview";
+    else if (hash === "" || hash === "#/") {
+      // 无后缀：根路径才是数据总览；停在别的官方路径上时照常显示那一页
+      mode = (path === "/" || path === "") ? "overview" : "official";
+    }
+
+    if (mode === "accounts") {
+      /* 账号管理的背后是官方 "/" 页面。SPA 停在别的路由时先把它推回去，
+         否则「恢复官方子节点」放出来的是上一个页面的内容
+         （实测从词元统计点账号管理，看到的是词元统计）。 */
+      if (path !== "/") {
+        wbPushUrl("/" + hash);
+      }
+      mode = "official";   // 与官方页同一套显隐逻辑
+    }
 
     if (mode === "overview") {
       if (!ov) {
@@ -3399,14 +3486,21 @@ COLLAPSE_SCRIPT = r"""
       var href = a.getAttribute("href") || "";
       var isOv = a.id === WB_OVERVIEW_NAV_ID;
       var isDaily = a.id === "wb-nav-wb-daily";
+      var isAccounts = a.id === WB_ACCOUNTS_NAV_ID;
       var active = false;
       if (hash === "#/wb-overview") {
         active = isOv;                      // 概览视图：只高亮概览
       } else if (hash === "#/wb-daily") {
         active = isDaily;                   // 每日任务视图：只高亮它
+      } else if (hash === "#/accounts") {
+        active = isAccounts;                // 账号管理：hash 后缀路由
+      } else if (hash === "" || hash === "#/") {
+        /* 无后缀：根路径 = 数据总览（默认主页），其余按官方路径匹配 */
+        if (path === "/" || path === "") active = isOv;
+        else active = !isOv && !isDaily && !isAccounts && path === href;
       } else {
         // 普通路由页：path 精确匹配才算；hash 视图项一律不高亮
-        active = !isOv && !isDaily && path === href;
+        active = !isOv && !isDaily && !isAccounts && path === href;
       }
       if (active) {
         a.classList.add("wb-nav-active");
@@ -5379,10 +5473,10 @@ COLLAPSE_SCRIPT = r"""
             fmtN(ks.inputTokens) + " / " + fmtN(ks.outputTokens)));
           statRow.title = "最后使用：" + wbTime(ks.lastAt)
             + "　缓存命中：" + fmtN(ks.cacheRead)
-            + "\n今日调用与词元消耗自 v0.9.90 启用密钥归因起开始统计，不含更早的历史；累计调用为权威值（含全部历史）。";
+            + "\n累计调用为权威值（含全部历史）；今日调用与词元消耗为启用密钥归因后的统计。";
         } else {
           statRow.appendChild(wbEl("span", "wb-api-keystat-empty",
-            "今日调用与词元消耗暂无明细（统计自 v0.9.90 启用密钥归因起）"));
+            "今日调用与词元消耗暂无明细"));
         }
         line.appendChild(statRow);
 
@@ -7202,13 +7296,17 @@ COLLAPSE_SCRIPT = r"""
 
       navLink.addEventListener("click", function(e) {
         e.preventDefault();
-        window.location.hash = "#/wb-daily";
+        wbPushUrl(window.location.pathname + "#/wb-daily");
       });
 
       nav.querySelectorAll("a:not(#wb-nav-wb-daily)").forEach(function(a) {
         a.addEventListener("click", function() {
-          if (window.location.hash === "#/wb-daily") {
-            window.location.hash = "";
+          /* 与概览同一套逻辑：点别的选项卡时把视图 hash 后缀清掉。
+             ⚠️ 不能再写 window.location.hash = "" —— 那会触发一次
+             hashchange，把「已经 pushState 过去的官方路由」又冲掉。 */
+          if (WB_VIEW_HASHES.indexOf(window.location.hash) >= 0) {
+            window.history.replaceState(null, "",
+              window.location.pathname + window.location.search);
           }
         });
       });
