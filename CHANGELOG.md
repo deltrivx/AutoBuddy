@@ -31,6 +31,22 @@
 
 ---
 
+## [v0.9.97] - 2026-10-17
+
+<!-- summary: 顶栏与导航继续整体放大（顶栏 72px、品牌图标 38px、导航 46px 高、移动端按钮 42px） -->
+
+### 变更
+
+- **顶栏继续放大**（承接 v0.9.96，用户要求「继续放大」）：
+  - 顶栏高度 PC 64→**72px**、MB 54→**62px**
+  - 品牌图标 32→**38px**（中屏 28→32px）
+  - 品牌文字「AutoBuddy」16.5→**18px**、图文间距 11→**13px**
+  - 导航链接高 40→**46px**、字 14.5→**15.5px**、图标 18→**20px**、
+    内边距 13→**15px**、圆角 10→**11px**
+  - PC 主题三段按钮 34×30→**38×34**、图标 16→**18px**
+  - 移动端主题/收纳按钮 38→**42px**、图标 18→**20px**、圆角 10→11px
+    （极窄屏 36→40px）
+
 ## [v0.9.96] - 2026-10-17
 
 <!-- summary: 顶栏与内容整体放大补齐品牌区，六页样式完全统一（宽度/左边缘/主标题/位置/顶栏六个维度），并修 logo 与主题左右散开 -->
@@ -4912,7 +4928,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.96...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.97...HEAD
+[v0.9.97]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.96...v0.9.97
 [v0.9.96]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.95...v0.9.96
 [v0.9.95]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.94...v0.9.95
 [v0.9.94]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.93...v0.9.94

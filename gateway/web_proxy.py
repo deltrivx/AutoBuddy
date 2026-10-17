@@ -1102,7 +1102,7 @@ COLLAPSE_SCRIPT = r"""
     max-width: none !important;
     margin: 0 !important;
     padding: 0 !important;
-    height: 64px !important;
+    height: 72px !important;
   }
 
   /* 真正承载三列的那一层：盒模型与官方内容 wrap 完全一致
@@ -1123,7 +1123,7 @@ COLLAPSE_SCRIPT = r"""
     max-width: 1180px;
     margin: 0 auto;
     padding: 0 24px !important;
-    height: 64px !important;
+    height: 72px !important;
   }
 
   /* aside 的直接子元素都改成 grid 项，避免 block 布局下堆叠 */
@@ -1138,7 +1138,7 @@ COLLAPSE_SCRIPT = r"""
     justify-self: start !important;
     display: flex !important;
     align-items: center !important;
-    gap: 11px !important;
+    gap: 13px !important;
     padding: 0 !important;
     margin: 0 !important;
     border-right: 0 !important;
@@ -1153,15 +1153,14 @@ COLLAPSE_SCRIPT = r"""
     min-width: 0 !important;
   }
   .wb-tb-grid > div:first-child span {
-    /* 品牌图标：26→32px。顶栏从 56px 加到 64px 后，26px 图标坐进去
-       显得空、显得「顶部没放大」（2026-10-17 用户反馈）。 */
-    width: 32px !important;
-    height: 32px !important;
+    /* 品牌图标：随顶栏一起放大。32→38px（2026-10-17 用户要求「继续放大」）。 */
+    width: 38px !important;
+    height: 38px !important;
     flex-shrink: 0 !important;
   }
-  /* 品牌文字「AutoBuddy」：官方原生 15px，随顶栏一起放到 16.5px。 */
+  /* 品牌文字「AutoBuddy」：官方原生 15px，随顶栏一起放到 18px。 */
   .wb-tb-grid > div:first-child div.min-w-0 > div {
-    font-size: 16.5px !important;
+    font-size: 18px !important;
     font-weight: 650 !important;
     line-height: 1.2 !important;
   }
@@ -1186,10 +1185,10 @@ COLLAPSE_SCRIPT = r"""
     display: flex !important;
     flex-direction: row !important;
     align-items: center !important;
-    gap: 7px !important;
-    height: 40px !important;
-    padding: 0 13px !important;
-    border-radius: 10px !important;
+    gap: 8px !important;
+    height: 46px !important;
+    padding: 0 15px !important;
+    border-radius: 11px !important;
     font-size: 14.5px !important;
     line-height: 1.2 !important;
     white-space: nowrap !important;
@@ -1221,8 +1220,8 @@ COLLAPSE_SCRIPT = r"""
     border-radius: 1px !important;
     background: var(--primary, #22c55e) !important;
   }
-  .wb-tb-grid nav a svg { width: 18px !important; height: 18px !important; flex-shrink: 0 !important; }
-  .wb-tb-grid nav a span.wb-nav-label { display: block !important; font-size: 14.5px !important; }
+  .wb-tb-grid nav a svg { width: 20px !important; height: 20px !important; flex-shrink: 0 !important; }
+  .wb-tb-grid nav a span.wb-nav-label { display: block !important; font-size: 15.5px !important; }
 
   /* —— ④ 主题三段控件：PC 端右上角 —— */
   #wb-theme-switch {
@@ -1241,11 +1240,11 @@ COLLAPSE_SCRIPT = r"""
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    width: 34px !important;
-    height: 30px !important;
+    width: 38px !important;
+    height: 34px !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: 9px !important;
     background: transparent !important;
     color: var(--muted-foreground, #64748b) !important;
     cursor: pointer !important;
@@ -1259,7 +1258,7 @@ COLLAPSE_SCRIPT = r"""
     background: var(--primary, #22c55e) !important;
     color: var(--primary-foreground, #ffffff) !important;
   }
-  #wb-theme-switch .wb-ts-btn svg { width: 16px !important; height: 16px !important; }
+  #wb-theme-switch .wb-ts-btn svg { width: 18px !important; height: 18px !important; }
 
   /* —— ⑤ 移动端专用：主题单图标 + 收纳按钮（PC 端隐藏）—— */
   #wb-theme-mini, #wb-nav-toggler { display: none !important; }
@@ -1690,12 +1689,12 @@ COLLAPSE_SCRIPT = r"""
     #wb-topbar-inner > .wb-tb-grid {
       grid-template-columns: 1fr auto auto !important;
       max-width: none !important;
-      height: 54px !important;
+      height: 62px !important;
       /* 与 main > div 的左右 padding 一致（16px），保证 logo 与内容左对齐 */
       padding: 0 16px !important;
       gap: 8px !important;
     }
-    #wb-topbar-inner { height: 54px !important; }
+    #wb-topbar-inner { height: 62px !important; }
     /* logo 只留图标（窄屏放不下名字） */
     .wb-tb-grid > div:first-child { grid-column: 1 !important; }
     .wb-tb-grid > div:first-child div.min-w-0 { display: none !important; }
@@ -1710,36 +1709,36 @@ COLLAPSE_SCRIPT = r"""
       justify-self: center !important;
       align-items: center !important;
       justify-content: center !important;
-      width: 38px !important;
-      height: 38px !important;
+      width: 42px !important;
+      height: 42px !important;
       padding: 0 !important;
       border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
-      border-radius: 10px !important;
+      border-radius: 11px !important;
       background: var(--muted, rgba(120,120,120,0.1)) !important;
       color: var(--muted-foreground, #64748b) !important;
       cursor: pointer !important;
       transition: background 0.15s ease, color 0.15s ease !important;
     }
     #wb-theme-mini:hover { background: var(--accent, rgba(120,120,120,0.14)) !important; }
-    #wb-theme-mini svg { width: 18px !important; height: 18px !important; }
+    #wb-theme-mini svg { width: 20px !important; height: 20px !important; }
     #wb-nav-toggler {
       display: inline-flex !important;
       grid-column: 3 !important;
       justify-self: center !important;
       align-items: center !important;
       justify-content: center !important;
-      width: 38px !important;
-      height: 38px !important;
+      width: 42px !important;
+      height: 42px !important;
       padding: 0 !important;
       border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
-      border-radius: 10px !important;
+      border-radius: 11px !important;
       background: var(--muted, rgba(120,120,120,0.1)) !important;
       color: var(--muted-foreground, #64748b) !important;
       cursor: pointer !important;
       transition: background 0.15s ease, color 0.15s ease !important;
     }
     #wb-nav-toggler:hover { background: var(--accent, rgba(120,120,120,0.14)) !important; }
-    #wb-nav-toggler svg { width: 18px !important; height: 18px !important; }
+    #wb-nav-toggler svg { width: 20px !important; height: 20px !important; }
     /* 收纳面板在顶栏下方、右侧弹出 */
     #wb-nav-panel {
       top: calc(100% + 6px) !important;
@@ -1769,7 +1768,7 @@ COLLAPSE_SCRIPT = r"""
     #wb-overview-view .wb-ov-wrap { padding-left: 12px !important; padding-right: 12px !important; }
     .wb-kpi { padding: 10px 11px 9px !important; }
     .wb-kpi-value { font-size: 17px !important; }
-    #wb-theme-mini, #wb-nav-toggler { width: 36px !important; height: 36px !important; }
+    #wb-theme-mini, #wb-nav-toggler { width: 40px !important; height: 40px !important; }
   }
 
   /* PC 端中等宽度：选项卡压缩一点，避免与 logo/主题挤在一起 */
@@ -1777,7 +1776,7 @@ COLLAPSE_SCRIPT = r"""
     #wb-topbar-inner > .wb-tb-grid { padding: 0 12px !important; gap: 8px !important; }
     .wb-tb-grid nav a { padding: 0 10px !important; font-size: 13.5px !important; gap: 6px !important; }
     .wb-tb-grid nav a svg { width: 17px !important; height: 17px !important; }
-    .wb-tb-grid > div:first-child span { width: 28px !important; height: 28px !important; }
+    .wb-tb-grid > div:first-child span { width: 32px !important; height: 32px !important; }
   }
 </style>
 <script>
