@@ -582,7 +582,7 @@ COLLAPSE_SCRIPT = r"""
     color: var(--foreground, #0f172a);
   }
   .wb-daily-sub {
-    font-size: 13px;
+    font-size: 13.5px;
     margin: 4px 0 0 0;
     color: var(--muted-foreground, #64748b);
     max-width: 720px;
@@ -592,9 +592,11 @@ COLLAPSE_SCRIPT = r"""
     .wb-daily-wrap { padding: 36px 32px; }
   }
   @media (max-width: 560px) {
-    /* 窄屏：标题不该再和右侧状态徽章抢同一行 */
+    /* 窄屏：标题不该再和右侧状态徽章抢同一行。
+       ⚠️ 不再缩小 H1 字号 —— 2026-10-17 体检发现移动端六个页面的 H1
+       出现 22/24/28px 三档，官方页是 28px，注入页却缩到 22/24px。
+       统一为 28px（390px 宽度下 4 字标题约 112px，放得下）。 */
     .wb-daily-head { flex-direction: column; align-items: stretch; }
-    .wb-daily-h1 { font-size: 24px; line-height: 34px; }
   }
 
   /* 区块结构对齐官方（用户 2026-09-27 反馈）。
@@ -613,7 +615,7 @@ COLLAPSE_SCRIPT = r"""
      使结构与官方一致：SECTION > [H2, CARD(内容)]。 */
   .wb-daily-section { display: block; margin: 0; }
   .wb-daily-h2 {
-    font-size: 13px;
+    font-size: 14.5px;
     font-weight: 500;
     line-height: 20px;
     color: var(--foreground, #0f172a);
@@ -698,6 +700,15 @@ COLLAPSE_SCRIPT = r"""
     border-bottom: 1px solid var(--border, rgba(120, 120, 120, 0.2));
   }
   @media (min-width: 640px) { .wb-api-row { margin: 0 20px; } }
+  /* ⚠️ 每日任务页：.wb-api-row 自带 `margin: 0 20px`（≥640px），那是为
+     「卡片内部的字段行」设计的左右留白。但本页的「账号签到与凭据」那一行
+     是 .wb-daily-wrap 的**直接子元素**（它的卡片被提前闭合了，见
+     wbNormalizeDailyLayout 注释），于是比同一层的其它行多内缩 20px ——
+     用户 2026-10-17 反馈「部分内容左右宽度未对齐」，实测这一行
+     x=446 w=1076，而同层其它行 x=426 w=1116，左右各差 20px。
+     这里把 wrap 直接子级的 row 边距归零，让它与同层元素严格对齐。
+     只作用于本页（.wb-daily-wrap 作用域），不影响设置页等其它页面。 */
+  .wb-daily-wrap > .wb-api-row { margin: 0 !important; }
   /* 卡片内「游离说明文字」的缩进：必须与 .wb-api-row 用**同一套**左右边距，
      否则它作为 card 直接子节点时会比字段行凸出 16/20px。
      搜索引擎区的引擎说明（desc + 申请地址）用它。 */
@@ -724,20 +735,20 @@ COLLAPSE_SCRIPT = r"""
   }
   .wb-api-main { min-width: 0; flex: 1 1 auto; }
   .wb-api-label {
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
     font-weight: 500;
     color: var(--foreground, #0f172a);
   }
   .wb-api-desc {
     margin-top: 2px;
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: 1.6;
     color: var(--muted-foreground, #64748b);
   }
   .wb-api-mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
+    font-size: 12.5px;
   }
   .wb-api-chip {
     display: inline-flex;
@@ -767,7 +778,7 @@ COLLAPSE_SCRIPT = r"""
   .wb-api-input:focus { outline: 2px solid var(--primary, #1d4ed8); outline-offset: 1px; }
   .wb-api-btn {
     flex: 0 0 auto;
-    font-size: 11px;
+    font-size: 12.5px;
     line-height: 1.9;
     padding: 1px 10px;
     border-radius: 999px;
@@ -833,19 +844,19 @@ COLLAPSE_SCRIPT = r"""
   }
   .wb-api-keystat-cell { display: inline-flex; align-items: baseline; gap: 4px; }
   .wb-api-keystat-k {
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--muted-foreground, #64748b);
     white-space: nowrap;
   }
   .wb-api-keystat-v {
-    font-size: 11.5px;
+    font-size: 13px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     color: var(--foreground, #0f172a);
     white-space: nowrap;
   }
   .wb-api-keystat-empty {
-    font-size: 10.5px;
+    font-size: 12px;
     color: var(--muted-foreground, #64748b);
   }
   .wb-api-keyname {
@@ -1091,7 +1102,7 @@ COLLAPSE_SCRIPT = r"""
     max-width: none !important;
     margin: 0 !important;
     padding: 0 !important;
-    height: 56px !important;
+    height: 64px !important;
   }
 
   /* 真正承载三列的那一层：盒模型与官方内容 wrap 完全一致
@@ -1112,7 +1123,7 @@ COLLAPSE_SCRIPT = r"""
     max-width: 1180px;
     margin: 0 auto;
     padding: 0 24px !important;
-    height: 56px !important;
+    height: 64px !important;
   }
 
   /* aside 的直接子元素都改成 grid 项，避免 block 布局下堆叠 */
@@ -1127,7 +1138,7 @@ COLLAPSE_SCRIPT = r"""
     justify-self: start !important;
     display: flex !important;
     align-items: center !important;
-    gap: 9px !important;
+    gap: 11px !important;
     padding: 0 !important;
     margin: 0 !important;
     border-right: 0 !important;
@@ -1142,9 +1153,17 @@ COLLAPSE_SCRIPT = r"""
     min-width: 0 !important;
   }
   .wb-tb-grid > div:first-child span {
-    width: 26px !important;
-    height: 26px !important;
+    /* 品牌图标：26→32px。顶栏从 56px 加到 64px 后，26px 图标坐进去
+       显得空、显得「顶部没放大」（2026-10-17 用户反馈）。 */
+    width: 32px !important;
+    height: 32px !important;
     flex-shrink: 0 !important;
+  }
+  /* 品牌文字「AutoBuddy」：官方原生 15px，随顶栏一起放到 16.5px。 */
+  .wb-tb-grid > div:first-child div.min-w-0 > div {
+    font-size: 16.5px !important;
+    font-weight: 650 !important;
+    line-height: 1.2 !important;
   }
   .wb-tb-grid > div:first-child div.min-w-0 { min-width: 0 !important; }
 
@@ -1167,11 +1186,11 @@ COLLAPSE_SCRIPT = r"""
     display: flex !important;
     flex-direction: row !important;
     align-items: center !important;
-    gap: 6px !important;
-    height: 34px !important;
-    padding: 0 11px !important;
-    border-radius: 9px !important;
-    font-size: 13px !important;
+    gap: 7px !important;
+    height: 40px !important;
+    padding: 0 13px !important;
+    border-radius: 10px !important;
+    font-size: 14.5px !important;
     line-height: 1.2 !important;
     white-space: nowrap !important;
     color: var(--muted-foreground, #64748b) !important;
@@ -1202,8 +1221,8 @@ COLLAPSE_SCRIPT = r"""
     border-radius: 1px !important;
     background: var(--primary, #22c55e) !important;
   }
-  .wb-tb-grid nav a svg { width: 16px !important; height: 16px !important; flex-shrink: 0 !important; }
-  .wb-tb-grid nav a span.wb-nav-label { display: block !important; font-size: 13px !important; }
+  .wb-tb-grid nav a svg { width: 18px !important; height: 18px !important; flex-shrink: 0 !important; }
+  .wb-tb-grid nav a span.wb-nav-label { display: block !important; font-size: 14.5px !important; }
 
   /* —— ④ 主题三段控件：PC 端右上角 —— */
   #wb-theme-switch {
@@ -1222,11 +1241,11 @@ COLLAPSE_SCRIPT = r"""
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    width: 30px !important;
-    height: 26px !important;
+    width: 34px !important;
+    height: 30px !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 7px !important;
+    border-radius: 8px !important;
     background: transparent !important;
     color: var(--muted-foreground, #64748b) !important;
     cursor: pointer !important;
@@ -1240,7 +1259,7 @@ COLLAPSE_SCRIPT = r"""
     background: var(--primary, #22c55e) !important;
     color: var(--primary-foreground, #ffffff) !important;
   }
-  #wb-theme-switch .wb-ts-btn svg { width: 14px !important; height: 14px !important; }
+  #wb-theme-switch .wb-ts-btn svg { width: 16px !important; height: 16px !important; }
 
   /* —— ⑤ 移动端专用：主题单图标 + 收纳按钮（PC 端隐藏）—— */
   #wb-theme-mini, #wb-nav-toggler { display: none !important; }
@@ -1268,9 +1287,16 @@ COLLAPSE_SCRIPT = r"""
     max-width: 1180px !important;
     margin-left: auto !important;
     margin-right: auto !important;
+    /* padding-top 36px = 官方 sm:py-9。不补的话设置页（原生 py-8=32px）
+       的 H1 顶位置比其余五页高 4px —— 2026-10-17 六页体检实测。 */
+    padding-top: 36px !important;
     padding-left: 24px !important;
     padding-right: 24px !important;
   }
+  /* 主标题统一 28px：官方设置页原生是 24px，其余五页都是 28px，
+     用户要求「六个页面样式完全统一」（2026-10-17）。
+     账号/词元/积分三页原生即 28px，这条只影响设置页。 */
+  main h1 { font-size: 28px !important; }
 
   /* ⚠️ 两个注入视图（数据总览 / 每日任务）本身也是 main 的直接子 div，
      会被上面的统一规则套上 1180px + 24px 左右 padding，
@@ -1293,7 +1319,9 @@ COLLAPSE_SCRIPT = r"""
   #wb-overview-view .wb-ov-wrap {
     max-width: 1180px;
     margin: 0 auto;
-    padding: 28px 16px 40px;
+    /* padding-top 36px 与官方页 sm:py-9 一致 —— H1 顶位置才能对齐
+       （2026-10-17 体检：原 28px 时概览 H1 y=93，官方页 y=101）。 */
+    padding: 36px 16px 40px;
   }
   .wb-ov-head {
     display: flex;
@@ -1359,7 +1387,7 @@ COLLAPSE_SCRIPT = r"""
     box-shadow: 0 1px 2px rgba(0,0,0,0.04) !important;
   }
   .wb-kpi-label {
-    font-size: 11.5px !important;
+    font-size: 12.5px !important;
     color: var(--muted-foreground, #64748b) !important;
     margin-bottom: 3px !important;
     white-space: nowrap !important;
@@ -1367,7 +1395,7 @@ COLLAPSE_SCRIPT = r"""
     text-overflow: ellipsis !important;
   }
   .wb-kpi-value {
-    font-size: 22px !important;
+    font-size: 26px !important;
     font-weight: 700 !important;
     line-height: 1.15 !important;
     color: var(--foreground, #0f172a) !important;
@@ -1382,7 +1410,7 @@ COLLAPSE_SCRIPT = r"""
     height: 18px !important;
     padding: 0 7px !important;
     border-radius: 9px !important;
-    font-size: 10px !important;
+    font-size: 11.5px !important;
     font-weight: 600 !important;
     white-space: nowrap !important;
   }
@@ -1398,9 +1426,11 @@ COLLAPSE_SCRIPT = r"""
     margin: 0 0 12px 0 !important;
   }
   /* 底栏：账号池 + 最近执行 */
+  /* 底栏只有「最近执行」一张卡片（账号池相关内容已移除，
+     用户 2026-10-17 要求），所以从两列网格改回单列。 */
   #wb-ov-bottom-row {
     display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
+    grid-template-columns: 1fr !important;
     gap: 12px !important;
     margin: 0 !important;
   }
@@ -1419,17 +1449,17 @@ COLLAPSE_SCRIPT = r"""
     margin-bottom: 10px !important;
   }
   .wb-panel-title {
-    font-size: 12.5px !important;
+    font-size: 14px !important;
     font-weight: 650 !important;
     color: var(--foreground, #0f172a) !important;
   }
   .wb-panel-sub {
-    font-size: 10.5px !important;
+    font-size: 12px !important;
     color: var(--muted-foreground, #64748b) !important;
     margin-top: 1px !important;
   }
   .wb-panel-chip {
-    font-size: 10px !important;
+    font-size: 11.5px !important;
     color: var(--muted-foreground, #64748b) !important;
     background: var(--muted, rgba(120,120,120,0.1)) !important;
     border-radius: 8px !important;
@@ -1460,91 +1490,27 @@ COLLAPSE_SCRIPT = r"""
     align-items: baseline !important;
     justify-content: space-between !important;
     gap: 10px !important;
-    font-size: 11px !important;
-    padding: 3px 0 !important;
+    font-size: 12.5px !important;
+    padding: 4px 0 !important;
   }
   .wb-task-row span { color: var(--muted-foreground, #64748b) !important; }
   .wb-task-row b { color: var(--foreground, #0f172a) !important; font-variant-numeric: tabular-nums !important; }
-
-  /* 账号池分布条 */
-  #wb-ov-acc-bars { display: flex; flex-direction: column; gap: 8px; }
-  .wb-ov-bar-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }
-  .wb-ov-bar-k { flex: 0 0 64px; color: var(--muted-foreground, #64748b); }
-  .wb-ov-bar {
-    flex: 1 1 auto; height: 8px; border-radius: 4px;
-    background: var(--muted, rgba(120,120,120,0.14)); overflow: hidden;
-  }
-  .wb-ov-bar > div { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
-  .wb-ov-bar-row b {
-    flex: 0 0 32px; text-align: right;
-    color: var(--foreground, #0f172a); font-variant-numeric: tabular-nums;
-  }
-
-  /* 正在调用的账号（账号池卡片下方横条）。
-     用户需求（2026-10-16）：「内部下方可以动态显示正在调用的账号，
-     如果太多采用滑动条，不要改变卡片大小」。
-     实现要点（2026-10-16 用户要求改为纵向下拉列表）：
-       · 固定 max-height，卡片不随账号数变高
-       · 一行一个账号：左边账号名，右边调用次数（两端对齐）
-       · 显示不下时出现纵向滚动条 */
-  #wb-ov-acc-active {
-    display: flex; flex-direction: column; gap: 4px;
-    margin-top: 10px; min-width: 0;
-  }
-  #wb-ov-acc-active .wb-aa-k {
-    flex: 0 0 auto; font-size: 11px;
-    color: var(--muted-foreground, #64748b); white-space: nowrap;
-  }
-  /* 列表容器：固定高度 + 纵向滚动。高度钉死才能保证卡片不随账号数变化。 */
-  #wb-ov-acc-active .wb-aa-list {
-    display: flex; flex-direction: column; gap: 2px;
-    height: 108px; min-height: 108px; max-height: 108px;
-    overflow-y: auto; overflow-x: hidden;
-    scrollbar-width: thin; padding-right: 2px;
-  }
-  #wb-ov-acc-active .wb-aa-list::-webkit-scrollbar { width: 4px; }
-  #wb-ov-acc-active .wb-aa-list::-webkit-scrollbar-thumb {
-    background: var(--muted-foreground, #64748b); border-radius: 2px;
-  }
-  /* 一行一个：账号名左、次数右，两端对齐 */
-  #wb-ov-acc-active .wb-aa-item {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; height: 24px; padding: 0 8px; border-radius: 6px;
-    font-size: 11px; white-space: nowrap;
-    background: var(--muted, rgba(120,120,120,0.09));
-    color: var(--foreground, #0f172a);
-  }
-  #wb-ov-acc-active .wb-aa-item .wb-aa-name {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
-  }
-  #wb-ov-acc-active .wb-aa-item .wb-aa-n {
-    flex: 0 0 auto; font-variant-numeric: tabular-nums;
-    color: var(--muted-foreground, #64748b);
-  }
-  #wb-ov-acc-active .wb-aa-item.wb-aa-hot {
-    background: color-mix(in oklab, var(--primary, #22c55e) 15%, transparent);
-    color: var(--primary, #22c55e); font-weight: 600;
-  }
-  #wb-ov-acc-active .wb-aa-item.wb-aa-hot .wb-aa-n { color: var(--primary, #22c55e); }
-  #wb-ov-acc-active .wb-aa-empty {
-    font-size: 10.5px; color: var(--muted-foreground, #64748b);
-  }
 
   /* 最近执行列表 */
   #wb-ov-runs { display: flex; flex-direction: column; gap: 6px; }
   .wb-run-row {
     display: flex; align-items: center; gap: 9px;
-    font-size: 11.5px; padding: 6px 8px;
+    font-size: 12.5px; padding: 7px 9px;
     border-radius: 8px; background: var(--muted, rgba(120,120,120,0.07));
   }
   .wb-run-dot {
-    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
     background: var(--muted-foreground, #64748b);
   }
   .wb-run-dot.ok { background: #22c55e; }
   .wb-run-dot.err { background: #ef4444; }
   .wb-run-mode {
-    flex: 0 0 auto; font-size: 10px; padding: 1px 6px; border-radius: 6px;
+    flex: 0 0 auto; font-size: 11.5px; padding: 2px 7px; border-radius: 6px;
     background: var(--muted, rgba(120,120,120,0.14)); color: var(--muted-foreground, #64748b);
   }
   .wb-run-time { flex: 0 0 auto; color: var(--muted-foreground, #64748b); font-variant-numeric: tabular-nums; }
@@ -1577,25 +1543,63 @@ COLLAPSE_SCRIPT = r"""
   }
   /* 展开指示箭头：默认朝下，展开时翻转朝上 */
   .wb-run-caret {
-    flex: 0 0 auto; font-size: 9px; line-height: 1; margin-left: 2px;
+    flex: 0 0 auto; font-size: 11px; line-height: 1; margin-left: 2px;
     color: var(--muted-foreground, #64748b);
     transition: transform 0.18s ease;
   }
   .wb-run-open .wb-run-caret { transform: rotate(180deg); }
   .wb-run-open { background: var(--accent, rgba(120,120,120,0.13)); }
 
-  /* 行下方明细卡：插在被点行的正下方，宽度撑满列表 */
+  /* 每日任务页「执行记录」行的展开箭头（与概览页同一套交互：
+     点行展开明细、再点一次收纳，详见 wbToggleRunDetail）。 */
+  .wb-dl-run-caret {
+    flex: 0 0 auto; font-size: 11px; line-height: 1; margin-left: 2px;
+    color: var(--muted-foreground, #64748b);
+    transition: transform 0.18s ease;
+  }
+  .wb-dl-run-open .wb-dl-run-caret { transform: rotate(180deg); }
+  .wb-dl-run-open { background: var(--accent, rgba(120,120,120,0.13)); }
+  /* 行内明细容器：插在被点行的正下方，左右撑满列表，
+     不与上面的行共享内边距（明细自带 padding）。 */
+  .wb-dl-run-detail {
+    flex-basis: 100%;
+    width: 100%;
+    padding: 4px 8px 8px;
+    border-left: 2px solid var(--border, rgba(120,120,120,0.25));
+    margin: 2px 0 4px;
+  }
+  .wb-dl-run-detail::-webkit-scrollbar { width: 5px; height: 5px; }
+  .wb-dl-run-detail::-webkit-scrollbar-thumb {
+    background: rgba(120,120,120,0.35); border-radius: 3px;
+  }
+
+  /* 行下方明细卡：插在被点行的正下方，宽度撑满列表。
+     ⚠️ 固定 max-height + 内部滚动（用户 2026-10-17 要求：「点击任务显示对应
+     信息在下方符合预期，但是不应该撑大卡片大小，显示不下的内容应该加一个
+     滑动条，用户可以自行滑动查看」）。账号多时明细很长，不限制高度会把
+     「最近执行」卡片撑爆，把 KPI 和趋势图全部挤下去。 */
   .wb-run-detailbox {
-    margin: 2px 0 2px; padding: 9px 10px;
+    margin: 2px 0 2px; padding: 10px 12px;
     border-radius: 8px;
     border: 1px dashed var(--border, rgba(120,120,120,0.22));
     background: var(--background, #ffffff);
-    font-size: 11px;
+    font-size: 12.5px;
+    max-height: 260px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
   }
-  .wb-run-detail-loading { color: var(--muted-foreground, #64748b); font-size: 11px; }
+  .wb-run-detailbox::-webkit-scrollbar { width: 5px; }
+  .wb-run-detailbox::-webkit-scrollbar-thumb {
+    background: rgba(120,120,120,0.35); border-radius: 3px;
+  }
+  /* 明细里的逐账号表：横向滚动由表格容器负责，这里只保证不溢出
+     （账号名/积分列都很长，390px 窄屏必然超宽）。 */
+  .wb-run-detailbox .wb-rund-tbl { overflow-x: auto; }
+  .wb-run-detail-loading { color: var(--muted-foreground, #64748b); font-size: 12.5px; }
   .wb-rund-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-  .wb-rund-h b { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--foreground, #0f172a); }
-  .wb-rund-st { font-size: 10px; padding: 1px 7px; border-radius: 6px; flex: 0 0 auto; }
+  .wb-rund-h b { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--foreground, #0f172a); }
+  .wb-rund-st { font-size: 11.5px; padding: 2px 8px; border-radius: 6px; flex: 0 0 auto; }
   .wb-rund-st-ok { background: rgba(34,197,94,.14); color: #047857; }
   .wb-rund-st-run { background: rgba(59,130,246,.14); color: #1d4ed8; }
   .wb-rund-st-err { background: rgba(239,68,68,.14); color: #b91c1c; }
@@ -1686,12 +1690,12 @@ COLLAPSE_SCRIPT = r"""
     #wb-topbar-inner > .wb-tb-grid {
       grid-template-columns: 1fr auto auto !important;
       max-width: none !important;
-      height: 48px !important;
+      height: 54px !important;
       /* 与 main > div 的左右 padding 一致（16px），保证 logo 与内容左对齐 */
       padding: 0 16px !important;
       gap: 8px !important;
     }
-    #wb-topbar-inner { height: 48px !important; }
+    #wb-topbar-inner { height: 54px !important; }
     /* logo 只留图标（窄屏放不下名字） */
     .wb-tb-grid > div:first-child { grid-column: 1 !important; }
     .wb-tb-grid > div:first-child div.min-w-0 { display: none !important; }
@@ -1706,36 +1710,36 @@ COLLAPSE_SCRIPT = r"""
       justify-self: center !important;
       align-items: center !important;
       justify-content: center !important;
-      width: 34px !important;
-      height: 34px !important;
+      width: 38px !important;
+      height: 38px !important;
       padding: 0 !important;
       border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
-      border-radius: 9px !important;
+      border-radius: 10px !important;
       background: var(--muted, rgba(120,120,120,0.1)) !important;
       color: var(--muted-foreground, #64748b) !important;
       cursor: pointer !important;
       transition: background 0.15s ease, color 0.15s ease !important;
     }
     #wb-theme-mini:hover { background: var(--accent, rgba(120,120,120,0.14)) !important; }
-    #wb-theme-mini svg { width: 16px !important; height: 16px !important; }
+    #wb-theme-mini svg { width: 18px !important; height: 18px !important; }
     #wb-nav-toggler {
       display: inline-flex !important;
       grid-column: 3 !important;
       justify-self: center !important;
       align-items: center !important;
       justify-content: center !important;
-      width: 34px !important;
-      height: 34px !important;
+      width: 38px !important;
+      height: 38px !important;
       padding: 0 !important;
       border: 1px solid var(--border, rgba(120,120,120,0.16)) !important;
-      border-radius: 9px !important;
+      border-radius: 10px !important;
       background: var(--muted, rgba(120,120,120,0.1)) !important;
       color: var(--muted-foreground, #64748b) !important;
       cursor: pointer !important;
       transition: background 0.15s ease, color 0.15s ease !important;
     }
     #wb-nav-toggler:hover { background: var(--accent, rgba(120,120,120,0.14)) !important; }
-    #wb-nav-toggler svg { width: 17px !important; height: 17px !important; }
+    #wb-nav-toggler svg { width: 18px !important; height: 18px !important; }
     /* 收纳面板在顶栏下方、右侧弹出 */
     #wb-nav-panel {
       top: calc(100% + 6px) !important;
@@ -1744,8 +1748,11 @@ COLLAPSE_SCRIPT = r"""
       bottom: auto !important;
     }
     /* 内容区留出底部空间（底部已无常驻栏） */
-    main > div, main > section { padding-bottom: 24px !important; }
-    #wb-overview-view .wb-ov-wrap { padding: 16px 14px 24px !important; }
+    /* padding-top 24px = 官方 py-6。账号页原生是 py-8(32px)，
+       不补的话移动端它的 H1 顶位置比其余五页高 8px。 */
+    main > div, main > section { padding-top: 24px !important; padding-bottom: 24px !important; }
+    /* padding-top 24px 与官方页 py-6 一致（H1 顶位置对齐）。 */
+    #wb-overview-view .wb-ov-wrap { padding: 24px 14px 24px !important; }
     /* KPI 2×2 */
     #wb-ov-kpi-row, #wb-ov-kpi-row2 { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
     .wb-kpi-value { font-size: 19px !important; }
@@ -1762,16 +1769,15 @@ COLLAPSE_SCRIPT = r"""
     #wb-overview-view .wb-ov-wrap { padding-left: 12px !important; padding-right: 12px !important; }
     .wb-kpi { padding: 10px 11px 9px !important; }
     .wb-kpi-value { font-size: 17px !important; }
-    .wb-ov-h1 { font-size: 22px !important; }
-    #wb-theme-mini, #wb-nav-toggler { width: 32px !important; height: 32px !important; }
+    #wb-theme-mini, #wb-nav-toggler { width: 36px !important; height: 36px !important; }
   }
 
   /* PC 端中等宽度：选项卡压缩一点，避免与 logo/主题挤在一起 */
   @media (min-width: 861px) and (max-width: 1080px) {
     #wb-topbar-inner > .wb-tb-grid { padding: 0 12px !important; gap: 8px !important; }
-    .wb-tb-grid nav a { padding: 0 8px !important; font-size: 12.5px !important; gap: 5px !important; }
-    .wb-tb-grid nav a svg { width: 15px !important; height: 15px !important; }
-    .wb-tb-grid > div:first-child span { width: 24px !important; height: 24px !important; }
+    .wb-tb-grid nav a { padding: 0 10px !important; font-size: 13.5px !important; gap: 6px !important; }
+    .wb-tb-grid nav a svg { width: 17px !important; height: 17px !important; }
+    .wb-tb-grid > div:first-child span { width: 28px !important; height: 28px !important; }
   }
 </style>
 <script>
@@ -2776,31 +2782,51 @@ COLLAPSE_SCRIPT = r"""
   function wbSyncTopbarAlign() {
     try {
       var grid = document.querySelector("#wb-topbar-inner > .wb-tb-grid");
-      var wrap = document.querySelector("main > div, main > section");
-      if (!grid || !wrap) return;
+      if (!grid) return;
+      /* ⚠️ 必须只认**当前可见视图**的内容容器，不能图省事写
+         `main > div`（2026-10-17 修复，用户反馈「部分页面偶尔出现左右两个
+         logo 和主题散开而不是和页面对齐」）。
+         根因：main 下同时挂着官方容器和两个注入视图（#wb-overview-view /
+         #wb-daily-view），`main > div` 命中的可能是**上一个页面**的残留节点 ——
+         实测从官方页切到 hash 视图时，选中的是已 display:none 的旧官方容器
+         （量到 0×0）或者尺寸不同的另一个容器，于是顶栏按错误基准对齐：
+         实测 logo 块 x=146（总览/每日）与 x=139（账号/词元/积分/设置）
+         两种结果交替出现，主题控件同理会左右散开。
+         现在按视图状态精确取容器，取不到就退出（不猜、不套旧值）。 */
+      var vis = function (el) {
+        return !!el && el.style.display !== "none"
+          && getComputedStyle(el).display !== "none";
+      };
+      var ov = document.getElementById("wb-overview-view");
+      var dl = document.getElementById("wb-daily-view");
+      var wrap = null;
+      if (vis(ov)) wrap = ov.querySelector(".wb-ov-wrap");
+      else if (vis(dl)) wrap = dl.querySelector(".wb-daily-wrap");
+      else {
+        // 官方页：从 main 的可见子节点里找内容容器
+        var main = document.querySelector("main");
+        if (main) {
+          var kids = Array.prototype.slice.call(main.children);
+          for (var i = 0; i < kids.length; i++) {
+            if (kids[i] !== ov && kids[i] !== dl && vis(kids[i])) {
+              wrap = kids[i];
+              break;
+            }
+          }
+        }
+      }
+      if (!wrap) return;
       var gl = grid.getBoundingClientRect(), wl = wrap.getBoundingClientRect();
-      // ⚠️ 官方 wrap 不可见时必须直接退出，绝不能"对齐"。
-      // 2026-10-16 实测踩坑：切到 hash 视图（数据总览/每日任务）时官方 wrap 被
-      // 置为 display:none，量到 0×0；此时若继续算差值，会把 margin-left 压成
-      // 0 或负值，顶栏对齐被**破坏**（实测 gridX 从 115 掉到 0，用户看到的
-      // 「顶部错位」正是这么来的）。只有拿到真实宽度才允许修正。
+      // 容器不可见（0×0）时直接退出，绝不能拿它当基准 —— 否则会把
+      // margin-left 压成 0 或负值，顶栏对齐被破坏（2026-10-16 实测踩过）。
       if (wl.width <= 0 || gl.width <= 0) return;
       var dLeft = wl.x - gl.x;
       var dW = wl.width - gl.width;
-      // 左右都对齐才算完成；宽度不同也要修
-      // （实测：设置页内容区是 max-w-3xl 768px，而顶栏网格固定 1180px，
-      // 只补左边缘会出现「顶栏比内容宽一截」的错位）。
       if (Math.abs(dLeft) < 0.5 && Math.abs(dW) < 0.5) return;
       // 差值过大说明页面正在切换中间态（容器还没渲染完），此时修正会抖。
-      // ⚠️ 阈值不能低于 500：设置页内容区是 max-w-3xl(768px)、顶栏 1180px，
-      // 真实宽度差 412px 是合法差异，阈值卡在 400 会把设置页永久漏掉
-      // （2026-10-16 实测：设成 400 时设置页永远对不齐）。
-      // 真正的中间态由上面的 width<=0 判断拦截，这里只兜极端异常。
       if (Math.abs(dLeft) > 1200 || Math.abs(dW) > 1200) return;
       var cur = parseFloat(getComputedStyle(grid).marginLeft) || 0;
       grid.style.marginLeft = (cur + dLeft) + "px";
-      // 宽度对齐：把网格宽度钉成内容区的实测宽度（只在两者都 > 0 时）。
-      // 不写回 auto —— 一旦写成具体像素，官方响应式调整时本函数会再次修正。
       grid.style.maxWidth = wl.width + "px";
       grid.style.width = wl.width + "px";
     } catch (e) {}
@@ -3357,18 +3383,11 @@ COLLAPSE_SCRIPT = r"""
         '</div>' +
 
         /* 底栏：账号池分布 + 最近执行 */
+        /* 底栏只剩「最近执行」：账号池相关内容已移除
+           （用户 2026-10-17 要求「数据总览页面下方账号管理相关内容移除，
+           账号管理有单独页面处理」）。账号池分布、正在调用的账号
+           这些属于账号管理职责，概览页不再重复展示。 */
         '<div id="wb-ov-bottom-row">' +
-          '<div class="wb-panel">' +
-            '<div class="wb-panel-head">' +
-              '<div><div class="wb-panel-title">账号池</div>' +
-              '<div class="wb-panel-sub">启用 / 停用分布</div></div>' +
-              '<span class="wb-panel-chip" id="wb-ov-acc-chip">—</span></div>' +
-            '<div id="wb-ov-acc-bars"></div>' +
-            /* 正在调用的账号：横条 + 内部横向滚动，固定高度不撑大卡片。
-               用户需求（2026-10-16）：「账号池卡片内部很空，内部下方可以动态
-               显示正在调用的账号，如果太多采用滑动条，不要改变卡片大小」。 */
-            '<div id="wb-ov-acc-active"></div>' +
-          '</div>' +
           '<div class="wb-panel">' +
             '<div class="wb-panel-head">' +
               '<div><div class="wb-panel-title">最近执行</div>' +
@@ -3459,6 +3478,9 @@ COLLAPSE_SCRIPT = r"""
         main.appendChild(daily);
         wbHoistDailyCardTitles(daily);
       }
+      /* 每次进入本页都归一化一次（幂等）：既兜住首次创建的漏网元素，
+         也兜住 hoist 之后新插进来的游离节点。 */
+      wbNormalizeDailyLayout(daily);
       daily.style.display = "block";
       if (ov) ov.style.display = "none";
       Array.prototype.slice.call(main.children).forEach(function (c) {
@@ -3549,93 +3571,11 @@ COLLAPSE_SCRIPT = r"""
     // KPI + 趋势 + 任务（与原首页同一套取数逻辑，只是挂到概览视图里）
     wbKpiInit();
     wbMidInit();
-    // 账号池分布
-    wbJson("/api/account-pool", 15000).then(function (d) {
-      var accs = (d && d.accounts) || [];
-      var enabled = 0, disabled = 0;
-      accs.forEach(function (a) {
-        if (a && a.enabled) enabled++; else disabled++;
-      });
-      var chip = document.getElementById("wb-ov-acc-chip");
-      if (chip) chip.textContent = accs.length + " 个账号";
-      var box = document.getElementById("wb-ov-acc-bars");
-      if (!box) return;
-      var total = Math.max(1, accs.length);
-      box.innerHTML =
-        '<div class="wb-ov-bar-row">' +
-          '<span class="wb-ov-bar-k">池内启用</span>' +
-          '<div class="wb-ov-bar"><div style="width:' + (enabled / total * 100) + '%;background:#22c55e"></div></div>' +
-          '<b>' + enabled + '</b></div>' +
-        '<div class="wb-ov-bar-row">' +
-          '<span class="wb-ov-bar-k">已停用</span>' +
-          '<div class="wb-ov-bar"><div style="width:' + (disabled / total * 100) + '%;background:#f59e0b"></div></div>' +
-          '<b>' + disabled + '</b></div>';
-
-      // 「正在调用」列表：一行一个账号，左边账号名、右边调用次数。
-      // 用户需求（2026-10-16）：
-      //   a) 「动态显示一行一个，前面写账号，后面写次数，显示不下纵向添加滑动条」
-      //   b) 「按照调用顺序排列，比如正在调用的第一个，下一次另一个账号调用，
-      //       他就第二个，正在调用的第一个」
-      // b 的语义 = 按**最近一次被调用的时间**排序：最新被调用的账号排第一，
-      // 之后别的账号被调用就升到第一、原第一退到第二。
-      // 实现：/api/token-stats 的 requests 带 timestamp 与 accountId，
-      // 按 timestamp 倒序取每个账号的**首次出现序号**作为「新近度排名」，
-      // 再让 selectionCounts 按该排名排序；requests 里没有的账号
-      // （只有历史累计、近期没被调用）排在最后，按累计次数降序。
-      // 可见区域固定 108px 高，超出靠纵向滚动条，卡片高度不随账号数变化。
-      // lastSelectedAccountId 是当前实际被路由到的账号，单独高亮。
-      var sc = (d && d.selectionCounts) || [];
-      var lastId = d && d.lastSelectedAccountId;
-      var activeBox = document.getElementById("wb-ov-acc-active");
-      if (!activeBox) return;
-
-      wbJson("/api/token-stats", 15000).then(function (agg) {
-        // 汇总所有 source 的调用明细，按 timestamp 倒序，取每个账号首次出现
-        var pairs = [];
-        ((agg && agg.sources) || []).forEach(function (src) {
-          (src.requests || []).forEach(function (q) {
-            var aid = String(q.accountId || "");
-            if (!aid) return;
-            pairs.push([Number(q.timestamp || 0), aid]);
-          });
-        });
-        pairs.sort(function (x, y) { return y[0] - x[0]; });
-        var rank = {};
-        var r = 0;
-        pairs.forEach(function (p) {
-          if (rank[p[1]] === undefined) rank[p[1]] = r++;
-        });
-
-        var top = sc.filter(function (x) { return x && x.count > 0; })
-          .sort(function (a, b) {
-            var ra = rank[String(a.accountId || "")];
-            var rb = rank[String(b.accountId || "")];
-            if (ra === undefined && rb === undefined) {
-              return (b.count || 0) - (a.count || 0);
-            }
-            if (ra === undefined) return 1;
-            if (rb === undefined) return -1;
-            return ra - rb;
-          })
-          .slice(0, 40);
-        var html = '<span class="wb-aa-k">正在调用（' + top.length + '）</span>'
-          + '<div class="wb-aa-list">';
-        if (!top.length) {
-          html += '<span class="wb-aa-empty">暂无调用记录</span>';
-        } else {
-          top.forEach(function (x) {
-            var hot = (x.accountId && x.accountId === lastId) ? " wb-aa-hot" : "";
-            var nm = String(x.accountName || x.accountId || "?");
-            html += '<div class="wb-aa-item' + hot + '">'
-              + '<span class="wb-aa-name">' + nm + '</span>'
-              + '<span class="wb-aa-n">' + (x.count || 0) + ' 次</span>'
-              + '</div>';
-          });
-        }
-        html += '</div>';
-        activeBox.innerHTML = html;
-      });
-    });
+    /* 账号池分布 / 正在调用账号：已移除（用户 2026-10-17 要求
+       「数据总览页面下方账号管理相关内容移除，账号管理有单独页面处理」）。
+       原先这里会拉 /api/account-pool 与 /api/token-stats 渲染
+       「账号池」卡片（启用/停用分布 + 正在调用的账号列表）。
+       那些属于账号管理职责，概览页不再重复；账号管理页本身已具备。 */
 
     // 最近执行列表（每日任务历史）
     // 用户需求（2026-10-16）：
@@ -3709,7 +3649,6 @@ COLLAPSE_SCRIPT = r"""
       });
     });
 
-    // 概览页任务进度轮询启动（执行中时显示 2/24）
     wbOvTaskProgressStart();
   }
 
@@ -7397,6 +7336,28 @@ COLLAPSE_SCRIPT = r"""
     }
   }
 
+  /* 布局兜底：把游离在 .wb-daily-wrap 之外的全部元素移回 wrap 里。
+     用户 2026-10-17 反馈「每日任务界面部分内容左右宽度未对齐」。
+     DOM 实测根因：任务清单 / 任务记录 / 执行记录 三张卡片 + 一个 row
+     是 #wb-daily-view 的**直接子元素**，不在 wrap 内 ——
+     实测它们 x=0 w=1409（占满视口），而 wrap 内的卡片 x=147 w=1116，
+     左右各差一截，看起来就是「部分内容没对齐」。
+     成因是 innerHTML 的 div 嵌套层级漏了一层闭合，加上 hoist 时
+     `card.parentNode.insertBefore(section, card)` 会把 section 插到
+     卡片当时的父节点上 —— 父节点是 view 时就游离到了外面。
+     这里不逐层去核对 HTML 嵌套（那样一改就可能波及别的内容），
+     而是在视图建好后做一次幂等归一化：view 的直接子元素里
+     除 wrap 自身外，全部 appendChild 进 wrap。
+     重复调用安全：元素已在 wrap 内时不会被移动。 */
+  function wbNormalizeDailyLayout(view) {
+    if (!view) return;
+    var wrap = view.querySelector(".wb-daily-wrap");
+    if (!wrap) return;
+    Array.prototype.slice.call(view.children).forEach(function (c) {
+      if (c !== wrap) wrap.appendChild(c);
+    });
+  }
+
   function wbCreateWbDailyView() {
     var v = document.createElement("div");
     v.id = "wb-daily-view";
@@ -7653,7 +7614,6 @@ COLLAPSE_SCRIPT = r"""
             '<button id="wb-dl-refresh-runs" class="wb-api-btn">刷新</button>' +
           '</div>' +
           '<div id="wb-dl-runs" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
-          '<div id="wb-dl-run-detail" style="display:none"></div>' +
           '<div id="wb-dl-log-wrap" style="display:none">' +
             '<div class="wb-api-label" style="margin-top:10px">实时日志</div>' +
             '<div id="wb-dl-log" class="wb-api-code" style="max-height:220px;overflow-y:auto;white-space:pre-wrap"></div>' +
@@ -8158,11 +8118,11 @@ COLLAPSE_SCRIPT = r"""
       if (sum) sum.textContent = "最近执行轮次（最多保留 " + ((d && d.retain) || 200) + " 轮，点击任意一轮查看逐账号明细）";
       if (!runs.length) { box.innerHTML = '<div class="wb-api-desc">暂无执行记录</div>'; return; }
       var html = "";
-      runs.forEach(function(j) {
+      runs.forEach(function(j, idx) {
         var tone = j.status === "done" ? "#047857" : (j.status === "running" ? "#1d4ed8" : "#b45309");
         var label = j.status === "done" ? "✅ 完成" : j.status === "running" ? "⏳ 执行中"
                   : j.status === "aborted" ? "⛔ 已中止" : "❌ 失败";
-        html += '<div class="wb-api-row wb-dl-run-row" data-job="' + j.job_id + '" style="padding:7px 0;cursor:pointer">' +
+        html += '<div class="wb-api-row wb-dl-run-row" data-job="' + j.job_id + '" data-idx="' + idx + '" style="padding:7px 0;cursor:pointer">' +
           '<div class="wb-api-main">' +
             '<span class="wb-api-mono">' + String(j.job_id) + '</span>' +
             '<span class="wb-api-desc" style="margin-left:8px">' + wbFmtTs(j.started_at) +
@@ -8170,33 +8130,61 @@ COLLAPSE_SCRIPT = r"""
             (j.accounts ? " · " + j.accounts + " 个账号" : "") + '</span>' +
           '</div>' +
           '<span style="font-size:12px;font-weight:600;color:' + tone + '">' + label + '</span>' +
-        '</div>';
+          '<span class="wb-dl-run-caret">▾</span>' +
+        '</div>' +
+        /* 明细就插在**这一行的正下方**（用户 2026-10-17 要求：
+           「点击执行记录，相关信息应该显示在这条任务下方，而不是页面底部」）。
+           带固定最大高度 + 内部滚动 —— 账号多时不会把整张卡片撑爆。 */
+        '<div class="wb-dl-run-detail" id="wb-dl-run-detail-' + idx + '" style="display:none"></div>';
       });
       box.innerHTML = html;
       box.querySelectorAll(".wb-dl-run-row").forEach(function(row) {
         row.addEventListener("click", function() {
-          wbLoadWbDailyRunDetail(row.getAttribute("data-job"));
+          wbToggleRunDetail(row, runs);
         });
       });
     }).catch(function() {});
   }
 
-  function wbLoadWbDailyRunDetail(jobId) {
-    var wrap = document.getElementById("wb-dl-run-detail");
+  function wbToggleRunDetail(row, runs) {
+    var box = document.getElementById("wb-dl-runs");
+    if (!box) return;
+    var idx = row.getAttribute("data-idx");
+    var panel = document.getElementById("wb-dl-run-detail-" + idx);
+    var wasOpen = panel && panel.style.display !== "none";
+    // 手风琴：先收起所有已展开的（同时只开一个，卡片高度不会被撑爆）
+    box.querySelectorAll(".wb-dl-run-detail").forEach(function(p) {
+      p.style.display = "none";
+      p.innerHTML = "";
+    });
+    box.querySelectorAll(".wb-dl-run-row").forEach(function(r) {
+      r.classList.remove("wb-dl-run-open");
+    });
+    if (wasOpen || !panel) return;      // 再点一次 = 收纳
+    row.classList.add("wb-dl-run-open");
+    panel.style.display = "";
+    panel.innerHTML = '<div class="wb-api-desc" style="padding:8px 0">正在加载 ' + row.getAttribute("data-job") + ' 的逐账号明细…</div>';
+    wbLoadWbDailyRunDetail(panel, row.getAttribute("data-job"));
+  }
+
+  function wbLoadWbDailyRunDetail(panel, jobId) {
+    var wrap = panel;
     if (!wrap) return;
-    wrap.style.display = "";
-    wrap.innerHTML = '<div class="wb-api-desc" style="margin-top:10px">正在加载 ' + jobId + ' 的逐账号明细…</div>';
+    wrap.innerHTML = '<div class="wb-api-desc" style="padding:8px 0">正在加载 ' + jobId + ' 的逐账号明细…</div>';
     fetch("/api/wb-daily/run-accounts/" + jobId)
       .then(function(r) { return r.ok ? r.json() : {}; })
       .then(function(d) {
         var rows = (d && d.accounts) || [];
-        var html = '<div class="wb-api-label" style="margin-top:12px">逐账号明细：' + jobId + '</div>';
         if (!rows.length) {
-          html += '<div class="wb-api-desc">本轮没有账号级明细（可能是旧记录或任务未跑完）</div>';
-          wrap.innerHTML = html;
+          wrap.innerHTML = '<div class="wb-api-desc" style="padding:8px 0">本轮没有账号级明细（可能是旧记录或任务未跑完）</div>';
           return;
         }
-        html += '<div style="width:100%;overflow-x:auto;margin-top:6px"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
+        var html = '<div class="wb-api-label" style="padding:6px 0 2px">逐账号明细：' + jobId + '</div>'
+          /* 固定最大高度 + 内部滚动（用户 2026-10-17 要求：
+             「显示不下的内容应该加一个滑动条，用户可以自行滑动查看」）。
+             横向纵向都留滚动条，账号多、字段长都不撑大卡片。 */
+          + '<div style="max-height:260px;overflow:auto;margin-top:4px">'
+          + '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
           '<thead><tr style="text-align:left;color:var(--muted-foreground,#64748b)">' +
           '<th style="padding:4px 6px">账号</th><th style="padding:4px 6px">完成</th>' +
           '<th style="padding:4px 6px">等级</th><th style="padding:4px 6px">连签</th>' +
@@ -8220,7 +8208,7 @@ COLLAPSE_SCRIPT = r"""
         wrap.innerHTML = html;
       })
       .catch(function() {
-        wrap.innerHTML = '<div class="wb-api-desc" style="margin-top:10px">明细加载失败</div>';
+        wrap.innerHTML = '<div class="wb-api-desc" style="padding:8px 0">明细加载失败</div>';
       });
   }
 
