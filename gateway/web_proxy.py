@@ -17,6 +17,11 @@ except ImportError:
     import account_policy
 
 try:
+    from gateway import refresh_guard
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import refresh_guard  # type: ignore[no-redef]
+
+try:
     from gateway import notify as _notify
 except ImportError:
     import notify as _notify  # type: ignore[no-redef]
@@ -10082,6 +10087,15 @@ async def account_pool_get_v2():
     except Exception as e:
         print(f"[account-pool] 读账号停用策略失败: {e}")
 
+    # 刷新令牌失效隔离：refresh_guard 标记「需人工重登」的账号集合，
+    # 供卡片打「需重新登录」标记（与停用是两回事：停用 = 不参与轮询，
+    # 需重登 = RT 已失效，但账号可能仍可用，只是要人去重新扫码）。
+    needs_relogin = set()
+    try:
+        needs_relogin = refresh_guard.needs_relogin_ids() or set()
+    except Exception as e:
+        print(f"[account-pool] 读刷新失效标记失败: {e}")
+
     enabled_ids = set(str(x) for x in (data.get("enabledAccountIds") or []))
     all_default = bool(data.get("allEnabledByDefault"))
 
@@ -10104,6 +10118,8 @@ async def account_pool_get_v2():
         # 账号级停用（普通正常账号也有 disabled=false，前端据此渲染启用态）
         item["disabled"] = aid in disabled_map
         item["disabledSource"] = disabled_map.get(aid)
+        # 刷新令牌已失效（需人工重新登录）
+        item["needsRelogin"] = aid in needs_relogin
         # 是否入池：给前端一个明确的布尔值，不必自己推白名单语义
         if all_default:
             item["enabled"] = not item["disabled"]
@@ -10125,6 +10141,7 @@ async def account_pool_get_v2():
             "enabled": (all_default or aid in enabled_ids) and aid not in disabled_map,
             "disabled": aid in disabled_map,
             "disabledSource": disabled_map.get(aid),
+            "needsRelogin": aid in needs_relogin,
             "count": 0,
         })
 

@@ -31,6 +31,34 @@
 
 ---
 
+## [v1.0.1] - 2026-10-18
+
+<!-- summary: 修复上游 401 英文错误页原样透传（改为中文「登录已过期」），并落地刷新令牌四项防复发改造（单飞锁、失败隔离、批量熔断告警、节奏限制），应对上游 session 批量重置 -->
+
+### 新增
+
+- **刷新令牌防复发四件套**（`gateway/refresh_guard.py`）：针对 2026-10-17 一天内
+  17/24 个 codebuddy.cn 账号同时需要重新登录的事件（根因是上游 session 被外部批量重置，
+  非本系统定时任务触发），补上四道防护：
+  - **单飞 + 锁**：同一账号的刷新请求并发时只允许一次在飞，其余共享结果，避免前端
+    连点把上游刷新端点打爆、或让多份响应互相覆盖写坏账号文件；
+  - **失败隔离（需人工重登）**：refresh 报 `issued before session started` / `is invalid`
+    时说明 RT 已在上游失效，重试无意义，标记为「需人工重登」，不再自动重试；
+  - **批量熔断告警**：记录刷新失败事件时间线，短时间内（默认 120s）大量账号
+    （默认 ≥5）刷新失败时推送一次告警，提醒疑似上游批量重置；
+  - **节奏限制**：单账号刷新设最小间隔（默认 5 分钟）+ 每日上限（默认 3 次/账号/日）。
+  状态独立存 `refresh_state.json`，不污染账号池核心数据结构；与账号级停用
+  （`account_policy`）刻意分开——停用 = 不参与轮询，「需人工重登」= 只是提示。
+- **账号池卡片「需重新登录」标记**：`/api/account-pool` 给每个账号补 `needsRelogin`
+  字段，前端据此在卡片上提示该账号 RT 已失效需重新扫码，与「停用」状态区分显示。
+
+### 修复
+
+- **上游 401 英文错误页原样透传**：上游对失效 token 直接回 openresty/APISIX 网关的
+  英文 401 页面（"401 Authorization Required"），`chat_completions` 里 4 处透传点把它
+  原样转发给客户端，极不协调。现加 `_friendly_upstream_body()` 辅助函数，401 一律换成
+  中文「登录已过期，请重新登录即可」，其余状态码保持原样。
+
 ## [v1.0.0] - 2026-10-17
 
 <!-- summary: 正式版发布。六大页面样式完全统一、数据总览仪表盘、任务巡检与断点续跑、签到/任务调度拆分、智能助手双查能力，以及顶栏导航整体放大 -->
@@ -4979,7 +5007,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.1...HEAD
+[v1.0.1]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.0...v1.0.1
 [v1.0.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.99...v1.0.0
 [v0.9.99]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.98...v0.9.99
 [v0.9.98]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.97...v0.9.98

@@ -57,6 +57,7 @@ import account_policy as _ap  # noqa: E402
 
 ns["model_policy"] = _mp
 ns["account_policy"] = _ap
+ns["refresh_guard"] = __import__("refresh_guard")
 ns["ACCOUNT_POOL_FILE"] = tmp / "account_pool_config.json"
 ns["SELECTION_LOG_FILE"] = tmp / "selection_logs.json"
 ns["MODEL_POLICY_FILE"] = tmp / "model_policy.json"

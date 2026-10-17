@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v0.9.82](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.82)
+**当前稳定版：** [v1.0.1](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.1)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,25 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.1](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.1) | 2026-10-18 | 修复上游 401 英文错误页原样透传（改为中文「登录已过期」），并落地刷新令牌四项防复发改造（单飞锁、失败隔离、批量熔断告警、节奏限制），应对上游 session 批量重置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.1.md) |
+| [v1.0.0](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.0) | 2026-10-17 | 正式版发布。六大页面样式完全统一、数据总览仪表盘、任务巡检与断点续跑、签到/任务调度拆分、智能助手双查能力，以及顶栏导航整体放大 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.0.md) |
+| [v0.9.99](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.99) | 2026-10-17 | 修复 v0.9.94–v0.9.98 连续五个版本 CI 构建失败（源码契约测试未随代码同步，导致 test job 失败、镜像未推送） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.99.md) |
+| [v0.9.98](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.98) | 2026-10-17 | 概览页「近 30 天积分消耗」趋势图改为固定 31 天窗口，缺失日期补 0，图表尺寸与位置不变 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.98.md) |
+| [v0.9.97](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.97) | 2026-10-17 | 顶栏与导航继续整体放大（顶栏 72px、品牌图标 38px、导航 46px 高、移动端按钮 42px） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.97.md) |
+| [v0.9.96](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.96) | 2026-10-17 | 顶栏与内容整体放大补齐品牌区，六页样式完全统一（宽度/左边缘/主标题/位置/顶栏六个维度），并修 logo 与主题左右散开 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.96.md) |
+| [v0.9.95](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.95) | 2026-10-17 | 助手新增签到活动查询工具与「数字对不上必须双查」规则，并修掉第二轮 LLM 返回空正文导致答非所问的 bug | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.95.md) |
+| [v0.9.94](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.94) | 2026-10-17 | 修从数据总览点官方页时页面不切换（pushState 不触发任何事件，视图应用从未运行） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.94.md) |
+| [v0.9.93](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.93) | 2026-10-17 | 修带查询串打开时视图 hash 判定失效（每日任务退回官方页、高亮丢失），改用归一化后的视图 hash | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.93.md) |
+| [v0.9.92](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.92) | 2026-10-17 | 数据总览改为默认主页（URL 无后缀）、账号管理改走 #/accounts 后缀，新增部署前自动中止任务的脚本，并取消密钥统计里的版本号提示 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.92.md) |
+| [v0.9.91](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.91) | 2026-10-17 | 修密钥统计累计调用数口径错误（显示 92 而实际 45673），改为始终使用 api_keys 权威计数，并消除行内徽标与统计行的重复展示 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.91.md) |
+| [v0.9.90](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.90) | 2026-10-17 | 修日报「昨日签到积分」恒为 0 与「昨日调用」翻倍，签到通知改为仅签到轮发送并加跨轮次去重，任务执行期改为增量落盘以支持中断后续跑，API 密钥行新增今日/累计调用与词元消耗 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.90.md) |
+| [v0.9.89](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.89) | 2026-10-17 | 修复 v0.9.88 巡检完全失效的回归（重复 __init__ 覆盖 kind 参数）与顶栏选项卡键盘焦点不可见 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.89.md) |
+| [v0.9.88](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.88) | 2026-10-17 | 每日任务新增巡检自动恢复与签到/任务调度拆分，数据总览改为 Tremor 式仪表盘并统一六页宽度，另修今日消耗口径、断点续跑与通知去重 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.88.md) |
+| [v0.9.87](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.87) | 2026-10-16 | 修复巡检/日报通知文案重复与假数据、移动端参考百度做全屏适配（viewport 禁缩放+延伸到刘海区+惯性滚动） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.87.md) |
+| [v0.9.86](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.86) | 2026-10-16 | 主界面重新设计为左右分离 + 背景磨砂样式（含移动端竖屏底部导航适配）、联网搜索引擎改为前端可自选配置（6 种引擎、密钥不再内置）、设置页账号资料置顶、主题入口挪到侧边栏左下角 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.86.md) |
+| [v0.9.85](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.85) | 2026-10-15 | 修复设置页「智能助手」区块不显示、模块顺序偶发随机、侧边栏切换闪屏三个 UI 缺陷 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.85.md) |
+| [v0.9.84](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.84) | 2026-10-15 | 任务上游 workbuddy_daily.py 升级至 v3.7（两种连签口径/任务过滤/Token 健壮性）+ 新增任务积分规则表，助手可回答「预计积分收益」 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.84.md) |
+| [v0.9.83](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.83) | 2026-10-15 | 企微链路根因修复（WECHAT_PROXY 纠正为 URL 重写）+ 回调改 MP 模式彻底解决 5 秒超时 + 智能助手补全至 30 只读工具/10 写操作 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.83.md) |
 | [v0.9.82](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.82) | 2026-10-15 | 参考MP的wechatbot.py新增企业微信智能机器人WebSocket通道——出站长连接不校验来源IP，解决HTTP通道errcode=60020导致通知全阻塞 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.82.md) |
 | [v0.9.81](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.81) | 2026-10-15 | 补齐企微渠道级代理（对齐MoviePilot的WECHAT_PROXY）+ 推送失败可读日志 + 助手人格化回复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.81.md) |
 | [v0.9.80](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.80) | 2026-10-15 | 修正统计页回归测试——兼容「线上已被替换」状态（修复生效后旧文案不存在，规则命中0属预期） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.80.md) |
@@ -175,7 +194,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:0.9.82    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.1    # 锁定版本
 ```
 
 ## 部署产物

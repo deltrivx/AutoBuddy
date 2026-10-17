@@ -70,6 +70,11 @@ except ImportError:
     import model_health
     import account_policy
 
+try:
+    from gateway import refresh_guard
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import refresh_guard  # type: ignore[no-redef]
+
 
 # ---------------------------------------------------------------------------
 # 版本号
@@ -82,7 +87,7 @@ except ImportError:
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.0"
+VERSION_DEFAULT = "1.0.1"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1597,6 +1602,44 @@ def _log_upstream_error(status_code: int, body_text: str) -> None:
     lprint("upstream", f"HTTP {status_code} {snippet}")
 
 
+def _friendly_upstream_body(status_code: int, body_text: str) -> str:
+    """把上游裸错误（尤其 401 的 openresty HTML）转成友好的中文 JSON。
+
+    上游对失效 token 直接回 openresty/APISIX 网关的英文 401 页面
+    （"401 Authorization Required"），原样透传给客户端极不协调。
+    这里在转发前拦截：401 一律换成一句人话，其余错误保持原样。
+    """
+    if status_code == 401:
+        return json.dumps({
+            "error": {
+                "message": "登录已过期，请重新登录即可",
+                "type": "invalid_request_error",
+                "code": "token_expired",
+            }
+        }, ensure_ascii=False)
+    return body_text
+
+
+def _refresh_guard_alert(failed_count: int) -> None:
+    """refresh_guard 熔断告警回调：短时间内大量账号刷新失败 → 推送通知。
+
+    挂在 refresh_guard.set_alert_callback，由 refresh_guard 在命中阈值时调用。
+    通知是附属能力，任何异常都不该影响刷新主流程，故全程 try/except。
+    """
+    try:
+        _t = "AutoBuddy 批量刷新告警"
+        _lines = [
+            f"最近 {int(refresh_guard.ALERT_WINDOW)} 秒内有 {failed_count} 个账号刷新失败。",
+            "疑似上游 session 被批量重置，请检查账号登录状态。",
+        ]
+        _notify_mod.send_scene("refresh_guard_alert", _t, _lines)
+    except Exception as _e:
+        lprint("refresh_guard", f"alert notice failed: {_e}")
+
+
+refresh_guard.set_alert_callback(_refresh_guard_alert)
+
+
 def _looks_like_model_unavailable(status_code: int, body_text: str) -> bool:
     """判断上游响应是否属于「该账号不支持该模型」（可换号重试）。
 
@@ -1727,6 +1770,13 @@ def refresh_token_api(payload: Dict[str, Any]):
     看起来像没生效。
 
     失败时把上游原话带回去，不编造原因：用户看到的一句话就是排查起点。
+
+    防护（refresh_guard，见模块 docstring）：
+      - 单飞 + 锁：同账号并发刷新只允许一次在飞；
+      - 节奏限制：最小间隔 + 每日上限；
+      - 失败隔离：RT 已失效（session 被重置）时标记「需人工重登」，
+        不再自动重试；
+      - 熔断告警：短时间内大量账号刷新失败时推送通知。
     """
     acc_id = payload.get("accountId") or payload.get("id")
     if not acc_id:
@@ -1745,27 +1795,46 @@ def refresh_token_api(payload: Dict[str, Any]):
     if not rt:
         raise HTTPException(status_code=400, detail="该账号没有刷新令牌，需要重新登录")
 
-    variant = target.get("variant") or "ai"
-    at, nrt, err = _refresh_one_token(rt, variant)
-    if not at:
-        return {"ok": False, "accountId": str(acc_id), "error": err or "刷新失败"}
+    # ① 单飞：同账号刷新并发时只允许一次在飞。
+    if not refresh_guard.try_acquire(str(acc_id)):
+        return {"ok": False, "accountId": str(acc_id), "error": "刷新中，请稍候"}
 
-    target["access_token"] = at
-    target["refresh_token"] = nrt
-    exp = _jwt_exp_of(at)
-    if exp:
-        target["expiresAt"] = int(exp * 1000)
-    target["updatedAt"] = int(time.time() * 1000)
+    try:
+        # ④ 节奏限制：最小间隔 + 每日上限。
+        _rate_deny = refresh_guard.check_rate(str(acc_id))
+        if _rate_deny:
+            return {"ok": False, "accountId": str(acc_id), "error": _rate_deny}
 
-    # 写回完整列表（合并后的结果，不只是改动的那一条）：
-    # 否则两份文件里那些「只在其中一份存在」的账号会被整份丢掉。
-    _save_accounts(accounts)
-    return {
-        "ok": True,
-        "accountId": str(acc_id),
-        "expiresAt": target.get("expiresAt"),
-        "refreshedAt": target["updatedAt"],
-    }
+        variant = target.get("variant") or "ai"
+        at, nrt, err = _refresh_one_token(rt, variant)
+        if not at:
+            # ② 失败隔离 + ③ 熔断告警（记录失败，命中关键词则标记需人工重登）。
+            _guard = refresh_guard.record_failure(str(acc_id), err or "刷新失败")
+            _resp = {"ok": False, "accountId": str(acc_id), "error": err or "刷新失败"}
+            if _guard.get("needsRelogin"):
+                _resp["needsRelogin"] = True
+            return _resp
+
+        target["access_token"] = at
+        target["refresh_token"] = nrt
+        exp = _jwt_exp_of(at)
+        if exp:
+            target["expiresAt"] = int(exp * 1000)
+        target["updatedAt"] = int(time.time() * 1000)
+
+        # 写回完整列表（合并后的结果，不只是改动的那一条）：
+        # 否则两份文件里那些「只在其中一份存在」的账号会被整份丢掉。
+        _save_accounts(accounts)
+        refresh_guard.record_success(str(acc_id))
+        return {
+            "ok": True,
+            "accountId": str(acc_id),
+            "expiresAt": target.get("expiresAt"),
+            "refreshedAt": target["updatedAt"],
+        }
+    finally:
+        # 单飞标记无论成败都要释放，否则账号会被永久锁住。
+        refresh_guard.release(str(acc_id))
 
 
 @app.post("/delete")
@@ -2886,7 +2955,7 @@ async def chat_completions(request: Request):
                     pass
                 await client.aclose()
                 _release_account_slot(served_account_id)
-                return Response(content=body_text.encode("utf-8"),
+                return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
             # 学习 + 找下一个候选
@@ -2895,7 +2964,7 @@ async def chat_completions(request: Request):
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or attempt >= max_attempts:
                 await client.aclose()
-                return Response(content=body_text.encode("utf-8"),
+                return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
             acc2 = nxt[0]
@@ -3010,7 +3079,7 @@ async def chat_completions(request: Request):
                     pass
                 await client.aclose()
                 _release_account_slot(served_account_id)
-                return Response(content=body_text.encode("utf-8"),
+                return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
             _learn_model_unavailable(served_account_id, raw_model)
@@ -3018,7 +3087,7 @@ async def chat_completions(request: Request):
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or len(tried_account_ids) >= max_attempts:
                 await client.aclose()
-                return Response(content=body_text.encode("utf-8"),
+                return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
             acc2 = nxt[0]
