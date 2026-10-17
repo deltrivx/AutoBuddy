@@ -3137,6 +3137,21 @@ COLLAPSE_SCRIPT = r"""
      点官方导航项时要把这些后缀清掉，否则会留在 URL 里造成状态错乱。 */
   var WB_VIEW_HASHES = ["#/wb-overview", "#/wb-daily", "#/accounts"];
 
+  /* 取「视图 hash」：去掉查询串与末尾斜杠，只留 #/xxx 本体。
+     ⚠️ 为什么必须归一化：`window.location.hash` 对
+     `/#/accounts?O=1792200207` 返回的是 `#/accounts?O=1792200207`，
+     与字面量 "#/accounts" 全等比较永远落空。
+     2026-10-17 实测踩坑：带 ?O= 打开每日任务页时 hash 判定失败，
+     页面退回官方 "/" 显示成账号管理，导航高亮也丢了。
+     查询串是页面自己加的缓存破坏参数，与视图状态无关，必须剥掉。 */
+  function wbViewHash() {
+    var h = window.location.hash || "";
+    var q = h.indexOf("?");
+    if (q >= 0) h = h.slice(0, q);
+    if (h.length > 1 && h.charAt(h.length - 1) === "/") h = h.slice(0, -1);
+    return h;
+  }
+
   /* 用 pushState 导航到指定 URL，并派发 popstate 让官方 SPA（React Router）
      响应 —— 实测仅 pushState 不派发事件时 SPA 不会重渲染，
      页面内容停在旧路由上（2026-10-17 实测确认）。 */
@@ -3223,7 +3238,7 @@ COLLAPSE_SCRIPT = r"""
       nav.querySelectorAll("a:not(#" + WB_OVERVIEW_NAV_ID + "):not(#wb-nav-wb-daily)")
         .forEach(function (a) {
         a.addEventListener("click", function () {
-          if (WB_VIEW_HASHES.indexOf(window.location.hash) >= 0) {
+          if (WB_VIEW_HASHES.indexOf(wbViewHash()) >= 0) {
             window.history.replaceState(null, "",
               window.location.pathname + window.location.search);
           }
@@ -3375,7 +3390,7 @@ COLLAPSE_SCRIPT = r"""
   function wbApplyMainView() {
     var main = document.querySelector("main");
     if (!main) return;
-    var hash = window.location.hash;
+    var hash = wbViewHash();
     var ov = document.getElementById("wb-overview-view");
     var daily = document.getElementById("wb-daily-view");
 
@@ -3479,7 +3494,7 @@ COLLAPSE_SCRIPT = r"""
   function wbSyncNavActive() {
     var aside = document.querySelector("aside");
     if (!aside) return;
-    var hash = window.location.hash;
+    var hash = wbViewHash();
     var path = wbPath();
     var links = aside.querySelectorAll("nav a");
     links.forEach(function (a) {
@@ -7304,7 +7319,7 @@ COLLAPSE_SCRIPT = r"""
           /* 与概览同一套逻辑：点别的选项卡时把视图 hash 后缀清掉。
              ⚠️ 不能再写 window.location.hash = "" —— 那会触发一次
              hashchange，把「已经 pushState 过去的官方路由」又冲掉。 */
-          if (WB_VIEW_HASHES.indexOf(window.location.hash) >= 0) {
+          if (WB_VIEW_HASHES.indexOf(wbViewHash()) >= 0) {
             window.history.replaceState(null, "",
               window.location.pathname + window.location.search);
           }

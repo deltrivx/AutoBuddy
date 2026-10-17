@@ -31,6 +31,21 @@
 
 ---
 
+## [v0.9.93] - 2026-10-17
+
+<!-- summary: 修带查询串打开时视图 hash 判定失效（每日任务退回官方页、高亮丢失），改用归一化后的视图 hash -->
+
+### 修复
+
+- **带 `?查询串` 打开时视图判定失效**：`window.location.hash` 对
+  `/#/accounts?O=1792200207` 返回的是 `#/accounts?O=1792200207`，
+  与字面量 `#/accounts` 全等比较永远落空。
+  实测后果：带 `?O=` 打开每日任务页时 hash 判定失败，
+  页面退回官方 `/` 显示成账号管理，导航高亮也一并丢失。
+  新增 `wbViewHash()` 剥掉查询串与末尾斜杠，`wbApplyMainView()`、
+  `wbSyncNavActive()` 及两处 `WB_VIEW_HASHES` 比较全部改用它。
+  查询串是页面自己加的缓存破坏参数，与视图状态无关，必须剥掉。
+
 ## [v0.9.92] - 2026-10-17
 
 <!-- summary: 数据总览改为默认主页（URL 无后缀）、账号管理改走 #/accounts 后缀，新增部署前自动中止任务的脚本，并取消密钥统计里的版本号提示 -->
@@ -4798,7 +4813,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.92...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.93...HEAD
+[v0.9.93]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.92...v0.9.93
 [v0.9.92]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.91...v0.9.92
 [v0.9.91]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.90...v0.9.91
 [v0.9.90]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.89...v0.9.90
