@@ -92,6 +92,7 @@ ns = {
     "List": __import__("typing").List,
     "Dict": __import__("typing").Dict,
     "Any": __import__("typing").Any,
+    "Set": __import__("typing").Set,
     "set": set,
 }
 # main.py 的策略读写已改为转发 model_policy 模块（巡检与手动禁用共用一份实现），

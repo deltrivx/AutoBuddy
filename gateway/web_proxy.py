@@ -10288,11 +10288,14 @@ async def delete_account_proxy(request: Request):
 
 
 @app.get("/api/export-accounts")
-async def export_accounts_proxy():
+async def export_accounts_proxy(request: Request):
     """转发「导出账号备份」。"""
     try:
+        url = GATEWAY_BASE_URL + "/export-accounts"
+        if request.url.query:
+            url += f"?{request.url.query}"
         async with _internal_client(timeout=20.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/export-accounts")
+            r = await client.get(url)
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:

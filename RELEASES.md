@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.3](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.3)
+**当前稳定版：** [v1.0.4](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.4)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.4](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.4) | 2026-10-18 | 模型拉取支持国际版双通道并发与幂等合并，补齐国际版出站路由映射，国际独占模型定向放行，导出账号默认脱敏 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.4.md) |
 | [v1.0.3](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.3) | 2026-10-18 | 版本仅含账号级停用策略的脏数据清理说明与版本号推进，无功能与逻辑变更（代码零改动） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.3.md) |
 | [v1.0.2](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.2) | 2026-10-18 | 修复移动端「账号管理」误跳数据总览（下拉面板丢失导航语义），并根治日报「昨日签到积分」「昨日调用」恒为 0（跨进程缓存失效 + 跨天聚合链抖动，改直连官方接口 + SQLite 精确计数兜底） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.2.md) |
 | [v1.0.1](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.1) | 2026-10-18 | 修复上游 401 英文错误页原样透传（改为中文「登录已过期」），并落地刷新令牌四项防复发改造（单飞锁、失败隔离、批量熔断告警、节奏限制），应对上游 session 批量重置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.1.md) |
@@ -196,7 +197,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.3    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.4    # 锁定版本
 ```
 
 ## 部署产物

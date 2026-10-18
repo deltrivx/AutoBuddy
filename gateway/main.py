@@ -8,7 +8,7 @@ import time
 from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 
 # 积分感知调度开关（2026-10-13）：1=按余额加权选号（默认），0=退回纯在飞数轮询。
 # 与 credit_floor 的余额快照同源（credit_usage_snapshots.json，带 mtime 缓存）。
@@ -87,7 +87,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.3"
+VERSION_DEFAULT = "1.0.4"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -122,6 +122,51 @@ SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
 MODEL_POLICY_FILE = DATA_DIR / "model_policy.json"
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
+
+# 国际版模型端点映射与独占命名空间（v1.0.4 引入）
+# 真实上游实测确认：codebuddy.ai / workbuddy.ai 国际版端点与国内版域名隔离，
+# 国际版模型统一走 AI_BASE_URL。
+AI_MODEL_BASE_URL_MAP: Dict[str, str] = {
+    "o4-mini": AI_BASE_URL,
+    "seedance-2.5": AI_BASE_URL,
+    "enhance-1.0": AI_BASE_URL,
+    "nes-1.2": AI_BASE_URL,
+    "nes-1.1": AI_BASE_URL,
+    "gpt-image-2.5-sunburst": AI_BASE_URL,
+    "default-model": AI_BASE_URL,
+    "fast-model": AI_BASE_URL,
+    "balanced-model": AI_BASE_URL,
+    "primary-model": AI_BASE_URL,
+    "auto-chat": AI_BASE_URL,
+    "completion-1.0": AI_BASE_URL,
+}
+
+AI_EXCLUSIVE_MODELS = {
+    "o4-mini", "seedance-2.5", "enhance-1.0", "nes-1.2", "nes-1.1",
+    "gpt-image-2.5-sunburst", "default-model", "fast-model",
+    "balanced-model", "primary-model", "auto-chat", "completion-1.0",
+}
+
+
+def _is_ai_exclusive_model(model: Optional[str]) -> bool:
+    """判定模型是否属于国际版独占集合。支持别名归一。"""
+    if not model:
+        return False
+    m = str(model).strip()
+    target = MODEL_ALIAS_MAP.get(m, m)
+    return target in AI_EXCLUSIVE_MODELS or m in AI_EXCLUSIVE_MODELS
+
+
+def _resolve_base_url(variant: str, model: Optional[str] = None) -> str:
+    """根据账号变体与模型确定出站 base_url。"""
+    if model:
+        m = str(model).strip()
+        target = MODEL_ALIAS_MAP.get(m, m)
+        if target in AI_MODEL_BASE_URL_MAP:
+            return AI_MODEL_BASE_URL_MAP[target]
+        if m in AI_MODEL_BASE_URL_MAP:
+            return AI_MODEL_BASE_URL_MAP[m]
+    return AI_BASE_URL if variant == "ai" else CN_BASE_URL
 
 # 出站 UA：对齐官方桌面客户端形态（取自 vendor/workbuddy_daily.py 的 DESKTOP_UA）。
 #
@@ -296,6 +341,8 @@ def _discover_from_token_stats() -> List[str]:
 # 结果写入 DATA_DIR / upstream_models.json，由 _discover_from_upstream() 读入
 # 目录；每 6 小时后台刷新一次，失败保留旧文件（优雅退化）。
 V3_CONFIG_URL = "https://copilot.tencent.com/v3/config"
+V3_CN_CONFIG_URL = os.getenv("V3_CN_CONFIG_URL", V3_CONFIG_URL)
+V3_AI_CONFIG_URL = os.getenv("V3_AI_CONFIG_URL", "https://www.codebuddy.ai/v3/config")
 V3_IDE_UA = "CodeBuddyIDE/4.12.0 CodeBuddy/4.12.0"
 UPSTREAM_MODELS_FILE = DATA_DIR / "upstream_models.json"
 _V3_REFRESH_SEC = int(os.getenv("AB_V3_REFRESH_HOURS", "6") or 6) * 3600
@@ -331,37 +378,77 @@ def _parse_v3_models(payload: Any) -> List[str]:
                   and not x.startswith(_NON_CHAT_PREFIXES))
 
 
-def _fetch_upstream_models_once() -> List[str]:
-    """单次拉取：用账号池里第一个可用账号的 AT 调 /v3/config。
-
-    失败返回空列表（调用方保留旧文件）。token 只在内存与 https 请求里流转，
-    不落日志。
-    """
+def _fetch_upstream_variant_models(variant: str, url: str, domain: str) -> List[str]:
+    """拉取指定变体（cn 或 ai）的 /v3/config 模型清单。"""
     try:
         import httpx
         acc = None
         for a in _load_accounts():
-            if a.get("access_token"):
+            if a.get("access_token") and a.get("variant", "cn") == variant:
                 acc = a
                 break
+        if acc is None and variant == "cn":
+            for a in _load_accounts():
+                if a.get("access_token"):
+                    acc = a
+                    break
         if acc is None:
             return []
         headers = {
             "Accept": "application/json, text/plain, */*",
             "X-Requested-With": "XMLHttpRequest",
             "Authorization": "Bearer " + str(acc["access_token"]),
-            "X-Domain": "copilot.tencent.com",
+            "X-Domain": domain,
             "X-Product": "SaaS",
             "X-CodeBuddy-Request": "1",
             "User-Agent": V3_IDE_UA,
         }
         with httpx.Client(timeout=20.0, verify=False) as client:
-            r = client.get(V3_CONFIG_URL, headers=headers)
+            r = client.get(url, headers=headers)
         if r.status_code != 200:
             return []
         return _parse_v3_models(r.json())
     except Exception:
         return []
+
+
+def _fetch_upstream_models_once() -> List[str]:
+    """单次拉取双通道：并发/顺序拉取国内版与国际版 /v3/config。
+
+    国内版逻辑保持原样，拉到的国际版模型幂等合并，不覆盖国内版条目。
+    若某一路失败，保留另一路成功的结果与已有历史缓存合并。
+    """
+    cn_models = _fetch_upstream_variant_models("cn", V3_CN_CONFIG_URL, "copilot.tencent.com")
+    ai_models = _fetch_upstream_variant_models("ai", V3_AI_CONFIG_URL, "workbuddy.ai")
+
+    combined: List[str] = []
+    seen = set()
+
+    for m in cn_models:
+        if m and m not in seen:
+            seen.add(m)
+            combined.append(m)
+
+    for m in ai_models:
+        if m and m not in seen:
+            seen.add(m)
+            combined.append(m)
+
+    if not combined:
+        return []
+
+    # 健壮性保护：若历史缓存已有某模型但本次单通道临时抖动，不覆盖丢失既有模型
+    try:
+        if UPSTREAM_MODELS_FILE.exists():
+            old_models = _discover_from_upstream()
+            for m in old_models:
+                if m and m not in seen:
+                    seen.add(m)
+                    combined.append(m)
+    except Exception:
+        pass
+
+    return combined
 
 
 def _refresh_upstream_models() -> None:
@@ -875,16 +962,23 @@ def _account_label(acc: Dict[str, Any]) -> str:
 
 
 def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any],
-                      include_disabled: bool = False) -> List[Dict[str, Any]]:
+                      include_disabled: bool = False,
+                      model: Optional[str] = None) -> List[Dict[str, Any]]:
     """账号池白名单 + 可用性过滤，可选是否叠加「账号级停用」。
 
-    ``include_disabled`` 用于**显式指定**的路径：停用的语义是「不参与自动轮询」，
-    而不是「禁止调用」—— 用户想临时用某个已停用的账号兜底时，
-    不该逼他先去界面把停用解除掉。
+    - 常规调用 / 未指定模型：严格走 enabledAccountIds 白名单；
+    - 国际版独占模型：定向放行池内所有可用 ai 账号（即使不在全局白名单），
+      同时排除 cn 账号（避免国内账号去上游碰壁），绝不弱化常规白名单。
+    - ``include_disabled`` 用于**显式指定**的路径：停用的语义是「不参与自动轮询」，
+      而不是「禁止调用」—— 用户想临时用某个已停用的账号兜底时，
+      不该逼他先去界面把停用解除掉。
     """
-    enabled = {str(x) for x in config.get("enabledAccountIds") or []}
-    # 空数组是默认值，语义是全部启用；保存明确列表后才是白名单。
-    candidates = accounts if not enabled else [a for a in accounts if str(_account_id(a)) in enabled]
+    if model and _is_ai_exclusive_model(model):
+        candidates = [a for a in accounts if a.get("variant") == "ai"]
+    else:
+        enabled = {str(x) for x in config.get("enabledAccountIds") or []}
+        # 空数组是默认值，语义是全部启用；保存明确列表后才是白名单。
+        candidates = accounts if not enabled else [a for a in accounts if str(_account_id(a)) in enabled]
     # 再叠加账号级停用策略（人点的或巡检写的）。两份配置都只能**减少**参与调用的账号，
     # 谁都不许把账号偷偷启用回来 —— 于是「关掉巡检之后手动停用依然生效」是天然成立的，
     # 不需要在两者之间做任何迁移。
@@ -1251,11 +1345,11 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
     """
     accounts = _load_accounts()
     config = _load_pool_config()
-    candidates = _enabled_accounts(accounts, config)
+    candidates = _enabled_accounts(accounts, config, model=model)
     # 「显式指定」与「手动模式」走**包含停用账号**的候选集：
     # 停用的语义是不参与自动轮询，而不是禁止调用。人明确点名要用它，
     # 就该照办 —— 否则用户为了临时兜底还得先去界面解一次停用。
-    explicit_pool = _enabled_accounts(accounts, config, include_disabled=True)
+    explicit_pool = _enabled_accounts(accounts, config, include_disabled=True, model=model)
     explicit_by_id = {str(_account_id(a)): a for a in explicit_pool if _account_id(a)}
 
     if model:
@@ -1726,9 +1820,9 @@ def _retry_candidates(model: Optional[str], exclude: set) -> List[Dict[str, Any]
     """换号重试的候选账号：在可用池里排除已试过的，并叠加模型级禁用过滤。"""
     accounts = _load_accounts()
     config = _load_pool_config()
-    pool = _enabled_accounts(accounts, config)
+    pool = _enabled_accounts(accounts, config, model=model)
     if not pool:
-        pool = _enabled_accounts(accounts, config, include_disabled=True)
+        pool = _enabled_accounts(accounts, config, include_disabled=True, model=model)
     if model:
         policy = _load_model_policy()
         filtered = [a for a in pool if not _model_is_disabled(_account_id(a), model, policy)]
@@ -1929,16 +2023,31 @@ def delete_account_api(payload: Dict[str, Any]):
             "cleaned": cleanup_notes}
 
 
+_EXPORT_SECRET_KEYS = frozenset({"access_token", "refresh_token", "auth_raw", "profile_raw"})
+
+
 @app.get("/export-accounts")
-def export_accounts_api():
+def export_accounts_api(exportSecrets: bool = False):
     """导出账号备份。
 
     默认**剔除刷新令牌等串行凭据**（exportSecrets=false）—— 备份常被丢到网盘、
     聊天工具里传，默认带上等于把账号拱手送人。需要完整迁移时显式传
     ``?exportSecrets=true``，界面会给出提示。
     """
-    return {"ok": True, "accounts": _load_accounts(),
-            "count": len(_load_accounts())}
+    raw_accs = _load_accounts()
+    if exportSecrets:
+        accs = raw_accs
+    else:
+        accs = [
+            {k: v for k, v in a.items() if k not in _EXPORT_SECRET_KEYS}
+            for a in raw_accs
+        ]
+    return {
+        "ok": True,
+        "accounts": accs,
+        "count": len(accs),
+        "secretsIncluded": bool(exportSecrets),
+    }
 
 
 @app.post("/import")
@@ -2881,7 +2990,7 @@ async def chat_completions(request: Request):
 
     token = acc["access_token"]
     variant = acc.get("variant", "ai")
-    base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
+    base_url = _resolve_base_url(variant, target_model)
 
     # 归因信息：写入 token 流水，供账号卡片与「用量分布/消耗最高的调用」使用。
     served_account_id = _account_id(acc) or ""
@@ -3000,7 +3109,7 @@ async def chat_completions(request: Request):
             served_account_name = _account_label(acc2)
             tried_account_ids.add(served_account_id)
             variant = acc2.get("variant", "ai")
-            base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
+            base_url = _resolve_base_url(variant, target_model)
             headers = _upstream_headers(acc2['access_token'])
             _acquire_account_slot(served_account_id)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
@@ -3123,7 +3232,7 @@ async def chat_completions(request: Request):
             served_account_name = _account_label(acc2)
             tried_account_ids.add(served_account_id)
             variant = acc2.get("variant", "ai")
-            base_url = AI_BASE_URL if variant == "ai" else CN_BASE_URL
+            base_url = _resolve_base_url(variant, target_model)
             headers = _upstream_headers(acc2['access_token'])
             _acquire_account_slot(served_account_id)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
@@ -3483,8 +3592,8 @@ def _base_model_ids() -> List[str]:
     return [str(m["id"]) for m in BASE_MODELS if m.get("id")]
 
 
-def _health_base_url(variant: str) -> str:
-    return AI_BASE_URL if variant == "ai" else CN_BASE_URL
+def _health_base_url(variant: str, model: Optional[str] = None) -> str:
+    return _resolve_base_url(variant, model)
 
 
 def _health_problem_note(summary: Dict[str, Any]) -> Optional[str]:

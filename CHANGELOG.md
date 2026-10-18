@@ -31,6 +31,26 @@
 
 ---
 
+## [v1.0.4] - 2026-10-18
+
+<!-- summary: 模型拉取支持国际版双通道并发与幂等合并，补齐国际版出站路由映射，国际独占模型定向放行，导出账号默认脱敏 -->
+
+### 新增
+
+- **模型拉取国际版双通道并发**：网关后台定期探测模型时，除国内版端点外，并发请求国际版配置端点（`https://www.codebuddy.ai/v3/config`），自动合并国际版模型并幂等写入 `upstream_models.json`。
+- **国际版模型路由映射**：出站路由字典 `AI_MODEL_BASE_URL_MAP` 补齐国际版独占模型（`default-model`、`fast-model`、`balanced-model`、`primary-model`、`o4-mini`、`seedance-2.5`、`enhance-1.0`、`nes-1.2`、`nes-1.1`、`gpt-image-2.5-sunburst` 等），确保出站精准路由。
+- **国际版独占模型定向放行**：当客户端请求国际版独占模型时，自动定向放行账号池中全部可用的国际版账号（`variant == "ai"`），无需依赖全局白名单，且严格排除国内账号与被账号策略停用的账号；常规模型调用继续严格遵循白名单限制。
+
+### 安全
+
+- **`/export-accounts` 默认脱敏**：账号备份导出接口默认剔除 `access_token`、`refresh_token`、`auth_raw`、`profile_raw` 等敏感串行凭据，避免备份文件外泄风险；完整导出需显式传递 `?exportSecrets=true`，前端代理 `web_proxy.py` 同步支持 query 参数透传。
+
+### 变更
+
+- 版本号推进至 `1.0.4`。
+
+---
+
 ## [v1.0.3] - 2026-10-18
 
 <!-- summary: 版本仅含账号级停用策略的脏数据清理说明与版本号推进，无功能与逻辑变更（代码零改动） -->
@@ -5063,7 +5083,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.3...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.4...HEAD
+[v1.0.4]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.3...v1.0.4
 [v1.0.3]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.2...v1.0.3
 [v1.0.2]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.1...v1.0.2
 [v1.0.1]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.0...v1.0.1
