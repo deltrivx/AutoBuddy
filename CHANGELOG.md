@@ -31,6 +31,34 @@
 
 ---
 
+## [v1.0.3] - 2026-10-18
+
+<!-- summary: 版本仅含账号级停用策略的脏数据清理说明与版本号推进，无功能与逻辑变更（代码零改动） -->
+
+### 修复
+
+- **账号级停用策略里的池外残留条目（运维侧数据清理）**：`account_policy.json`
+  里积累了 7 条 `auto` 来源的停用记录，其账号 id 早已不在账号池内
+  （`1a3478dc`、`e983e932`、`bcfa0951`、`e642fc75`、`617f9c0f`、`8e83e261`、
+  `3db04d0e`）。这些条目不影响轮询（白名单非空时池外账号本就不参与），
+  但会让 `/account-pool/status` 的 `accountDisabled` 计数虚高，界面上的
+  「已停用」数量与实际不符。已清理，仅保留 `a75e21b0`（`manual`，
+  人工停用属明确决定）。清理前文件已备份。
+
+### 变更
+
+- 版本号推进至 `1.0.3`。
+
+### 说明
+
+- **本版代码零改动**，仅为版本号与变更记录推进；镜像内容与 `1.0.2` 等价。
+  账号策略的清理是运行数据的运维动作，不改变任何代码路径。
+- 会话粘性的两个参数**早已可配置**，无需发版即可调整：`AB_STICKY_TTL`
+  （默认 `1800`，见 `gateway/session_sticky.py`）与 `AB_STICKY_QUOTA_FACTOR`
+  （默认 **`1.5`**，见 `gateway/main.py`）。此前文档中曾把后者误记为 `2.0`，
+  以代码为准是 `1.5`。注意 `_test_sched_decay_retryafter.py` 对这两个默认值
+  有硬编码断言，改动默认值需同步更新测试。
+
 ## [v1.0.2] - 2026-10-18
 
 <!-- summary: 修复移动端「账号管理」误跳数据总览（下拉面板丢失导航语义），并根治日报「昨日签到积分」「昨日调用」恒为 0（跨进程缓存失效 + 跨天聚合链抖动，改直连官方接口 + SQLite 精确计数兜底） -->
@@ -5035,7 +5063,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.3...HEAD
+[v1.0.3]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.2...v1.0.3
 [v1.0.2]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.1...v1.0.2
 [v1.0.1]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.0...v1.0.1
 [v1.0.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.9.99...v1.0.0
