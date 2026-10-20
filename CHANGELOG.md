@@ -31,6 +31,34 @@
 
 ---
 
+## [v1.0.9] - 2026-10-21
+
+<!-- summary: 账号池白名单彻底收紧 + 负载均衡平摊 + 每日任务安全分级与防风控加固 + 国际版每日活跃接入 + 全量账号独立硬件指纹 -->
+
+### 安全
+
+- **白名单彻底收紧（杜绝穿透）**：国际独占模型（`_is_ai_exclusive_model`）此前会从**全池**挑选 `ai` 账号定向放行，绕开 `enabledAccountIds` 白名单——白名单里没有 `ai` 账号时，请求仍会被派给白名单外的国际账号。现候选集先在白名单内生成，独占模型只在白名单候选集中收窄为 `ai`；白名单无 `ai` 账号时候选集为空，不再越权放行。
+- **每日任务安全分级与独立开关**：任务目录 `TASK_CATALOG` 划分 `Normal` / `Medium` / `HighRisk` 三档，配置新增 `disabled_tasks` 持久化列表，提供 `POST /api/wb-daily/run-task/{task_key}` 单任务手动触发端点；前端支持按档位展示、逐任务复选开关、手动单次执行。
+- **防风控加固**：`api_retry` 支持 HTTP 429 退避（解析 `Retry-After`，配合指数退避与随机 Jitter）；`t_accept_all` 逐个重试注入 1.5~3.5s 防抖退避，阻断恶性重试放大；`t_compensation` 清理已下线的 `claim-compensation` 接口并安全跳过（官方已报 400 下线，不再发无谓请求）；剔除脱机假桌面对话上报（`RichMeow_Chat` 降级事件）。
+
+### 新增
+
+- **账号管理搜索过滤框**：账号卡片上方、OAuth 扫码添加下方、四个功能按钮前方注入即时搜索框（匹配名称 / 手机号 / ID），输入即筛，带 `命中数 / 总数` 计数；找不到工具栏时兜底插在卡片容器前， DOM 异常时安静退出不拖垮设置页。
+- **大并发 / 超大 Token 负载平摊调度**：选号引入在飞 Token 跟踪（`inflight_tokens`）与近 120s 滑动窗口（`recent_tokens`），按 8000 Token 分档桶参与排序；粘性会话在「账号已有在飞请求」或「本请求 ≥ 4000 Token」时强制打散到全池空闲账号，杜绝单号被巨型 Prompt 或连续并发压爆。
+- **国际版每日活跃分流**：新增 `gateway/vendor/workbuddy_intl_daily.py` 与 `workbuddy_intl_login.py`，`wb_daily.py` 增加 `build_intl_account_store`，按 `variant == "ai"` 分流执行国内版（`cn`）与国际版活跃并聚合日志。
+- **全量账号独立硬件指纹**：新增 `gateway/fingerprint.py`，基于 RFC 4122 标准 UUIDv5 与稳定 MAC 为每个账号生成独立虚拟画像（machineId / 平台配置 / 真实 UA），持久化到 `account_fingerprints.json`；`workbuddy_daily.py` 在桌面与 Web 上报中动态取用各账号独立指纹，不再共用一个公共桌面指纹。
+
+### 变更
+
+- **账号卡片双法则排序**：法则一正常账号优先、异常沉底；法则二同状态内按实时积分降序。`/api/account-pool` 补充实时 `credits` / `balance` 字段供排序使用。
+
+### 修复
+
+- **异常卡片模型区灰化**：需重登卡片的账号池控制条与模型标签区灰化禁用（`.wb-relogin-disabled`，`filter: grayscale(1)` + `pointer-events: none`），恢复正常后自动还原。
+- **移动端账号卡片截断**：调整 `[class*="min-[420px]:flex"]` 等媒体查询样式，异常卡片提示块在窄屏完整显示不被裁切。
+- **搜索框注入不再令设置页白屏**：`wbInjectAccountSearch` 在 `listParent.parentElement` 为空或子节点缺失时直接抛异常，导致 `run()` 中断、后续所有面板（关于 / API 接入 / 巡检 / 助手 / 通知）一并消失。现两级兜底 + 找不到输入框安静退出。
+- **测试断言随实现演进校准**（仅测试文件，未改生产代码）：`_test_credit_weight_sched.py` 原断言 `ordered.sort(key=lambda a: int(inflight.get(...))` 出现 ≥2 次，实际正常路径已改为 `_concurrency_token_key` 多级排序、仅异常兜底保留旧写法；`_test_sticky_yield.py` 原正则写死 `if _sticky_should_yield(...)`，实际条件已扩展为 `bound_busy or is_large_token or _sticky_should_yield(...)`；`_test_v105_ui_fix.py` 原断言 vendor 脚本含 `/billing/meter/compensation-status` 探测与领取后回查，该接口已官方下线，现改为断言「已下线接口被安全跳过、不再发起请求」。
+
 ## [v1.0.8] - 2026-10-20
 
 <!-- summary: 安全修复——WebUI 全部 54 个管理端点补登录鉴权（此前 /api/import 等写操作未登录可直接调用，线上曾被写入注入测试账号） -->
@@ -5133,7 +5161,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...HEAD
+[v1.0.9]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...v1.0.9
 [v1.0.8]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...v1.0.8
 [v1.0.7]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.6...v1.0.7
 [v1.0.6]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.5...v1.0.6

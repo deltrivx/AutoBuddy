@@ -87,7 +87,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.8"
+VERSION_DEFAULT = "1.0.9"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -970,19 +970,19 @@ def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any],
                       model: Optional[str] = None) -> List[Dict[str, Any]]:
     """账号池白名单 + 可用性过滤，可选是否叠加「账号级停用」。
 
-    - 常规调用 / 未指定模型：严格走 enabledAccountIds 白名单；
-    - 国际版独占模型：定向放行池内所有可用 ai 账号（即使不在全局白名单），
-      同时排除 cn 账号（避免国内账号去上游碰壁），绝不弱化常规白名单。
+    - 所有调用严格受 enabledAccountIds 白名单约束：任何不在白名单内的账号（无论是国内还是国际）均不参与调用；
+    - 国际版独占模型：在白名单过滤的基础上，只保留可用 ai 账号（排除 cn 账号，避免国内账号去上游碰壁）；
     - ``include_disabled`` 用于**显式指定**的路径：停用的语义是「不参与自动轮询」，
       而不是「禁止调用」—— 用户想临时用某个已停用的账号兜底时，
       不该逼他先去界面把停用解除掉。
     """
+    enabled = {str(x) for x in config.get("enabledAccountIds") or []}
+    # 空数组是默认值，语义是全部启用；保存明确列表后才是白名单。
+    candidates = accounts if not enabled else [a for a in accounts if str(_account_id(a)) in enabled]
+
+    # 若是国际版独占模型，进一步收窄为白名单内的 ai 账号
     if model and _is_ai_exclusive_model(model):
-        candidates = [a for a in accounts if a.get("variant") == "ai"]
-    else:
-        enabled = {str(x) for x in config.get("enabledAccountIds") or []}
-        # 空数组是默认值，语义是全部启用；保存明确列表后才是白名单。
-        candidates = accounts if not enabled else [a for a in accounts if str(_account_id(a)) in enabled]
+        candidates = [a for a in candidates if a.get("variant") == "ai"]
     # 再叠加账号级停用策略（人点的或巡检写的）。两份配置都只能**减少**参与调用的账号，
     # 谁都不许把账号偷偷启用回来 —— 于是「关掉巡检之后手动停用依然生效」是天然成立的，
     # 不需要在两者之间做任何迁移。
@@ -1050,26 +1050,59 @@ _ACCOUNT_POOL_RUNTIME: Dict[str, Any] = {
 }
 
 
-def _acquire_account_slot(account_id: str) -> None:
-    """记一次在飞请求（进入上游调用前调用）。"""
+def _acquire_account_slot(account_id: str, estimated_tokens: int = 0) -> None:
+    """记一次在飞请求与预估 Token 占用（进入上游调用前调用）。"""
     if not account_id:
         return
+    aid = str(account_id)
     with _SELECTION_LOCK:
         inflight = _ACCOUNT_POOL_RUNTIME.setdefault("inflight", {})
-        inflight[str(account_id)] = int(inflight.get(str(account_id), 0)) + 1
+        inflight[aid] = int(inflight.get(aid, 0)) + 1
+
+        inf_tokens = _ACCOUNT_POOL_RUNTIME.setdefault("inflight_tokens", {})
+        inf_tokens[aid] = int(inf_tokens.get(aid, 0)) + max(0, int(estimated_tokens or 0))
+
+        now = time.time()
+        rec_tokens = _ACCOUNT_POOL_RUNTIME.setdefault("recent_tokens", {})
+        q = rec_tokens.setdefault(aid, [])
+        q.append((now, max(0, int(estimated_tokens or 0))))
+
+        last_pick = _ACCOUNT_POOL_RUNTIME.setdefault("last_picked_time", {})
+        last_pick[aid] = now
 
 
-def _release_account_slot(account_id: str) -> None:
-    """释放一次在飞请求（上游调用结束，无论成败都要调）。"""
+def _release_account_slot(account_id: str, estimated_tokens: int = 0) -> None:
+    """释放一次在飞请求与预估 Token 占用（上游调用结束，无论成败都要调）。"""
     if not account_id:
         return
+    aid = str(account_id)
     with _SELECTION_LOCK:
         inflight = _ACCOUNT_POOL_RUNTIME.setdefault("inflight", {})
-        cur = int(inflight.get(str(account_id), 0))
+        cur = int(inflight.get(aid, 0))
         if cur <= 1:
-            inflight.pop(str(account_id), None)
+            inflight.pop(aid, None)
         else:
-            inflight[str(account_id)] = cur - 1
+            inflight[aid] = cur - 1
+
+        inf_tokens = _ACCOUNT_POOL_RUNTIME.setdefault("inflight_tokens", {})
+        cur_tok = int(inf_tokens.get(aid, 0))
+        delta = max(0, int(estimated_tokens or 0))
+        if cur_tok <= delta:
+            inf_tokens.pop(aid, None)
+        else:
+            inf_tokens[aid] = cur_tok - delta
+
+
+def _get_recent_tokens_locked(aid: str, now: float, window: float = 120.0) -> int:
+    """获取指定账号在滑动窗口（默认 120 秒）内累计承接的 Token 数。"""
+    rec_tokens = _ACCOUNT_POOL_RUNTIME.setdefault("recent_tokens", {})
+    q = rec_tokens.get(aid)
+    if not q:
+        return 0
+    cutoff = now - window
+    while q and q[0][0] < cutoff:
+        q.pop(0)
+    return sum(item[1] for item in q)
 
 
 def inflight_snapshot() -> Dict[str, int]:
@@ -1339,7 +1372,8 @@ def _sticky_should_yield(bound_id: Optional[str], candidates: List[Dict[str, Any
 
 
 def select_account(requested_id: Optional[str] = None, model: Optional[str] = None,
-                   session_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                   session_key: Optional[str] = None,
+                   estimated_tokens: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """为每一个 API 请求选择账号。
 
     - X-AutoBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
@@ -1441,18 +1475,14 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
                 by_bound = {str(_account_id(a)): a for a in candidates if _account_id(a)}
                 acc = by_bound.get(str(bound))
                 if acc is not None:
-                    # 粘性让位于积分（2026-10-13 实测：97% 走粘性，配额被架空）：
-                    # 余额掉队 **或** 配额比值显著劣于最优候选时解绑，
-                    # 让本轮落入下面的配额排序。
-                    if _sticky_should_yield(str(bound), candidates):
-                        # 解绑后落进配额排序；记账由配额那行统一负责，
-                        # 不在这里记，避免一次选号出现两条流水。
+                    # 需求 4 防风控加固：若该请求为超大 Token（>= 4000）或该账号当前已有在飞请求（并发挤占），
+                    # 强制解除粘性打散至全池空闲账号，杜绝单号被巨型 Prompt 或连续并发压爆。
+                    bound_busy = int((_ACCOUNT_POOL_RUNTIME.get("inflight") or {}).get(str(bound), 0)) > 0
+                    is_large_token = bool(estimated_tokens and estimated_tokens >= 4000)
+                    if bound_busy or is_large_token or _sticky_should_yield(str(bound), candidates):
                         session_sticky.unbind(session_key)
                     else:
                         # sticky 命中也记入配额账本（2026-10-14）：
-                        # 此前 sticky **不记账**，导致吃到大量粘性流量的账号
-                        # 比值反而偏低、更容易被 auto 选中，形成正反馈；
-                        # 且 auto 只服务 4% 流量，样本严重不足。
                         _record_credit_pick(str(bound))
                         return _remember_selection(acc, "sticky")
         except Exception:
@@ -1466,38 +1496,16 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
     if not candidates:
         return None
     # 并发优先：选「在飞请求数最少」的账号。
-    #
-    # 此前是固定顺序的单指针轮询（next_index 递增），在**串行**请求下看起来没问题，
-    # 但并发场景下同一个账号可能在别的请求还没返回时被反复命中——尤其是
-    # 「候选集里只有少数账号支持某模型」时，慢请求会把同一个账号拖成瓶颈。
-    # 改成按在飞数排序后：同分时沿用轮询起点保证均匀，整体上把并发真正摊开。
     with _SELECTION_LOCK:
         inflight = _ACCOUNT_POOL_RUNTIME.setdefault("inflight", {})
+        inflight_tokens = _ACCOUNT_POOL_RUNTIME.setdefault("inflight_tokens", {})
+        last_picked = _ACCOUNT_POOL_RUNTIME.setdefault("last_picked_time", {})
         base = int(_ACCOUNT_POOL_RUNTIME.get("next_index", 0))
         n = len(candidates)
         # 以固定起点做一次环形遍历，保证同分账号之间仍然是轮转的
         ordered = [candidates[(base + i) % n] for i in range(n)]
-        # 积分感知调度（2026-10-13 用户需求）：**积分权重为主排序键**。
-        #
-        # 版本演进（实测数据说话）：
-        #   - 初版：纯 inflight 最少连接，完全不感知余额；
-        #   - v0.9.44：inflight / weight，实测相关性仅 0.077 —— 因为 inflight 是
-        #     主导项、权重只在同 inflight 时起作用，且 session_sticky 在更早处
-        #     已 return，多数请求走不到这里；
-        #   - 本版：weight 降序为主键、inflight 升序为次级键。同分才看在飞数，
-        #     「积分多的多承接」才真正成为主语义。
-        #
-        # 语义：
-        #   - weight ∝ 余额（相对池均值归一，下限 0.05 防除零）；
-        #   - 积分下降 → weight 自动衰减 → 让位给积分更高的账号，无需人工干预；
-        #   - 未知余额（快照缺失/新账号）→ weight = 1（均值），中性不惩罚 ——
-        #     否则新账号永远逆底，重蹚「新账号一次都没被调用」的老坑；
-        #   - 并发兜底：同 weight 时选在飞数最少的，避免把高余额单号打爆。
-        #
-        # 例：账号 A 余额 3000、账号 B 余额 1000 → 稳态下 A 承接约 3 倍请求；
-        # A 被打到只剩 500 时（B 仍 1000）→ B 反超成为首选。
-        #
-        # AB_CREDIT_WEIGHT=0 可关闭（退回纯 inflight 轮询）。
+        _pick_now = time.time()
+
         try:
             _bal = {}
             if CREDIT_WEIGHT_SCHED:
@@ -1505,33 +1513,43 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
                     _v = credit_floor.balance_of(_account_id(a))
                     if isinstance(_v, (int, float)) and _v > 0:
                         _bal[str(_account_id(a))] = float(_v)
-            if _bal:
-                _avg = sum(_bal.values()) / len(_bal)
-                def _weight(a):
-                    aid = str(_account_id(a))
-                    return max(_bal.get(aid, _avg) / _avg, 0.05)
-                # 配额制（2026-10-13 二次修正）：纯权重排序在实测/模拟里会让
-                # 高余额号吃满 100%（封顶也救不了 —— 主键相同时 inflight 都在
-                # 0~1，稳定排序让同一个号一直赢）。改用「已选次数 / 配额比例」
-                # 最小者优先：配额 ∝ 权重，天然按余额比例分摊，且**自纠**——
-                # 某号选多了它的比值就升高、自动让位。
-                #   例：A 余额 3000、B 1000 → 配额 3:1 → 稳态 A≈75%、B≈25%。
-                _picked = _ACCOUNT_POOL_RUNTIME.setdefault("credit_picks", {})
-                _pick_now = time.time()
-                def _quota_key(a):
-                    aid = str(_account_id(a))
+            _avg = (sum(_bal.values()) / len(_bal)) if _bal else 1.0
+
+            def _weight(a):
+                aid = str(_account_id(a))
+                return max(_bal.get(aid, _avg) / _avg, 0.05) if _bal else 1.0
+
+            _picked = _ACCOUNT_POOL_RUNTIME.setdefault("credit_picks", {})
+
+            # 需求 4 算法优化：大并发与超大 Token 平摊负载均衡
+            # 1. 在飞并发连接数 inflight：优先空闲账号（0 在飞坚决优先于 >=1 在飞），
+            #    大并发请求绝对均摊到全量可用账号，杜绝单号承载多个并发连接；
+            # 2. Token 负载（在飞 Token + 近 120s 窗口 Token）：
+            #    将大 Token 负载折算成离散桶（每 8000 Token 为一档），
+            #    遇到 15 万巨型 Prompt 时自动分流至负荷最低的账号，避免 TPM 冲顶风控；
+            # 3. 配额比例比值：在同并发、同 Token 负荷区间内，按积分余额比例平滑分摊；
+            # 4. 调度时间防抖：同一秒刚被调度的账号略微退后，确保高频脉冲下平滑轮转。
+            def _concurrency_token_key(a):
+                aid = str(_account_id(a))
+                inf = int(inflight.get(aid, 0))
+                inf_tok = int(inflight_tokens.get(aid, 0))
+                rec_tok = _get_recent_tokens_locked(aid, _pick_now, window=120.0)
+                tot_tok = inf_tok + rec_tok
+                tok_bucket = tot_tok // 8000
+                if _bal:
                     quota = min(_weight(a), _WEIGHT_CAP)
-                    return (_credit_pick_effective_locked(aid, _pick_now) / quota,
-                            int(inflight.get(aid, 0)))
-                ordered.sort(key=_quota_key)
-                # 记账：选中即累加（比值随之升高，下次让位 —— 自纠的核心）。
-                # 与 _quota_key 同在调度锁内，避免并发下漏计导致比例失真。
-                # 带时间衰减（2026-10-14）：只保留近半个衰减周期的记忆，
-                # 防止早期抢占永久压制后来者；sticky 命中也走同一账本。
+                    ratio = _credit_pick_effective_locked(aid, _pick_now) / quota
+                else:
+                    ratio = 0.0
+                last_t = float(last_picked.get(aid, 0.0))
+                cooldown_penalty = 1 if (_pick_now - last_t < 2.5) else 0
+                return (inf, tok_bucket, cooldown_penalty, ratio)
+
+            ordered.sort(key=_concurrency_token_key)
+
+            if _bal:
                 _record_credit_pick_locked(str(_account_id(ordered[0])), _pick_now)
                 _prune_credit_picks_locked(_pick_now, n)
-            else:
-                ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
         except Exception:
             ordered.sort(key=lambda a: int(inflight.get(str(_account_id(a)), 0)))
         acc = ordered[0]
@@ -3021,8 +3039,16 @@ async def chat_completions(request: Request):
     except Exception:
         session_key = None
 
+    prompt_text = ""
+    if "messages" in body and isinstance(body["messages"], list):
+        body["messages"] = normalize_messages_for_upstream(body["messages"])
+        prompt_text = " ".join([str(m.get("content", "")) for m in body["messages"]])
+
+    input_tokens = estimate_tokens(prompt_text)
+
     acc = select_account(requested_account_id, model=raw_model,
-                         session_key=session_key)
+                         session_key=session_key,
+                         estimated_tokens=input_tokens)
     if not acc or not acc.get("access_token"):
         if requested_account_id:
             raise HTTPException(status_code=409, detail="Requested WorkBuddy account is disabled, expired, or unavailable.")
@@ -3036,10 +3062,10 @@ async def chat_completions(request: Request):
     served_account_id = _account_id(acc) or ""
     served_account_name = _account_label(acc)
 
-    # 标记一次在飞请求：让并发请求优先落到「当前最闲」的账号（select_account 据此排序），
-    # 而不是所有并发都压在同一个账号上。下游无论是流式还是非流式都必须释放，
+    # 标记一次在飞请求与 Token 负载：让并发请求与大 Token 优先落到「当前最闲」的账号（select_account 据此排序），
+    # 而不是所有并发或巨型 Prompt 都压在同一个账号上。下游无论是流式还是非流式都必须释放，
     # 所以统一挂在 finally / 生成器收尾两处。
-    _acquire_account_slot(served_account_id)
+    _acquire_account_slot(served_account_id, input_tokens)
 
     # 请求级指标：只记元数据（模型/账号/是否流式），不记提示词与凭证。
     rid = reqlog.new_request_id()
@@ -3049,13 +3075,6 @@ async def chat_completions(request: Request):
     requested_stream = body.get("stream", False)
 
     body["model"] = target_model
-
-    prompt_text = ""
-    if "messages" in body and isinstance(body["messages"], list):
-        body["messages"] = normalize_messages_for_upstream(body["messages"])
-        prompt_text = " ".join([str(m.get("content", "")) for m in body["messages"]])
-
-    input_tokens = estimate_tokens(prompt_text)
 
     body["stream"] = True
 
@@ -3085,7 +3104,7 @@ async def chat_completions(request: Request):
             lprint("upstream", "上游请求失败(%s): %s"
                    % (type(_te).__name__, str(_te)[:120]))
             await client.aclose()
-            _release_account_slot(served_account_id)
+            _release_account_slot(served_account_id, input_tokens)
             # 超时也算一次失败：让该账号进冷却，后续自动轮询跳过它
             try:
                 _note_upstream_result(served_account_id, 504,
@@ -3131,13 +3150,13 @@ async def chat_completions(request: Request):
                 except Exception:
                     pass
                 await client.aclose()
-                _release_account_slot(served_account_id)
+                _release_account_slot(served_account_id, input_tokens)
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
             # 学习 + 找下一个候选
             _learn_model_unavailable(served_account_id, raw_model)
-            _release_account_slot(served_account_id)
+            _release_account_slot(served_account_id, input_tokens)
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or attempt >= max_attempts:
                 await client.aclose()
@@ -3151,7 +3170,7 @@ async def chat_completions(request: Request):
             variant = acc2.get("variant", "ai")
             base_url = _resolve_base_url(variant, target_model)
             headers = _upstream_headers(acc2['access_token'])
-            _acquire_account_slot(served_account_id)
+            _acquire_account_slot(served_account_id, input_tokens)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)
             lprint("retry", f"换号重试第 {attempt} 次 -> {served_account_name}")
@@ -3171,7 +3190,7 @@ async def chat_completions(request: Request):
             finally:
                 await res.aclose()
                 await client.aclose()
-                _release_account_slot(served_account_id)
+                _release_account_slot(served_account_id, input_tokens)
                 duration = time.time() - start_time
                 usage = scanner.usage
                 # 拿不到 usage 只有一种情况：客户端中途断开、末帧没到。
@@ -3255,12 +3274,12 @@ async def chat_completions(request: Request):
                 except Exception:
                     pass
                 await client.aclose()
-                _release_account_slot(served_account_id)
+                _release_account_slot(served_account_id, input_tokens)
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
             _learn_model_unavailable(served_account_id, raw_model)
-            _release_account_slot(served_account_id)
+            _release_account_slot(served_account_id, input_tokens)
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or len(tried_account_ids) >= max_attempts:
                 await client.aclose()
@@ -3274,7 +3293,7 @@ async def chat_completions(request: Request):
             variant = acc2.get("variant", "ai")
             base_url = _resolve_base_url(variant, target_model)
             headers = _upstream_headers(acc2['access_token'])
-            _acquire_account_slot(served_account_id)
+            _acquire_account_slot(served_account_id, input_tokens)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)
             lprint("retry", f"非流式换号重试 -> {served_account_name}")
@@ -3318,7 +3337,7 @@ async def chat_completions(request: Request):
         finally:
             await res.aclose()
             await client.aclose()
-            _release_account_slot(served_account_id)
+            _release_account_slot(served_account_id, input_tokens)
 
         duration = time.time() - start_time
         record_token_usage(

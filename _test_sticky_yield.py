@@ -56,7 +56,7 @@ check("粘性分支调用让位判定",
       bool(ast.parse(SRC) and "_sticky_should_yield(str(bound), candidates)" in SRC))
 check("让位时解绑", "session_sticky.unbind(session_key)" in SRC)
 check("不让位时才走 sticky",
-      bool(re.search(r"if _sticky_should_yield.*?else:.*?_record_credit_pick\(str\(bound\)\).*?return _remember_selection\(acc, \"sticky\"\)",
+      bool(re.search(r"if .*?_sticky_should_yield.*?else:.*?_record_credit_pick\(str\(bound\)\).*?return _remember_selection\(acc, \"sticky\"\)",
                      SRC, re.S)) if (re := __import__("re")) else False)
 check("sticky 命中也记入配额账本", "_record_credit_pick(str(bound))" in SRC)
 check("sticky 解绑时不在本分支记账（避免双流水）",

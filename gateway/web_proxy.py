@@ -372,8 +372,22 @@ COLLAPSE_SCRIPT = r"""
     border: 1px dashed rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.07);
     flex: 0 0 auto;
-    height: auto;
-    min-height: 112px;
+    height: auto !important;
+    min-height: 80px !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+  /* 移动端与全端自适应：确保卡片与内框高度不被官方样式截断，异常卡片各区域完整展开 */
+  article {
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+  }
+  article > section {
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
   }
   /* 需重登卡片的按钮区/模型区禁用态（四校）：灰化 + 不可操作，
      参照旅行图标的灰色处理方式。 */
@@ -387,6 +401,52 @@ COLLAPSE_SCRIPT = r"""
      只遮 header 里的 badge 行（span 容器），不动右侧两个按钮。 */
   .wb-header-badge-hidden span:not(:has(button)):not(:has(svg[class*=chevron])) {
     visibility: hidden;
+  }
+  /* 账号管理搜索框（需求 3） */
+  .wb-acc-search-wrap {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 12px;
+    margin-bottom: 8px;
+    vertical-align: middle;
+  }
+  .wb-acc-search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(120, 120, 120, 0.08);
+    border: 1px solid rgba(120, 120, 120, 0.25);
+    border-radius: 8px;
+    padding: 4px 10px;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .wb-acc-search-box:focus-within {
+    border-color: rgba(59, 130, 246, 0.65);
+    background: rgba(120, 120, 120, 0.12);
+  }
+  .wb-acc-search-icon {
+    width: 14px;
+    height: 14px;
+    color: var(--muted-foreground, #6b7280);
+    flex-shrink: 0;
+  }
+  .wb-acc-search-input {
+    border: none;
+    background: transparent;
+    font-size: 12px;
+    color: var(--foreground, #374151);
+    outline: none;
+    width: 220px;
+  }
+  @media (max-width: 560px) {
+    .wb-acc-search-input { width: 140px; }
+  }
+  .wb-acc-search-count {
+    font-size: 11px;
+    color: var(--muted-foreground, #6b7280);
+    background: rgba(120, 120, 120, 0.15);
+    padding: 1px 6px;
+    border-radius: 999px;
   }
   .wb-pool-btn {
     font-size: 11px;
@@ -4543,9 +4603,9 @@ COLLAPSE_SCRIPT = r"""
     var pending = cards.filter(function (c) {
       if (c.querySelector(".wb-am-box")) return false;
       if (!c.querySelector("h3")) return false;
-      // 401 需重新登录的账号：中间功能区整块换成横幅（2026-10-20 工单），
-      // 模型标签区**不注入** —— 凭据已坏，模型清单没有意义，只会稀释横幅。
-      return !wbCardNeedsRelogin(c);
+      // 异常/需重新登录账号也正常注入模型区（保持卡片结构完整），
+      // 后续由 wbApplyReloginDisabled 统一样式灰化/只读禁用处理。
+      return true;
     });
     if (!pending.length) return;
 
@@ -4576,9 +4636,7 @@ COLLAPSE_SCRIPT = r"""
         if (card.querySelector(".wb-am-box")) return;
         var h3 = card.querySelector("h3");
         if (!h3) return;
-        // 401 需重新登录：模型区不渲染（pending 过滤之后再兜一道 ——
-        // wbPoolCache 可能在这张卡片通过 pending 检查之后才到位）。
-        if (wbCardNeedsRelogin(card)) return;
+        // 异常账号卡片也渲染模型区，随后由 wbApplyReloginDisabled 灰化只读处理。
 
         var entry = byName[(h3.textContent || "").trim()] || fallback;
         var models = (entry.models && entry.models.length) ? entry.models : fallback.models;
@@ -5207,6 +5265,8 @@ COLLAPSE_SCRIPT = r"""
         var bar = wbBuildPoolBar(acc, data, card);
         (card.querySelector("section") || card).appendChild(bar);
       });
+      wbSortAccountCards();
+      wbInjectAccountSearch();
     }
 
     if (wbPoolCache) { render(wbPoolCache); return; }
@@ -5340,6 +5400,178 @@ COLLAPSE_SCRIPT = r"""
       if (pinned) return;
       tail.forEach(function (el) { sec.appendChild(el); });
     });
+  }
+
+  // 需求 9：优化账号页面卡片排序
+  // 第一法则：账号正常优先，异常排在正常后面
+  // 第二法则：同一状态积分多的靠前，积分少的靠后（降序）
+  function wbSortAccountCards() {
+    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
+    if (cards.length < 2) return;
+    var parent = cards[0].parentElement;
+    if (!parent) return;
+
+    // 建立账号数据映射（id -> acc 对象）
+    var accMap = {};
+    if (wbPoolCache && Array.isArray(wbPoolCache.accounts)) {
+      wbPoolCache.accounts.forEach(function (a) {
+        if (!a) return;
+        if (a.id) accMap[String(a.id)] = a;
+        if (a.name) accMap[String(a.name)] = a;
+        if (a.nickname) accMap[String(a.nickname)] = a;
+      });
+    }
+
+    function getCardRankAndScore(card) {
+      var id = card.getAttribute("data-wb-acc");
+      var h3 = card.querySelector("h3");
+      var title = (h3 ? h3.textContent : "").trim();
+      var acc = (id && accMap[String(id)]) || (title && accMap[title]) || null;
+
+      // 异常状态判断（第 1 法则）：
+      // 1. 账号对象上有 disabled 或 needsRelogin 标记；
+      // 2. 卡片上有 wb-relogin-disabled 样式；
+      // 3. wbCardNeedsRelogin(card) 为真；
+      // 4. 卡片内含有 .wb-official-relogin 提示块。
+      var isAbnormal = false;
+      if (acc) {
+        if (acc.disabled || acc.needsRelogin) isAbnormal = true;
+      }
+      if (wbCardNeedsRelogin(card)) isAbnormal = true;
+      if (card.querySelector(".wb-official-relogin") || card.querySelector(".wb-relogin-disabled")) {
+        isAbnormal = true;
+      }
+      var rank = isAbnormal ? 1 : 0; // 0 = 正常优先，1 = 异常靠后
+
+      // 积分值获取（第 2 法则）：
+      var credits = 0;
+      if (acc && typeof acc.credits === "number") {
+        credits = acc.credits;
+      } else if (acc && typeof acc.balance === "number") {
+        credits = acc.balance;
+      } else {
+        // 从 DOM 中提取数字兜底
+        var txt = card.textContent || "";
+        var m = txt.match(/(\d+(?:\.\d+)?)\s*(?:积分|credits?)/i);
+        if (m) credits = parseFloat(m[1]) || 0;
+      }
+
+      return { rank: rank, credits: credits, title: title, id: id || "" };
+    }
+
+    var cardMetas = cards.map(function (c) {
+      return { card: c, meta: getCardRankAndScore(c) };
+    });
+
+    cardMetas.sort(function (a, b) {
+      // 第一法则：正常 (rank 0) 优先于异常 (rank 1)
+      if (a.meta.rank !== b.meta.rank) {
+        return a.meta.rank - b.meta.rank;
+      }
+      // 第二法则：同状态内积分多的靠前（降序）
+      if (b.meta.credits !== a.meta.credits) {
+        return b.meta.credits - a.meta.credits;
+      }
+      // 稳定排序兜底：标题或 ID
+      return a.meta.title.localeCompare(b.meta.title);
+    });
+
+    // 检查是否已是目标顺序，避免无意义的 DOM 重排
+    var isSame = true;
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i] !== cardMetas[i].card) {
+        isSame = false;
+        break;
+      }
+    }
+    if (isSame) return;
+
+    cardMetas.forEach(function (item) {
+      parent.appendChild(item.card);
+    });
+  }
+
+  // 需求 3：账号管理页面搜索框注入与即时过滤
+  // 在账号卡片上方，OAuth扫码添加下方，四个功能按钮前方增加搜索功能
+  function wbInjectAccountSearch() {
+    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
+    if (!cards.length) return;
+    var listParent = cards[0].parentElement;
+    if (!listParent) return;
+
+    // 避免重复注入
+    if (document.getElementById("wb-account-search-bar")) return;
+
+    // 寻找 OAuth 扫码添加下方、账号卡片上方的四个功能按钮所在的工具栏
+    var targetToolbar = null;
+    var prev = listParent.previousElementSibling;
+    while (prev) {
+      var btns = prev.querySelectorAll("button");
+      if (btns && btns.length >= 1) {
+        targetToolbar = prev;
+        break;
+      }
+      prev = prev.previousElementSibling;
+    }
+
+    var searchWrap = document.createElement("div");
+    searchWrap.id = "wb-account-search-bar";
+    searchWrap.className = "wb-acc-search-wrap";
+    searchWrap.innerHTML =
+      '<div class="wb-acc-search-box">' +
+        '<svg class="wb-acc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>' +
+        '</svg>' +
+        '<input type="text" id="wb-account-search-input" class="wb-acc-search-input" placeholder="搜索账号（名称 / 手机号 / ID）..." autocomplete="off" />' +
+        '<span id="wb-account-search-count" class="wb-acc-search-count" style="display:none"></span>' +
+      '</div>';
+
+    if (targetToolbar) {
+      // 插入到四个功能按钮的前方
+      targetToolbar.insertBefore(searchWrap, targetToolbar.firstChild);
+    } else if (listParent.parentElement) {
+      // 兜底插入在卡片容器正前方
+      listParent.parentElement.insertBefore(searchWrap, listParent);
+    } else {
+      // 容器本身没有父节点（极少见）：退回追加在容器内最前面，绝不抛异常
+      listParent.insertBefore(searchWrap, listParent.firstChild);
+    }
+
+    var input = searchWrap.querySelector("#wb-account-search-input");
+    var countSpan = searchWrap.querySelector("#wb-account-search-count");
+    // 搜索框自身渲染失败（极端 DOM 环境）不能拖垮整个设置页：
+    // 找不到输入框就安静退出，与其它注入函数一样「坏了也别炸」。
+    if (!input || !countSpan) return;
+
+    function doFilter() {
+      var query = (input.value || "").trim().toLowerCase();
+      var currentCards = Array.prototype.slice.call(document.querySelectorAll("article"));
+      var matched = 0;
+      currentCards.forEach(function (card) {
+        if (!query) {
+          card.style.display = "";
+          matched++;
+          return;
+        }
+        var text = (card.textContent || "").toLowerCase();
+        var accId = (card.getAttribute("data-wb-acc") || "").toLowerCase();
+        if (text.indexOf(query) >= 0 || accId.indexOf(query) >= 0) {
+          card.style.display = "";
+          matched++;
+        } else {
+          card.style.display = "none";
+        }
+      });
+      if (!query) {
+        countSpan.textContent = "";
+        countSpan.style.display = "none";
+      } else {
+        countSpan.textContent = matched + " / " + currentCards.length;
+        countSpan.style.display = "inline-block";
+      }
+    }
+
+    input.addEventListener("input", doFilter);
   }
 
   /* ------------------------------------------------------------------
@@ -8414,36 +8646,124 @@ COLLAPSE_SCRIPT = r"""
     wbLoadWbDailyRuns();
   }
 
-  /* 任务清单：每日任务提供了哪些任务、各自是自动还是需人工 */
+  /* 任务清单：每日任务提供了哪些任务、安全分级、独立开关与单次手动执行 */
   function wbLoadWbDailyCatalog() {
-    fetch("/api/wb-daily/catalog").then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
+    Promise.all([
+      fetch("/api/wb-daily/catalog").then(function(r) { return r.ok ? r.json() : {}; }),
+      fetch("/api/wb-daily/config").then(function(r) { return r.ok ? r.json() : {}; })
+    ]).then(function(results) {
+      var d = results[0];
+      var cfg = (results[1] && results[1].config) || {};
+      var disabledTasks = cfg.disabled_tasks || [];
       var box = document.getElementById("wb-dl-catalog");
       var sum = document.getElementById("wb-dl-catalog-sum");
       if (!box) return;
       var groups = (d && d.groups) || [];
       if (sum && d && d.total) {
-        sum.textContent = "共 " + d.total + " 项任务：" + d.auto + " 项全自动、" + d.manual + " 项需人工（下方标灰）；需人工项不影响其余任务执行。";
+        sum.textContent = "共 " + d.total + " 项任务：" + d.auto + " 项全自动、" + d.manual + " 项需人工；可按安全级别独立启闭或手动单次执行。";
       }
       if (!groups.length) { box.innerHTML = '<div class="wb-api-desc">暂无任务清单</div>'; return; }
       var html = "";
       groups.forEach(function(g) {
         var items = g.items || [];
         var autoN = items.filter(function(i) { return i.auto; }).length;
-        html += '<div style="width:100%;margin-top:10px">' +
-          '<div class="wb-api-label">' + g.group + '（' + autoN + '/' + items.length + ' 自动）</div>' +
-          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px;margin-top:6px">';
+        html += '<div style="width:100%;margin-top:14px">' +
+          '<div class="wb-api-label" style="font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between">' +
+            '<span>' + g.group + '（' + autoN + '/' + items.length + ' 自动）</span>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-top:8px">';
         items.forEach(function(i) {
-          var dim = i.auto ? "" : ";opacity:.62";
-          var badge = i.auto
-            ? '<span style="color:#047857;font-size:11px">自动</span>'
-            : '<span style="color:#b45309;font-size:11px">人工</span>';
-          html += '<div style="display:flex;align-items:center;gap:6px;min-width:0' + dim + '" title="' + (i.note || i.name || "") + '">' +
-            '<span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (i.name || i.key) + '</span>' +
-            badge + '</div>';
+          var k = i.key;
+          var isDisabled = disabledTasks.indexOf(k) !== -1;
+          var risk = i.risk || "Normal";
+          var riskBadge = "";
+          if (risk === "HighRisk") {
+            riskBadge = '<span style="font-size:10px;padding:1px 5px;border-radius:4px;color:#dc2626;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25)">高危</span>';
+          } else if (risk === "Medium") {
+            riskBadge = '<span style="font-size:10px;padding:1px 5px;border-radius:4px;color:#d97706;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.25)">中危</span>';
+          } else {
+            riskBadge = '<span style="font-size:10px;padding:1px 5px;border-radius:4px;color:#059669;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.25)">常规</span>';
+          }
+          var autoBadge = i.auto
+            ? '<span style="color:#047857;font-size:10.5px">自动</span>'
+            : '<span style="color:#b45309;font-size:10.5px">人工</span>';
+          var opacity = isDisabled ? "opacity:0.55;" : "";
+          html += '<div class="wb-api-card" style="margin:0;padding:8px 10px;display:flex;align-items:center;gap:8px;min-width:0;' + opacity + '" title="' + (i.note || i.name || "") + '">' +
+            '<input type="checkbox" class="wb-dl-task-toggle" data-key="' + k + '" ' + (isDisabled ? '' : 'checked') + ' style="width:15px;height:15px;cursor:pointer" title="启用/禁用该任务">' +
+            '<div style="display:flex;flex-direction:column;min-width:0;flex:1">' +
+              '<div style="display:flex;align-items:center;gap:5px">' +
+                '<span style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (i.name || k) + '</span>' +
+                riskBadge +
+              '</div>' +
+              '<div style="font-size:10.5px;color:var(--muted-foreground);display:flex;gap:4px;align-items:center;margin-top:1px">' +
+                autoBadge +
+                (i.note ? '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">· ' + i.note + '</span>' : '') +
+              '</div>' +
+            '</div>' +
+            '<button type="button" class="wb-api-btn wb-dl-task-run-btn" data-key="' + k + '" style="font-size:11px;padding:2px 8px;height:24px;line-height:18px;margin-left:auto;flex-shrink:0" title="立即单次执行本任务">单次</button>' +
+          '</div>';
         });
         html += '</div></div>';
       });
       box.innerHTML = html;
+
+      // 绑定独立开关事件
+      box.querySelectorAll(".wb-dl-task-toggle").forEach(function(chk) {
+        chk.addEventListener("change", function() {
+          var taskKey = this.getAttribute("data-key");
+          var isChecked = this.checked;
+          var curDisabled = disabledTasks.slice();
+          if (!isChecked) {
+            if (curDisabled.indexOf(taskKey) === -1) curDisabled.push(taskKey);
+          } else {
+            var idx = curDisabled.indexOf(taskKey);
+            if (idx !== -1) curDisabled.splice(idx, 1);
+          }
+          disabledTasks = curDisabled;
+          var parentCard = this.closest(".wb-api-card");
+          if (parentCard) parentCard.style.opacity = isChecked ? "" : "0.55";
+          fetch("/api/wb-daily/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ disabled_tasks: curDisabled })
+          }).then(function(r) { return r.json(); }).then(function() {
+            wbToast("任务 [" + taskKey + "] 已" + (isChecked ? "启用" : "禁用"), "ok");
+          }).catch(function(e) {
+            wbToast("保存任务开关失败: " + e, "err");
+          });
+        });
+      });
+
+      // 绑定单次手动执行事件
+      box.querySelectorAll(".wb-dl-task-run-btn").forEach(function(btn) {
+        btn.addEventListener("click", function(e) {
+          e.stopPropagation();
+          var taskKey = this.getAttribute("data-key");
+          var b = this;
+          b.disabled = true;
+          b.textContent = "执行中";
+          fetch("/api/wb-daily/run-task/" + taskKey, { method: "POST" })
+            .then(function(r) { return r.json(); })
+            .then(function(res) {
+              if (res.job_id) {
+                wbToast("已触发单任务 [" + taskKey + "] 执行", "ok");
+                wbDailyPoll(res.job_id);
+              } else {
+                wbToast("启动失败: " + (res.detail || "未知错误"), "err");
+              }
+            })
+            .catch(function(err) {
+              wbToast("触发单任务失败: " + err, "err");
+            })
+            .finally(function() {
+              setTimeout(function() {
+                b.disabled = false;
+                b.textContent = "单次";
+              }, 2000);
+            });
+        });
+      });
+
     }).catch(function() {});
   }
 
@@ -8577,7 +8897,8 @@ COLLAPSE_SCRIPT = r"""
     var barEl = document.getElementById("wb-dl-progress-bar");
     var stepEl = document.getElementById("wb-dl-progress-step");
     var accEl = document.getElementById("wb-dl-progress-accounts");
-    if (pctEl) pctEl.textContent = pct;
+    var totalAcc = d.accounts_total || 0, doneAcc = d.accounts_done || 0;
+    if (pctEl) pctEl.textContent = pct + (totalAcc ? " (" + doneAcc + "/" + totalAcc + ")" : "");
     if (barEl) barEl.style.width = pct;
     if (stepEl) stepEl.textContent = lastLog || stepText;
     if (accEl) {
@@ -8825,6 +9146,8 @@ COLLAPSE_SCRIPT = r"""
     injectAccountPool();
     wbReplaceReloginErrorBlocks();
     wbPinAccountBlocks();
+    wbSortAccountCards();
+    wbInjectAccountSearch();
     injectApiAccess();
     injectModelHealth();
     // ⚠️ 顺序要与 wbRefreshApi() 保持一致（API接入 → 巡检 → 助手 → 通知）。
@@ -10441,10 +10764,22 @@ async def account_pool_get_v2(user: "str" = Depends(require_user)):
                 relogin_reasons[aid2] = str(
                     src_acc.get("needs_relogin_reason") or "").strip()
 
+    # 账号积分余额快照（供卡片排序第二法则：同状态积分降序）
+    balances = {}
+    try:
+        from gateway import credit_floor
+        balances = credit_floor._latest_balances() or {}
+    except Exception:
+        try:
+            import credit_floor  # type: ignore
+            balances = credit_floor._latest_balances() or {}
+        except Exception:
+            balances = {}
+
     enabled_ids = set(str(x) for x in (data.get("enabledAccountIds") or []))
     all_default = bool(data.get("allEnabledByDefault"))
 
-    # 已有的账号条目：补 nickname / email / disabled / disabledSource / enabled
+    # 已有的账号条目：补 nickname / email / disabled / disabledSource / enabled / credits
     seen = set()
     for item in accounts:
         if not isinstance(item, dict):
@@ -10460,6 +10795,9 @@ async def account_pool_get_v2(user: "str" = Depends(require_user)):
             item["email"] = src.get("email") or None
         if not item.get("id") and aid:
             item["id"] = aid
+        # 积分余额（支持排序第二法则）
+        item["credits"] = float(balances.get(aid, 0.0) or 0.0)
+        item["balance"] = item["credits"]
         # 账号级停用（普通正常账号也有 disabled=false，前端据此渲染启用态）
         item["disabled"] = aid in disabled_map
         item["disabledSource"] = disabled_map.get(aid)
@@ -10490,6 +10828,8 @@ async def account_pool_get_v2(user: "str" = Depends(require_user)):
             "enabled": (all_default or aid in enabled_ids) and aid not in disabled_map,
             "disabled": aid in disabled_map,
             "disabledSource": disabled_map.get(aid),
+            "credits": float(balances.get(aid, 0.0) or 0.0),
+            "balance": float(balances.get(aid, 0.0) or 0.0),
             "needsRelogin": aid in needs_relogin,
             "reloginReason": (str(src.get("needs_relogin_reason") or "").strip()
                               or relogin_reasons.get(aid, "")
@@ -11655,6 +11995,13 @@ async def wb_daily_task_summary(user: "str" = Depends(require_user)):
     """任务台账聚合：每个任务项最近一次结果 + 成功次数。"""
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/task-summary")
+        return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+@app.post("/api/wb-daily/run-task/{task_key}")
+async def wb_daily_run_task(task_key: str, user: "str" = Depends(require_user)):
+    async with _wb_daily_client() as client:
+        r = await client.post(f"{WB_DAILY_INTERNAL}/api/wb-daily/run-task/{task_key}")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 

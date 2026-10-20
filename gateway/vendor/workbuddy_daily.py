@@ -158,8 +158,18 @@
 🔒 隐私说明
    脚本不含任何账号、手机号、Token 或设备信息，所有凭据均由环境变量注入。
 """
-import sys, os, re, json, time, uuid, base64, glob, hashlib, hmac, glob as _glob, shutil, subprocess, threading, queue
+import sys, os, re, json, time, uuid, base64, glob, hashlib, hmac, glob as _glob, shutil, subprocess, threading, queue, random
+from pathlib import Path
 import requests
+
+# 引入硬件画像与指纹持久化模块（防风控与多账号独立画像）
+try:
+    _gw_dir = str(Path(__file__).resolve().parent.parent)
+    if _gw_dir not in sys.path:
+        sys.path.insert(0, _gw_dir)
+    from fingerprint import get_or_create_fingerprint
+except Exception:
+    get_or_create_fingerprint = None
 
 
 class TransientError(RuntimeError):
@@ -735,18 +745,34 @@ def want(*codes):
     return True
 
 # ---------- 基础 ----------
+def sleep_jitter(min_s=5.0, max_s=15.0, base=None):
+    """为敏感写操作注入拟人 Jitter 随机延迟（5~15s），避免固定节拍被防风控模型捕捉。"""
+    if base is not None and base > 0:
+        time.sleep(base + random.uniform(0.5, 2.0))
+    else:
+        time.sleep(random.uniform(min_s, max_s))
+
+
 def new_api(tok):
     s = requests.Session(); s.trust_env = False
     _uid = uid_of(tok)
+    ua = UA
+    if get_or_create_fingerprint and _uid:
+        try:
+            fp_meta = get_or_create_fingerprint(_uid)
+            if fp_meta and fp_meta.get("userAgent"):
+                ua = fp_meta["userAgent"]
+        except Exception:
+            pass
     s.headers.update({"Authorization": "Bearer " + tok, "Content-Type": "application/json",
                       "Accept": "application/json, text/plain, */*", "Origin": BASE,
-                      "Referer": BASE + "/profile/growth-center", "User-Agent": UA,
+                      "Referer": BASE + "/profile/growth-center", "User-Agent": ua,
                       "X-User-Id": _uid})
     return s
 
 
 def api_retry(s, method, url, body=None, retries=3, gap=1.0, **kw):
-    """带指数退避重试的 API 请求：网络错误/5xx 自动重试，4xx 不重试。"""
+    """带指数退避重试的 API 请求：网络错误/5xx 自动重试，429 限流动态退避 + Jitter，其他 4xx 不盲目重试。"""
     last_err = None
     for i in range(1, retries + 1):
         try:
@@ -754,15 +780,29 @@ def api_retry(s, method, url, body=None, retries=3, gap=1.0, **kw):
                 r = s.get(url, timeout=25, verify=False, **kw)
             else:
                 r = s.post(url, json=body, timeout=25, verify=False, **kw)
+
+            # HTTP 429 限流检测与动态指数退避 + Jitter 扰动，避免并发震荡
+            if r.status_code == 429:
+                if i < retries:
+                    retry_after = 0.0
+                    try:
+                        retry_after = float(r.headers.get("Retry-After", 0.0))
+                    except (ValueError, TypeError):
+                        pass
+                    sleep_sec = max(retry_after, gap * (2 ** i) + random.uniform(1.0, 3.0))
+                    time.sleep(sleep_sec)
+                    continue
+                return r
+
             if 500 <= r.status_code < 600 and i < retries:
                 last_err = RuntimeError("http %s" % r.status_code)
-                time.sleep(gap * i)
+                time.sleep(gap * (2 ** (i - 1)) + random.uniform(0.5, 1.5))
                 continue
             return r
         except Exception as e:
             last_err = e
             if i < retries:
-                time.sleep(gap * i)
+                time.sleep(gap * (2 ** (i - 1)) + random.uniform(0.5, 1.5))
             continue
     if last_err:
         raise last_err
@@ -1242,7 +1282,8 @@ def t_accept_all(s, uid, nick, log):
     for c in pending:
         if not _accept_with_verify(s, c, log):
             still.append(c)
-        time.sleep(1.0)
+        # 单次重试加入 1.5~3.5s 防抖退避，阻断恶性重试放大
+        time.sleep(random.uniform(1.5, 3.5))
     if still:
         log("   ⚠️ 仍无法登记 %d 项: %s" % (len(still), ",".join(still[:10])))
         log("      （这些任务的上报可能不被计数，请把本段日志反馈给作者）")
@@ -2046,18 +2087,10 @@ def t_desktop_tasks(s, uid, nick, tok, log, need_rich, need_skill):
 
 
 def _desktop_fingerprint_fallback(s, uid, nick, log, need_rich, need_skill):
-    """桌面任务指纹降级：desktop_chat_sequence + skill_info 事件（task_runner 同款，无需真实桌面端）。"""
+    """桌面任务指纹降级：防风控加固（剔除离线假桌面对话上报）。"""
     if need_rich:
-        conv = "fp-rm-%s" % derive_id(uid, "rm-conv")
-        req = "fp-rm-req-%s" % derive_id(uid, "rm-req")
-        msg = "fp-rm-msg-%s" % derive_id(uid, "rm-msg")
-        try:
-            evs = desktop_chat_sequence(uid, nick, conv, req, msg)
-            report_desktop_events(s, uid, nick, evs)
-            log("   桌面对话(指纹): ✅ 6连事件已上报")
-            time.sleep(WRITE_GAP)
-        except Exception as e:
-            log("   桌面对话(指纹): 失败 %s" % str(e)[:60])
+        # 纯离线 6 连对话事件在无真实桌面端时脱机假上报已被腾讯风控识别标记，必须跳过
+        log("   桌面对话(指纹): ⚠️ 离线假对话上报已剔除(防风控标记)，跳过脱机假事件上报")
     if need_skill:
         # 技能：先用 API 安装，再发「真实对话 + skill_info」事件链
         try:
@@ -2103,7 +2136,7 @@ def _desktop_fingerprint_fallback(s, uid, nick, log, need_rich, need_skill):
         except Exception as e:
             log("   尝鲜热门技能(指纹): 失败 %s" % str(e)[:60])
     # claim
-    for code in (["RichMeow_Chat"] if need_rich else []) + (["skill_1"] if need_skill else []):
+    for code in (["skill_1"] if need_skill else []):
         st, cur, tgt = prog(s, code)
         log("   %s: %s %s/%s" % (code, st, cur, tgt))
         if st == "completed":
@@ -2113,56 +2146,18 @@ def _desktop_fingerprint_fallback(s, uid, nick, log, need_rich, need_skill):
 
 
 def t_compensation(s, log):
-    """按用量管理页面口径查询、领取并回查一次性补偿。"""
-    url = BASE + "/billing/meter/compensation-status"
-
-    def status():
-        response = s.post(url, json={}, timeout=15, verify=False).json()
-        if response.get("code") != 0 or not isinstance(response.get("data"), dict):
-            raise ValueError("补偿状态接口未返回有效数据")
-        return response["data"]
-
-    try:
-        current = status()
-    except Exception as exc:
-        log("   ⚠️补偿状态查询失败: %s" % type(exc).__name__)
-        return
-    if not current.get("active"):
-        return
-    if current.get("claimed"):
-        log("   🎊补偿积分: 已领取")
-        return
-
-    credit = current.get("credit_num", "?")
-    deadline = current.get("end_time", "")
-    log("   🎊补偿待领取: %s积分%s" % (credit, "（截止%s）" % deadline if deadline else ""))
-    try:
-        result = s.post(CBDOMAIN + "/billing/meter/claim-compensation",
-                        json={}, timeout=15, verify=False).json()
-    except Exception as exc:
-        log("   ⚠️补偿领取请求异常: %s" % type(exc).__name__)
-        result = {}
-
-    # 请求可能成功但响应丢失；只以服务端最终状态确认到账。
-    try:
-        if status().get("claimed"):
-            log("   ✅补偿领取成功: +%s积分" % credit)
-            return
-    except Exception as exc:
-        log("   ⚠️补偿领取后状态回查失败: %s" % type(exc).__name__)
-        return
-    log("   ⚠️补偿领取未确认: %s" % str(result.get("msg") or "请稍后重试")[:80])
+    """官方 /billing/meter/claim-compensation 接口已彻底下线（报 400），安全跳过。"""
+    return
 
 
 def t_gift_compensation(s, uid, nick, log):
-    """礼包(每号一次) + 活动补偿。"""
+    """新手礼包(每号一次)。"""
     try:
         r = s.post(CBDOMAIN + "/billing/meter/claim-gift", json={}, timeout=15, verify=False).json()
         if r.get("code") == 0:
             log("   🎊新手礼包: +%s积分" % r.get("data", {}).get("credit", "?"))
     except Exception:
         pass
-    t_compensation(s, log)
 
 
 def t_makeup(s, uid, nick, log):
@@ -2948,18 +2943,34 @@ def derive_id(uid, salt):
 
 
 def desktop_fingerprint(uid, nick):
-    """公共桌面指纹（注入每个桌面事件，覆盖同名业务键）。"""
+    """公共桌面指纹（注入每个桌面事件，基于 fingerprint 模块加载账号独立画像，消除多账号同画像风控风险）。"""
     now = int(time.time() * 1000)
+    fp_meta = None
+    if get_or_create_fingerprint and uid:
+        try:
+            fp_meta = get_or_create_fingerprint(uid)
+        except Exception:
+            fp_meta = None
+
+    machine_id = (fp_meta.get("machineId") if fp_meta else None) or derive_id(uid, "machine")
+    session_id = (fp_meta.get("sessionId") if fp_meta else None) or derive_id(uid, "session")
+    os_name = (fp_meta.get("os", "win32") if fp_meta else "win32").lower()
+    arch_name = (fp_meta.get("arch", "x64") if fp_meta else "x64")
+    os_ver = (fp_meta.get("osVersion", "10.0.26220") if fp_meta else "10.0.26220")
+    cpu_cores = (fp_meta.get("cpuCores", 20) if fp_meta else 20)
+    mem_size = (fp_meta.get("memorySize", 24) if fp_meta else 24)
+    ide_ver = (fp_meta.get("ideVersion", "5.5.6") if fp_meta else "5.5.6")
+
     return {
         "timezone": "Asia/Shanghai", "reportDelay": 2000,
         "userId": uid, "username": nick, "userNickname": nick,
         "product": "SaaS", "releaseDate": 1789036585355,
         "commit": "5f9692923c93033111c51ad7b003eb80204a9b75",
-        "ideName": "WorkBuddy", "ideType": "WorkBuddy", "ideVersion": "5.5.6",
-        "machineId": derive_id(uid, "machine"), "sessionId": derive_id(uid, "session"),
-        "extName": "workbuddy-desktop", "extVersion": "5.5.6",
-        "os": "win32", "arch": "x64", "osVersion": "10.0.26220",
-        "cpuCores": 20, "memorySize": 24,
+        "ideName": "WorkBuddy", "ideType": "WorkBuddy", "ideVersion": ide_ver,
+        "machineId": machine_id, "sessionId": session_id,
+        "extName": "workbuddy-desktop", "extVersion": ide_ver,
+        "os": os_name, "arch": arch_name, "osVersion": os_ver,
+        "cpuCores": cpu_cores, "memorySize": mem_size,
         "timestamp": now, "presentAt": now,
     }
 
@@ -3065,7 +3076,7 @@ DESKTOP_BASE = "https://copilot.tencent.com"
 
 
 def report_desktop_events(s, uid, nick, events):
-    """桌面指纹上报：copilot.tencent.com/v2/report，**裸数组** + 桌面头族。
+    """桌面指纹上报：copilot.tencent.com/v2/report，**裸数组** + 桌面头族（支持账号专属画像）。
 
     对齐上游 ReportDesktopEvent：desktopBase=chatBase(copilot 域)、body 为裸数组、
     头含 X-Domain/X-Product/X-Request-ID/X-User-Id + 桌面 UA。
@@ -3076,12 +3087,13 @@ def report_desktop_events(s, uid, nick, events):
         m = dict(fp)          # 先铺指纹
         m.update(e)           # 业务字段优先（可覆盖同名设备键）
         arr.append(m)
+    desktop_ua = f"WorkBuddy/{fp.get('ideVersion', '5.5.6')} WorkBuddy/{fp.get('ideVersion', '5.5.6')} CLI/2.137.1"
     hdr = {"Authorization": s.headers.get("Authorization", ""),
            "Accept": "application/json, text/plain, */*",
            "Content-Type": "application/json;charset=UTF-8",
-           "User-Agent": DESKTOP_UA,
+           "User-Agent": desktop_ua,
            "X-Domain": DESKTOP_BASE, "X-Product": "SaaS",
-           "X-Request-ID": derive_id(uid, "req") + str(int(time.time() * 1000) % 1000000)}
+           "X-Request-ID": (fp.get("sessionId") or derive_id(uid, "req")) + str(int(time.time() * 1000) % 1000000)}
     if uid:
         hdr["X-User-Id"] = uid
     s2 = requests.Session(); s2.trust_env = False
@@ -3094,25 +3106,36 @@ def report_desktop_events(s, uid, nick, events):
 
 
 def report_web_event(s, uid, nick, event_code, page_url, element_id, element_name):
-    """以 web 域指纹上报单事件（Library_read）。"""
+    """以 web 域指纹上报单事件（Library_read），加载独立虚拟设备画像。"""
     now = int(time.time() * 1000)
+    fp_meta = None
+    if get_or_create_fingerprint and uid:
+        try:
+            fp_meta = get_or_create_fingerprint(uid)
+        except Exception:
+            fp_meta = None
+    web_mid = (fp_meta.get("webMachineId") if fp_meta else None) or derive_id(uid, "webmachine")
+    ua = (fp_meta.get("userAgent") if fp_meta else None) or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    os_name = (fp_meta.get("os") if fp_meta else None) or "Win32"
+    os_ver = (fp_meta.get("osVersion") if fp_meta else None) or "10.0"
+    arch = (fp_meta.get("arch") if fp_meta else "") or ""
     ev = {"eventCode": event_code, "timestamp": now, "reportDelay": 0,
           "pageURL": page_url, "elementId": element_id, "elementName": element_name,
-          "os": "Win32", "arch": "", "osVersion": "10.0",
-          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "machineId": derive_id(uid, "webmachine"), "userId": uid, "userNickname": nick}
+          "os": os_name, "arch": arch, "osVersion": os_ver,
+          "userAgent": ua,
+          "machineId": web_mid, "userId": uid, "userNickname": nick}
     return api_retry(s, "POST", BASE + "/v2/report", body={"common": {
         "userId": uid, "userNickname": nick, "ideName": "web",
-        "ideType": "web", "machineId": derive_id(uid, "webmachine"),
-        "mode": "CLOUD", "userAgent": "Mozilla/5.0", "os": "Win32",
+        "ideType": "web", "machineId": web_mid,
+        "mode": "CLOUD", "userAgent": ua, "os": os_name,
         "timezone": "Asia/Shanghai"}, "events": [ev]})
 
 
 def _accept_with_verify(s, code, log):
-    """accept 并验证登记生效（读 results[].status + 回读 accept_status）。"""
+    """accept 并验证登记生效（读 results[].status + 回读 accept_status，支持防抖与退避）。"""
     for attempt in (1, 2):
-        r = s.post(BASE + "/v2/activity/growth/tasks/accept", json={"task_codes": [code]},
-                   timeout=20, verify=False)
+        r = api_retry(s, "POST", BASE + "/v2/activity/growth/tasks/accept",
+                      body={"task_codes": [code]}, retries=2, gap=1.5)
         status = ""
         try:
             d = r.json()
@@ -3127,7 +3150,7 @@ def _accept_with_verify(s, code, log):
             return True
         if attempt > 1:
             log("      ✗ %s: accept %s 回读=%s" % (code, status or "无返回", ast))
-        time.sleep(WRITE_GAP)
+        time.sleep(WRITE_GAP + random.uniform(0.5, 1.5))
     return False
 
 

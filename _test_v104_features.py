@@ -118,17 +118,22 @@ POOL_CFG = {"enabledAccountIds": ["cn-1"]}
 res_cn = _enabled_accounts(ACCOUNTS, config=POOL_CFG, model="glm-4")
 check("常规模型调用：严格执行白名单，只选中 cn-1", [a["id"] for a in res_cn] == ["cn-1"])
 
-# 3.2 国际独占模型调用：哪怕不在白名单，也定向放行全部可用 ai 账号
-res_ai = _enabled_accounts(ACCOUNTS, config=POOL_CFG, model="default-model")
-check("国际独占模型调用：定向放行全部可用 ai 账号", [a["id"] for a in res_ai] == ["ai-1", "ai-2"])
+# 3.2 国际独占模型调用：白名单依然强制生效，绝不定向放行未在白名单的 ai 账号
+POOL_CFG_WITH_AI = {"enabledAccountIds": ["cn-1", "ai-1"]}
+res_ai = _enabled_accounts(ACCOUNTS, config=POOL_CFG_WITH_AI, model="default-model")
+check("国际独占模型调用：严格执行白名单，只选中白名单内的 ai-1", [a["id"] for a in res_ai] == ["ai-1"])
+
+# 未加白名单的 ai 账号不被选中
+res_ai_no_wl = _enabled_accounts(ACCOUNTS, config=POOL_CFG, model="default-model")
+check("国际独占模型调用：若白名单无 ai 账号，则候选集为空（不越权放行）", [a["id"] for a in res_ai_no_wl] == [])
 
 # 3.3 国际独占模型调用时，账号停用策略依然生效
 pol = _ap.load_policy()
 _ap.set_disabled(pol, "ai-1", True, source="manual")
 _ap.save_policy(pol)
 try:
-    res_ai_disabled = _enabled_accounts(ACCOUNTS, config=POOL_CFG, model="default-model")
-    check("国际独占模型调用：被账号策略停用的 ai-1 不参与", [a["id"] for a in res_ai_disabled] == ["ai-2"])
+    res_ai_disabled = _enabled_accounts(ACCOUNTS, config=POOL_CFG_WITH_AI, model="default-model")
+    check("国际独占模型调用：被账号策略停用的 ai-1 不参与", [a["id"] for a in res_ai_disabled] == [])
 finally:
     _ap.set_disabled(pol, "ai-1", False)
     _ap.save_policy(pol)

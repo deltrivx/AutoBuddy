@@ -82,6 +82,7 @@ def _load_pool_accounts() -> list:
             merged[key] = {**(merged.get(key) or {}), **acc}
     return list(merged.values())
 VENDOR_SCRIPT = Path(__file__).resolve().parent / "vendor" / "workbuddy_daily.py"
+INTL_VENDOR_SCRIPT = Path(__file__).resolve().parent / "vendor" / "workbuddy_intl_daily.py"
 
 DEFAULT_CONFIG = {
     "enabled": True,          # 定时调度总开关
@@ -92,6 +93,8 @@ DEFAULT_CONFIG = {
     "keepalive_days": 30,     # 保活阈值（天）；0 表示每天无条件刷新
     "lazy_refresh_hours": 6,  # 惰性刷新（小时）
     "checkin_enabled": True,  # 启动时核验服务端状态，未签到账号自动补签
+    # ---- 任务安全分级与独立开关 ----
+    "disabled_tasks": [],     # 被禁用的子任务 key 列表（任务轮自动跳过）
     # ---- 任务巡检（用户 2026-10-16 需求）----
     # 背景：任务被中断（容器重启 / 被 kill / 超时）后，原先只能等下一轮调度
     # （默认 12h，用户配到 24h 就更久）才恢复 —— 中断当天的剩余账号要等到
@@ -156,44 +159,44 @@ _COLD_ENV_KEYS = (
 # 来源：vendor 脚本里的任务常量，随上游版本变动时同步更新。
 TASK_CATALOG = [
     {"group": "成长任务", "items": [
-        {"key": "first_buddy", "name": "首只 Buddy（领养引导）", "auto": False,
+        {"key": "first_buddy", "risk": "Normal", "name": "首只 Buddy（领养引导）", "auto": False,
          "note": "需先在桌面端/小程序完成一次领养，后续 17 项任务的前置条件"},
-        {"key": "create_canvas", "name": "创建画布", "auto": True},
-        {"key": "playbook_prompt", "name": "使用剧本文案", "auto": True},
-        {"key": "Library_read", "name": "体验资料库", "auto": True},
-        {"key": "chat_5", "name": "和 AI 聊天 5 次", "auto": True},
-        {"key": "skill_1", "name": "尝鲜热门技能", "auto": True},
-        {"key": "template_5", "name": "使用 5 个模板", "auto": True},
-        {"key": "automation_1", "name": "设置自动化任务", "auto": True},
-        {"key": "expert_5", "name": "召唤 5 次专家", "auto": True},
-        {"key": "Expert_team_use_3", "name": "召唤 3 次专家团", "auto": True},
-        {"key": "Expert_lighthouse", "name": "灯塔专家", "auto": True},
-        {"key": "Expert_Philanthropy", "name": "公益专家", "auto": True},
-        {"key": "Hp_Appearance", "name": "和平精英主题", "auto": True},
-        {"key": "Buddy_App", "name": "发现应用", "auto": True},
-        {"key": "Buddy_App_QQ", "name": "企鹅教师助手", "auto": True},
-        {"key": "Model_chat_GLM5.2", "name": "GLM-5.2 模型对话", "auto": True},
-        {"key": "black_cat", "name": "设计/自动化/灵感", "auto": True},
-        {"key": "wb_wechat_oa_subscribe_task", "name": "关注官方公众号", "auto": False,
+        {"key": "create_canvas", "risk": "Normal", "name": "创建画布", "auto": True},
+        {"key": "playbook_prompt", "risk": "Normal", "name": "使用剧本文案", "auto": True},
+        {"key": "Library_read", "risk": "Normal", "name": "体验资料库", "auto": True},
+        {"key": "chat_5", "risk": "Medium", "name": "和 AI 聊天 5 次", "auto": True},
+        {"key": "skill_1", "risk": "HighRisk", "name": "尝鲜热门技能", "auto": True},
+        {"key": "template_5", "risk": "Medium", "name": "使用 5 个模板", "auto": True},
+        {"key": "automation_1", "risk": "Medium", "name": "设置自动化任务", "auto": True},
+        {"key": "expert_5", "risk": "Medium", "name": "召唤 5 次专家", "auto": True},
+        {"key": "Expert_team_use_3", "risk": "Medium", "name": "召唤 3 次专家团", "auto": True},
+        {"key": "Expert_lighthouse", "risk": "HighRisk", "name": "灯塔专家", "auto": True},
+        {"key": "Expert_Philanthropy", "risk": "HighRisk", "name": "公益专家", "auto": True},
+        {"key": "Hp_Appearance", "risk": "Normal", "name": "和平精英主题", "auto": True},
+        {"key": "Buddy_App", "risk": "Normal", "name": "发现应用", "auto": True},
+        {"key": "Buddy_App_QQ", "risk": "HighRisk", "name": "企鹅教师助手", "auto": True},
+        {"key": "Model_chat_GLM5.2", "risk": "Medium", "name": "GLM-5.2 模型对话", "auto": True},
+        {"key": "black_cat", "risk": "HighRisk", "name": "设计/自动化/灵感", "auto": True},
+        {"key": "wb_wechat_oa_subscribe_task", "risk": "Normal", "name": "关注官方公众号", "auto": False,
          "note": "需微信扫码关注「腾讯 WorkBuddy」公众号并满 24 小时"},
     ]},
     {"group": "互动玩法", "items": [
-        {"key": "checkin", "name": "每日签到", "auto": True},
-        {"key": "lottery", "name": "大转盘抽奖", "auto": True},
-        {"key": "blindbox", "name": "盲盒开启", "auto": True},
-        {"key": "buddy", "name": "Buddy 展示", "auto": True},
-        {"key": "travel", "name": "喵喵旅行", "auto": True},
+        {"key": "checkin", "risk": "Normal", "name": "每日签到", "auto": True},
+        {"key": "lottery", "risk": "Medium", "name": "大转盘抽奖", "auto": True},
+        {"key": "blindbox", "risk": "Medium", "name": "盲盒开启", "auto": True},
+        {"key": "buddy", "risk": "Normal", "name": "Buddy 展示", "auto": True},
+        {"key": "travel", "risk": "Normal", "name": "喵喵旅行", "auto": True},
     ]},
     {"group": "开学季活动", "items": [
-        {"key": "task_student_verify", "name": "微信学生认证", "auto": False,
+        {"key": "task_student_verify", "risk": "Normal", "name": "微信学生认证", "auto": False,
          "note": "人工环节，需微信内完成认证"},
-        {"key": "expert_use", "name": "专家使用", "auto": True},
-        {"key": "share_invite", "name": "分享邀请", "auto": True},
-        {"key": "chat_3_times", "name": "对话 3 次", "auto": True},
-        {"key": "desktop_chat_1_time", "name": "桌面端对话", "auto": True},
+        {"key": "expert_use", "risk": "Medium", "name": "专家使用", "auto": True},
+        {"key": "share_invite", "risk": "HighRisk", "name": "分享邀请", "auto": True},
+        {"key": "chat_3_times", "risk": "Medium", "name": "对话 3 次", "auto": True},
+        {"key": "desktop_chat_1_time", "risk": "HighRisk", "name": "桌面端对话", "auto": True},
     ]},
     {"group": "夜猫子", "items": [
-        {"key": "night_owl", "name": "夜猫子任务（23:00–08:00）", "auto": True,
+        {"key": "night_owl", "risk": "HighRisk", "name": "夜猫子任务（23:00–08:00）", "auto": True,
          "note": "仅在该时段内计入进度，要求真实对话；每天 1 次×累计 3 天"},
     ]},
 ]
@@ -281,6 +284,34 @@ def build_account_store(cfg: dict | None = None) -> dict:
         name = a.get("nickname") or a.get("email") or user
         store[user] = {"refresh_token": rt, "access_token": at, "name": name, "id": a.get("id")}
     return store
+
+
+def build_intl_account_store(cfg: dict | None = None) -> list[dict]:
+    """生成国际版账号池数据（variant == "ai"）。
+
+    每项包含: name, token (access_token), uid, refresh_token, id。
+    拼接为 WORKBUDDY_INTL_TOKENS 供 workbuddy_intl_daily.py 运行。
+    """
+    cfg = cfg or load_config()
+    items = []
+    arr = _load_pool_accounts()
+    for a in arr:
+        if a.get("variant") != "ai":
+            continue
+        at = (a.get("access_token") or "").strip()
+        rt = (a.get("refresh_token") or "").strip()
+        if not at and not rt:
+            continue
+        uid = str(a.get("id") or a.get("user_id") or "")
+        name = a.get("nickname") or a.get("email") or a.get("name") or uid or f"intl-acct-{len(items)+1}"
+        items.append({
+            "name": name,
+            "access_token": at,
+            "refresh_token": rt,
+            "uid": uid,
+            "id": a.get("id")
+        })
+    return items
 
 
 def _masked_account_key(label: str) -> str | None:
@@ -392,7 +423,7 @@ class DailyJob:
     # 多账号时用它把总进度推到「尚未结束」的合理区间。
     _ACCOUNT_START = "╭─ 👤 账号"
 
-    def __init__(self, job_id: str, mode: str, kind: str = "task"):
+    def __init__(self, job_id: str, mode: str, kind: str = "task", single_task: str | None = None):
         """``kind`` = checkin / task（签到 / 任务调度拆分，用户 2026-10-16 需求）。
 
         巡检恢复中断任务时按它决定补哪一种轮次，执行时按它给上游脚本
@@ -401,6 +432,7 @@ class DailyJob:
         self.id = job_id
         self.mode = mode
         self.kind = kind if kind in ("checkin", "task") else "task"
+        self.single_task = single_task
         self.status = "running"
         self.progress = 0
         self.log: list[str] = []
@@ -667,8 +699,11 @@ class DailyJob:
         return {
             "job_id": self.id,
             "mode": self.mode,
+            "kind": self.kind,
+            "single_task": getattr(self, "single_task", None),
             "status": self.status,
             "progress": f"{self.progress}%",
+            "progress_ratio": f"{self.accounts_done}/{self.accounts_total}",
             "log": self.log[-120:],
             "result": self.result,
             "created_at": self.created_at,
@@ -890,8 +925,9 @@ async def _execute(job: DailyJob):
     global _last_run_at
     cfg = load_config()
     store = build_account_store(cfg)
-    if not store:
-        job.log_line("没有可参与的账号（账号池无 cn 账号，也未配置补充账号）")
+    intl_accounts = build_intl_account_store(cfg)
+    if not store and not intl_accounts:
+        job.log_line("没有可参与的账号（账号池无国内 cn 或国际 ai 可用账号）")
         job.finish("failed", "无可用账号")
         return
 
@@ -929,7 +965,7 @@ async def _execute(job: DailyJob):
     with open(token_file, "w", encoding="utf-8") as f:
         json.dump(store, f, ensure_ascii=False, indent=1)
     job.log_line(f"参与账号 {len(store)} 个（账号池 cn + 补充账号）")
-    job.accounts_total = len(store)
+    job.accounts_total = len(store) + (len(intl_accounts) if not job.single_task else 0)
     run_mode = "query" if str(cfg.get("run_mode") or "full").strip().lower() == "query" else "full"
     script_args = [sys.executable, str(script_copy), "--no-desktop"]
     if run_mode == "query":
@@ -942,12 +978,18 @@ async def _execute(job: DailyJob):
     # 手动执行的「立即执行」按钮不带 kind（默认 task），行为与拆分前的完整轮一致。
     # ⚠️ 必须走命令行参数而不是只设 env：env 在容器里可能已被外部注入
     #    （WORKBUDDY_TASKS），命令行参数在 vendor 里是后解析的，优先级更高。
-    if job.kind == "checkin":
+    if job.single_task:
+        script_args += ["--tasks", job.single_task]
+        job.log_line(f"任务范围：仅单项任务 [{job.single_task}]（手动触发）")
+    elif job.kind == "checkin":
         script_args += ["--tasks", ",".join(CHECKIN_TASK_CODES)]
         job.log_line("任务范围：仅每日签到（签到/任务拆分，本轮为签到轮）")
     else:
-        script_args += ["--skip-tasks", ",".join(TASK_ROUND_SKIP_CODES)]
-        job.log_line("任务范围：除每日签到以外的全部任务（签到/任务拆分，本轮为任务轮）")
+        disabled = set(cfg.get("disabled_tasks") or [])
+        skip_codes = set(TASK_ROUND_SKIP_CODES) | disabled
+        script_args += ["--skip-tasks", ",".join(skip_codes)]
+        job.log_line("任务范围：除每日签到以外的全部任务（签到/任务拆分，本轮为任务轮%s）"
+                     % (f"，跳过已禁用: {','.join(disabled)}" if disabled else ""))
 
     env = dict(os.environ)
     env["TZ"] = env.get("TZ", "Asia/Shanghai")
@@ -1072,6 +1114,54 @@ async def _execute(job: DailyJob):
                 job.log_line(f"本轮补领 {extra} 项（等待异步计分落定后）")
         except Exception as e:
             job.log_line(f"补领异常（不影响主流程）: {str(e)[:80]}")
+        
+    # ── 国际版每日活跃（按 variant == "ai" 分流调度）──
+    if intl_accounts and not job.single_task:
+        job.log_line(f"🚀 开始执行国际版每日活跃（共 {len(intl_accounts)} 个账号）...")
+        intl_script = WORK_DIR / "workbuddy_intl_daily.py"
+        if not intl_script.exists() and INTL_VENDOR_SCRIPT.exists():
+            shutil.copy2(INTL_VENDOR_SCRIPT, intl_script)
+        if intl_script.exists():
+            intl_env = dict(os.environ)
+            intl_env["TZ"] = "Asia/Shanghai"
+            intl_env["PYTHONUNBUFFERED"] = "1"
+            intl_tokens = []
+            for it in intl_accounts:
+                tok = it.get("access_token") or ""
+                rt = it.get("refresh_token") or ""
+                uid = it.get("uid") or ""
+                name = it.get("name") or "intl"
+                intl_tokens.append(f"{name}|{tok}|{uid}|{rt}")
+            intl_env["WORKBUDDY_INTL_TOKENS"] = "\n".join(intl_tokens)
+            intl_args = [sys.executable, str(intl_script)]
+            if run_mode == "query":
+                intl_args.append("--no-keepalive")
+            try:
+                intl_proc = await asyncio.create_subprocess_exec(
+                    *intl_args,
+                    cwd=str(WORK_DIR), env=intl_env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT
+                )
+                job.proc = intl_proc
+                while True:
+                    line = await intl_proc.stdout.readline()
+                    if not line:
+                        break
+                    t = line.decode("utf-8", "replace").rstrip()
+                    if t:
+                        all_lines.append(t)
+                        job.log_line("[国际版] " + t)
+                await intl_proc.wait()
+                job.accounts_done += len(intl_accounts)
+                job.log_line(f"✅ 国际版每日活跃执行完毕")
+            except Exception as ie:
+                job.log_line(f"⚠️ 国际版每日活跃异常: {ie}")
+            finally:
+                job.proc = None
+        else:
+            job.log_line(f"⚠️ 国际版脚本缺失: {INTL_VENDOR_SCRIPT}")
+
         job.finish("done", {"rc": 0, "summary": _tail_summary(all_lines)})
         # ③ 场景通知：每日任务完成（用户 2026-10-13 需求）。
         #    失败只记日志，绝不影响任务主流程。
@@ -1204,7 +1294,7 @@ def _persist_run(job: DailyJob, all_lines: list[str]) -> None:
         print(f"[wb-daily] 落库执行记录失败: {e}")
 
 
-async def start_job(mode: str = "manual", kind: str = "task") -> DailyJob:
+async def start_job(mode: str = "manual", kind: str = "task", single_task: str | None = None) -> DailyJob:
     """启动一轮任务。
 
     ``kind`` 区分本轮要跑哪一类（用户 2026-10-16 要求签到与任务调度拆分）：
@@ -1215,7 +1305,7 @@ async def start_job(mode: str = "manual", kind: str = "task") -> DailyJob:
     running = [j for j in JOBS.values() if j.status == "running"]
     if running:
         raise HTTPException(status_code=409, detail=f"已有任务在执行（{running[0].id}）")
-    job = DailyJob(uuid.uuid4().hex[:12], mode, kind=kind)
+    job = DailyJob(uuid.uuid4().hex[:12], mode, kind=kind, single_task=single_task)
     JOBS[job.id] = job
     # 先落一条 running：进程若在中途被 SIGKILL / 容器重建，DB 里也留得下一具
     # 「没跑完」的尸体，供启动时的 _reconcile_orphan_runs() 收尾标记。
@@ -1449,6 +1539,7 @@ class ConfigBody(BaseModel):
     keepalive_days: int | None = None
     lazy_refresh_hours: int | None = None
     checkin_enabled: bool | None = None
+    disabled_tasks: list[str] | None = None
     # ---- 任务巡检（用户 2026-10-16 需求）----
     patrol_enabled: bool | None = None
     patrol_interval_minutes: int | None = None
@@ -1534,6 +1625,13 @@ async def run_accounts_api(job_id: str):
     return {"job_id": job_id, "accounts": rows, "count": len(rows),
             "live": live.to_dict() if live else None}
 
+
+
+@app.post("/api/wb-daily/run-task/{task_key}")
+async def run_single_task_api(task_key: str):
+    """手动执行单个任务。"""
+    job = await start_job(mode="manual", kind="task", single_task=task_key)
+    return {"job_id": job.id, "status": "started", "task_key": task_key}
 
 @app.post("/api/wb-daily/run")
 async def run_api():

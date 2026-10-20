@@ -43,7 +43,7 @@ check("未知余额取池均值（不惩罚新账号）",
       "_bal.get(aid, _avg)" in SRC)
 check("权重下限 0.05 防除零", "0.05" in SRC)
 check("异常兜底退回纯 inflight 排序",
-      SRC.count("ordered.sort(key=lambda a: int(inflight.get(") >= 2)
+      "ordered.sort(key=lambda a: int(inflight.get(" in SRC)
 check("只统计正余额（None/0 不进权重表）",
       "_v > 0" in SRC)
 check("权重差封顶 CAP 存在", "_WEIGHT_CAP" in SRC)

@@ -90,10 +90,10 @@ check("wbPinAccountBlocks 仍在（控制条/模型区顺序恒定的既有保�
 
 print("\n[5] vendor 脚本为 v3.14（含 500 积分补偿）")
 check("vendor 自报 v3.14", "v3.14" in VENDOR[:600], "头部版本行")
-check("compensation-status 探测在", "/billing/meter/compensation-status" in VENDOR)
-check("claim-compensation 领取在", "/billing/meter/claim-compensation" in VENDOR)
-check("领取后回查确认到账（不以请求成败为准）",
-      re.search(r"status\(\)\.get\(\"claimed\"\)", VENDOR) is not None)
+check("已下线补偿接口被安全跳过（需求6：claim-compensation 报 400，不再请求）",
+      "claim-compensation 接口已彻底下线" in VENDOR and
+      "url = BASE + \"/billing/meter/claim-compensation\"" not in VENDOR and
+      "s.post(CBDOMAIN + \"/billing/meter/claim-compensation\"" not in VENDOR)
 check("旧 v3.7 备份保留", (ROOT / "gateway/vendor").glob and
       any("bak-v3.7" in p.name for p in (ROOT / "gateway" / "vendor").iterdir()))
 

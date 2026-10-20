@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.8](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.8)
+**当前稳定版：** [v1.0.9](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.9)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.9](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.9) | 2026-10-21 | 账号池白名单彻底收紧 + 负载均衡平摊 + 每日任务安全分级与防风控加固 + 国际版每日活跃接入 + 全量账号独立硬件指纹 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.9.md) |
 | [v1.0.8](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.8) | 2026-10-20 | 安全修复——WebUI 全部 54 个管理端点补登录鉴权（此前 /api/import 等写操作未登录可直接调用，线上曾被写入注入测试账号） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.8.md) |
 | [v1.0.7](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.7) | 2026-10-20 | 401 卡片视觉精修：提示块对齐正常卡片官方区高度（112px 实测），顶部外框官方「需重新登录」badge 隐藏，按钮区/模型区灰化禁用 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.7.md) |
 | [v1.0.6](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.6) | 2026-10-20 | 新增调用分流三档开关与 API 密钥编辑/重置统计/高危二次确认，401 账号卡片积分区原始错误页替换为「需要重新登录」提示（后端双来源合并判定） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.6.md) |
@@ -201,7 +202,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.8    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.9    # 锁定版本
 ```
 
 ## 部署产物
