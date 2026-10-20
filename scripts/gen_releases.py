@@ -56,8 +56,17 @@ def _summary(body: str) -> str:
 
 
 def version_key(entry):
+    """排序键。版本号有两代形态，混在一个 CHANGELOG 里，排序必须两边都认：
+
+    - 三代存量：`v0.4.5` → [0, 4, 5]
+    - 现行规范：`v2026.10.21.03` → [2026, 10, 21, 3]
+
+    末段是「当天第几版」，固定两位补零（03 / 09 / 10）。补零的好处正在于
+    按字符串排也等于按数值排；但存量版本不保证补零，所以这里还是按 int 拆，
+    并且把缺的段补 0，避免 [0,4,5] 与 [2026,10,21,3] 直接比长度时报错。
+    """
     try:
-        return [int(x) for x in entry["version"].lstrip("v").split(".")]
+        return [int(x) for x in entry["version"].lstrip("v").split(".")] + [0, 0, 0, 0]
     except ValueError:
         return [0]
 

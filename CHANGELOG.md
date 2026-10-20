@@ -31,6 +31,20 @@
 
 ---
 
+## [v2026.10.21.03] - 2026-10-21
+
+<!-- summary: 版本号切换为四段日期制（末段两位补零、按当天第几版累进），全套链路同步适配 -->
+
+### 变更
+
+- **版本号规范切换**：末段固定两位补零、按「当天第几版」全局累进 —— 今天第 1 版是 `v2026.10.21.01`，第 10 版是 `v2026.10.21.10`，**不再出现 `2026.10.21.1` 这种单位数写法**。本版是今天第 3 版，故为 `v2026.10.21.03`。存量三段式（v1.0.10 及更早）仍有效，新版本不再使用该形态。
+  - `gateway/main.py`：`VERSION_DEFAULT` 改为 `2026.10.21.03`（版本号仍是全仓唯一一处定义，`AB_VERSION` 仍可覆盖）。
+  - `.github/workflows/docker-build-ghcr.yml`：镜像标签改为以 `type=ref,event=tag` 为主产出 —— 四段日期号不是标准 semver，`type=semver` 对它一条都不产（文档确认：非 semver tag 下 semver 规则静默跳过，不报错），`type=ref` 则把 git tag 原样变成镜像标签并自动剥掉 `v` 前缀，故 `v2026.10.21.03` 推成 `2026.10.21.03`。存量三段式仍由 semver 规则产出 `x.y.z` / `x.y` 标签，两代形态互不干扰。
+  - `scripts/gen_releases.py`：`version_key()` 排序键兼容两代形态（补零对齐段长后按数值比），否则三段与四段混排会因长度不同直接比出错乱。
+  - `_test_version_sync.py`：版本号正则与断言放开到「三段或四段末段两位」，并新增两条护栏 —— 末段是单位数即失败、CHANGELOG 里出现单位数末段版本即失败。
+
+---
+
 ## [v1.0.10] - 2026-10-22
 
 <!-- summary: 账号搜索框挪到档位切换行右端并对齐官方尺寸，每日任务签到/执行两个开关彻底拆分独立持久化，账号签到与凭据板块补背景框，设备指纹与 UA 改为动态池化隔离并覆盖新账号，关于页「说明」项移除 -->
@@ -5185,7 +5199,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2026.10.21.03...HEAD
+[v2026.10.21.03]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...v2026.10.21.03
 [v1.0.10]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...v1.0.10
 [v1.0.9]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...v1.0.9
 [v1.0.8]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...v1.0.8

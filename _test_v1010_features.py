@@ -146,10 +146,12 @@ check("「关于」卡片仍保留 项目名+版本 / 运行位置 / 当前规�
 
 # ------------------------------------------------------------ 版本号一致性
 print("\n[6] 版本号")
-check("VERSION_DEFAULT 已升级到 1.0.10",
-      'VERSION_DEFAULT = "1.0.10"' in MAIN)
+# 版本号规范 2026-10-21 起改为四段日期制（末段两位补零，当天第几版），
+# 本文件的五项改动落在 v2026.10.21.03（今天第 3 版）上。
+check("VERSION_DEFAULT 已升级到 2026.10.21.03",
+      'VERSION_DEFAULT = "2026.10.21.03"' in MAIN)
 CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-check("CHANGELOG 有 v1.0.10 段", "## [v1.0.10]" in CHANGELOG)
+check("CHANGELOG 有 v2026.10.21.03 段", "## [v2026.10.21.03]" in CHANGELOG)
 
 print("\n" + "=" * 31)
 print(f"测试结果: 通过 {_ok} 项, 失败 {len(_fail)} 项")

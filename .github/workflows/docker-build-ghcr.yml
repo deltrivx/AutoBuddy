@@ -92,6 +92,14 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # 版本号规范（2026-10-21 起）：末段固定两位补零，按「当天第几版」累进，
+          # 形如 v2026.10.21.03 —— 这是**四段**号。
+          # ⚠️ type=semver 只认标准 semver（x.y.z 三段），四段号它一条都不产，
+          # 于是 tag 推送时镜像会只剩 latest 或干脆没标签。
+          # 好在 type=ref,event=tag 不挑版本形态：它把 git tag 原样变成镜像标签
+          # （自动剥掉 v 前缀）→ v2026.10.21.03 推成 2026.10.21.03。
+          # 存量三段式（v1.0.x）则仍由下面两条 semver 规则产出 1.0.10 / 1.0 标签，
+          # 两代版本形态互不干扰。
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
             type=ref,event=tag
