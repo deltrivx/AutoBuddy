@@ -31,6 +31,16 @@
 
 ---
 
+## [v1.0.7] - 2026-10-20
+
+<!-- summary: 401 卡片视觉精修：提示块对齐正常卡片官方区高度（112px 实测），顶部外框官方「需重新登录」badge 隐藏，按钮区/模型区灰化禁用 -->
+
+### 修复
+
+- **401 提示块尺寸对齐正常卡片**：此块底部添加 `min-height: 112px`（实测正常卡官方区 30+17+65 三块之和），修复旧版残留的 `flex: 1 1 240px`（横幅时代样式）把说明文字拉高到 240px、整块撑到 290px 的霸屏问题。
+- **顶部外框不再显示「需重新登录」提示**：官方 React 在 header 渲染的警示 badge 按文本精确定位隐藏（visibility，不影响右侧「更多账号操作」按钮），提示只出现在内框替换块里。
+- **按钮区/模型区禁用态**：需重登卡片的账号池控制条与模型标签区灰化（opacity 0.45 + grayscale + pointer-events none，参照旅行图标处理方式），恢复正常后自动还原。
+
 ## [v1.0.6] - 2026-10-20
 
 <!-- summary: 新增调用分流三档开关与 API 密钥编辑/重置统计/高危二次确认，401 账号卡片积分区原始错误页替换为「需要重新登录」提示（后端双来源合并判定） -->
@@ -5115,7 +5125,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.6...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...HEAD
+[v1.0.7]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.6...v1.0.7
 [v1.0.6]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.5...v1.0.6
 [v1.0.5]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.4...v1.0.5
 [v1.0.4]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.3...v1.0.4

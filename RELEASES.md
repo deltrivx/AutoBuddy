@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.6](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.6)
+**当前稳定版：** [v1.0.7](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.7)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.7](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.7) | 2026-10-20 | 401 卡片视觉精修：提示块对齐正常卡片官方区高度（112px 实测），顶部外框官方「需重新登录」badge 隐藏，按钮区/模型区灰化禁用 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.7.md) |
 | [v1.0.6](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.6) | 2026-10-20 | 新增调用分流三档开关与 API 密钥编辑/重置统计/高危二次确认，401 账号卡片积分区原始错误页替换为「需要重新登录」提示（后端双来源合并判定） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.6.md) |
 | [v1.0.5](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.5) | 2026-10-20 | 修复账号卡片开关抖动 / 按钮跑位 / 移动端整页刷新三处交互缺陷，vendor 脚本升级 v3.14 支持 500 积分补偿领取 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.5.md) |
 | [v1.0.4](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.4) | 2026-10-18 | 模型拉取支持国际版双通道并发与幂等合并，补齐国际版出站路由映射，国际独占模型定向放行，导出账号默认脱敏 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.4.md) |
@@ -199,7 +200,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.6    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.7    # 锁定版本
 ```
 
 ## 部署产物

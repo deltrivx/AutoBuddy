@@ -118,14 +118,27 @@ check("按 401 错误页特征识别（<html>+401 Authorization）",
       re.search(r'401\\s\*\(Authorization\\s\*Required\)\?', PROXY) is not None or
       "Authorization Required" in PROXY)
 check("整块替换（textContent 清空 + 重写）",
-      re.search(r'wbReplaceReloginErrorBlocks[\s\S]{0,1500}div\.textContent = ""', PROXY) is not None)
+      re.search(r'wbReplaceReloginErrorBlocks[\s\S]{0,2400}div\.textContent = ""', PROXY) is not None)
 check("错误原文从 title 属性一并移除",
       'div.removeAttribute("title")' in PROXY)
 check("只处理需重登卡片（正常账号不动）",
-      re.search(r'var relogin = wbCardNeedsRelogin\(card\);[\s\S]{0,700}if \(!relogin\) return;', PROXY) is not None)
+      re.search(r'var relogin = wbCardNeedsRelogin\(card\);[\s\S]{0,1600}if \(!relogin\) return;', PROXY) is not None)
 check("替换文案是「需要重新登录」",
       re.search(r'wbReplaceReloginErrorBlocks[\s\S]{0,2000}需要重新登录', PROXY) is not None)
 check("挂在 run() 注入链上（injectAccountPool 之后）",
       re.search(r'injectAccountPool\(\);\s*\n\s*wbReplaceReloginErrorBlocks\(\);', PROXY) is not None)
 check("替换块样式 wb-official-relogin（轻量不喧宾夺主）",
       ".wb-official-relogin {" in PROXY)
+# ---- v1.0.6 四校（哥哥完整结构对比）：不霸屏 + badge 隐藏 + 灰化 ----
+check("替换块对齐正常卡官方区高度（min-height:112px，实测 30+17+65）",
+      re.search(r'\.wb-official-relogin \{[\s\S]{0,450}min-height: 112px', PROXY) is not None
+      and re.search(r'\.wb-official-relogin \{[\s\S]{0,400}flex: 0 0 auto;[\s\S]{0,80}height: auto;', PROXY) is not None)
+check("desc 不再带横幅的 flex-grow（霸屏根因）",
+      "flex: 1 1 240px" not in re.search(r'\.wb-pool-relogin-desc \{[\s\S]{0,250}?\}', PROXY).group(0))
+check("顶部外框官方 badge 隐藏（提示只在内框）",
+      "wb-header-badge-hidden" in PROXY)
+check("按钮区+模型区灰化禁用（wb-relogin-disabled）",
+      ".wb-relogin-disabled" in PROXY
+      and "wbApplyReloginDisabled" in PROXY and "wbApplyReloginEnabled" in PROXY)
+check("灰化含 pointer-events:none（不可操作）",
+      re.search(r'\.wb-relogin-disabled \{[\s\S]{0,200}pointer-events: none', PROXY) is not None)

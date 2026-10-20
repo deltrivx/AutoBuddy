@@ -357,12 +357,12 @@ COLLAPSE_SCRIPT = r"""
     font-size: 11.5px;
     color: #7f1d1d;
     line-height: 1.6;
-    flex: 1 1 240px;
     min-width: 0;
   }
   /* 官方积分包区 401 错误文本的替换样式（2026-10-20 工单第三次澄清）：
      位置在操作按钮上方，样式比控制条横幅轻（这里是官方内容区的位置，
-     不能喧宾夺主），但一眼可见。 */
+     不能喧宾夺主），但一眼可见。2026-10-20 四校：不撑满内框——
+     高度只包内容（auto），是 section 里的一块，不是整屏。 */
   .wb-official-relogin {
     display: flex;
     flex-direction: column;
@@ -371,6 +371,22 @@ COLLAPSE_SCRIPT = r"""
     border-radius: 10px;
     border: 1px dashed rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.07);
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 112px;
+  }
+  /* 需重登卡片的按钮区/模型区禁用态（四校）：灰化 + 不可操作，
+     参照旅行图标的灰色处理方式。 */
+  .wb-relogin-disabled {
+    opacity: 0.45;
+    filter: grayscale(1);
+    pointer-events: none;
+    user-select: none;
+  }
+  /* 顶部外框官方「需重新登录」badge 隐藏（四校）：提示只出现在内框。
+     只遮 header 里的 badge 行（span 容器），不动右侧两个按钮。 */
+  .wb-header-badge-hidden span:not(:has(button)):not(:has(svg[class*=chevron])) {
+    visibility: hidden;
   }
   .wb-pool-btn {
     font-size: 11px;
@@ -4823,6 +4839,35 @@ COLLAPSE_SCRIPT = r"""
   // 这块 DIV 是官方 React 渲染的（class 带 text-destructive，错误原文
   // 同时挂在内文和 title 属性上）；我们不猜结构，只按「内容是 401 错误页」
   // 这个特征识别，整块替换为可读提示。
+  // 2026-10-20 四校（哥哥完整结构对比）：
+  //   1. 替换块不撑满内框（高度只包内容，flex:0 0 auto，见 CSS）
+  //   2. 顶部外框（header）官方自己渲染的「需重新登录」badge 隐藏 ——
+  //      提示只该出现在内框里，顶部外框只留右侧两个按钮 + 功能收纳
+  //   3. 需重登时：控制条（wb-pool-bar）与模型区（wb-am-box）灰化 +
+  //      pointer-events:none（禁用态，参照旅行图标的灰色处理方式）
+  //   4. 正常账号零变化（全程有 wbCardNeedsRelogin 守卫）
+  function wbApplyReloginDisabled(card) {
+    var sec = card.querySelector("section");
+    if (!sec) return;
+    var bar = sec.querySelector(".wb-pool-bar");
+    var amBox = sec.querySelector(".wb-am-box");
+    [bar, amBox].forEach(function (el) {
+      if (!el) return;
+      el.classList.add("wb-relogin-disabled");
+      el.setAttribute("aria-disabled", "true");
+    });
+  }
+
+  function wbApplyReloginEnabled(card) {
+    // 恢复登录后逆向清理（巡检周期会重跑；React 重渲染也会换新节点）
+    var sec = card.querySelector("section");
+    if (!sec) return;
+    sec.querySelectorAll(".wb-relogin-disabled").forEach(function (el) {
+      el.classList.remove("wb-relogin-disabled");
+      el.removeAttribute("aria-disabled");
+    });
+  }
+
   function wbReplaceReloginErrorBlocks() {
     var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
     cards.forEach(function (card) {
@@ -4831,6 +4876,25 @@ COLLAPSE_SCRIPT = r"""
       // 该卡片是否处于需重登状态（横幅已在）；只有这种卡片的 401 文本
       // 才是「凭据失效」—— 正常账号偶尔的错误页文本不该被误伤。
       var relogin = wbCardNeedsRelogin(card);
+      if (relogin) {
+        // 顶部外框：隐藏官方渲染的「需重新登录」badge（含装饰 span，
+        // 只遮不删——React 仍持有节点，删了会被重渲染回来）。
+        var header = card.querySelector("header");
+        if (header && header.dataset.wbBadgeHidden !== "1") {
+          header.dataset.wbBadgeHidden = "1";
+          header.classList.add("wb-header-badge-hidden");
+        }
+        // 按钮区 + 模型区灰化禁用
+        wbApplyReloginDisabled(card);
+      } else {
+        // 正常账号（或恢复登录后）：还原 header badge 与灰化
+        var header2 = card.querySelector("header");
+        if (header2 && header2.dataset.wbBadgeHidden === "1") {
+          header2.dataset.wbBadgeHidden = "";
+          header2.classList.remove("wb-header-badge-hidden");
+        }
+        wbApplyReloginEnabled(card);
+      }
       Array.prototype.slice.call(sec.children).forEach(function (div) {
         if (!div.classList) return;
         var txt = (div.textContent || "");
