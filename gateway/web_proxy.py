@@ -9233,6 +9233,19 @@ def get_current_user(autobuddy_session: Optional[str] = Cookie(None)) -> Optiona
         return None
     return db.validate_session(autobuddy_session)
 
+
+def require_user(user: Optional[str] = Depends(get_current_user)) -> str:
+    """管理 API 的统一鉴权门（2026-10-20 安全修复）。
+
+    此前 /api/* 转发端点除少数几个外都没有登录校验 —— 未登录请求也能
+    直接调 /api/import 等写操作（线上曾出现注入测试残留账号，正是从
+    这里进来的）。现在所有管理类 /api/* 端点都必须挂在有效会话上；
+    未登录返回 401，由前端登录页接管。
+    """
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已过期")
+    return user
+
 @app.get("/api/auth/status")
 async def auth_status(
     user: Optional[str] = Depends(get_current_user),
@@ -10177,7 +10190,7 @@ def _reattribute_today_usage(data: dict) -> float:
 
 
 @app.get("/api/credits/stats")
-async def credits_stats_proxy(request: Request):
+async def credits_stats_proxy(request: Request, user: "str" = Depends(require_user)):
     """过滤官方 credits/stats 中的已删除僵尸账号，只保留当前账号池真实账号，并校准汇总指标。"""
     try:
         async with _internal_client(timeout=10.0) as client:
@@ -10293,13 +10306,13 @@ async def credits_stats_proxy(request: Request):
 
 
 @app.get("/api/token-stats")
-async def token_stats_api(request: Request):
+async def token_stats_api(request: Request, user: "str" = Depends(require_user)):
     # 容器环境核心增强：接管 /api/token-stats，返回网关实测 Token 统计数据
     stats = get_aggregated_token_stats()
     return stats
 
 @app.get("/api/reqstats")
-async def reqstats_api(limit: int = 50):
+async def reqstats_api(limit: int = 50, user: "str" = Depends(require_user)):
     """请求级指标（成功率 / 耗时分位 / 最近请求）。
 
     转发到网关进程的 /reqlog 拿数据。
@@ -10331,7 +10344,7 @@ GATEWAY_MODELS_URL = os.getenv("AB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/
 
 
 @app.get("/api/account-pool-official")
-async def account_pool_get_official():
+async def account_pool_get_official(user: "str" = Depends(require_user)):
     """向官方网关直取的原始账号池状态（保留作为回退与排查对比入口）。
 
     注意：真正的 `/api/account-pool` 由下方 `account_pool_status_api()` 提供（带字段补充）。
@@ -10349,7 +10362,7 @@ async def account_pool_get_official():
 
 
 @app.get("/api/account-pool-legacy")
-async def account_pool_get_legacy():
+async def account_pool_get_legacy(user: "str" = Depends(require_user)):
     """官方账号池状态的原始转发（保留作为回退入口，供排查对比）。"""
     try:
         async with _internal_client(timeout=5.0) as client:
@@ -10362,7 +10375,7 @@ async def account_pool_get_legacy():
 
 
 @app.get("/api/account-pool")
-async def account_pool_get_v2():
+async def account_pool_get_v2(user: "str" = Depends(require_user)):
     """替官方账号池状态补上“新账号”所需的展示字段（昵称/邮箱与账号级停用状态）。
 
     背景：官方 `/api/account-pool` 只在 `selectionCounts` 里回已有调用记录的
@@ -10489,7 +10502,7 @@ async def account_pool_get_v2():
 
 
 @app.put("/api/account-pool")
-async def account_pool_put(request: Request):
+async def account_pool_put(request: Request, user: "str" = Depends(require_user)):
     """转发账号池配置更新（模式 / 启用列表 / 首选账号）。"""
     body = await request.body()
     try:
@@ -10505,7 +10518,7 @@ async def account_pool_put(request: Request):
 
 
 @app.get("/api/account-pool/selections")
-async def account_pool_selections(limit: int = 50):
+async def account_pool_selections(limit: int = 50, user: "str" = Depends(require_user)):
     """转发选账号分摊流水：各账号被分摊到的请求次数 + 最近明细。"""
     try:
         async with _internal_client(timeout=5.0) as client:
@@ -10519,7 +10532,7 @@ async def account_pool_selections(limit: int = 50):
 
 
 @app.put("/api/account-models")
-async def account_models_put(request: Request):
+async def account_models_put(request: Request, user: "str" = Depends(require_user)):
     """转发模型级禁用的切换请求（账号 x 模型）。
 
     前端点一下模型标签就走这里：网关那边只认 ``accountId`` + ``model`` + ``disabled``，
@@ -10539,7 +10552,7 @@ async def account_models_put(request: Request):
 
 
 @app.post("/api/account-models/restore")
-async def account_models_restore(request: Request):
+async def account_models_restore(request: Request, user: "str" = Depends(require_user)):
     """转发「一键恢复」请求（把某账号被禁用的模型放回）。
 
     ``scope`` 由前端给：``all`` 全放回、``auto`` 只放回巡检禁的。
@@ -10559,7 +10572,7 @@ async def account_models_restore(request: Request):
 
 
 @app.post("/api/account-pool/selections/reset")
-async def account_pool_selections_reset():
+async def account_pool_selections_reset(user: "str" = Depends(require_user)):
     """清空选账号流水，便于重新观测并发分摊。"""
     try:
         async with _internal_client(timeout=5.0) as client:
@@ -10572,7 +10585,7 @@ async def account_pool_selections_reset():
 
 
 @app.post("/api/refresh-token")
-async def refresh_token_proxy(request: Request):
+async def refresh_token_proxy(request: Request, user: "str" = Depends(require_user)):
     """转发「刷新 Token」（账号卡片菜单）。
 
     超时给到 40s：要等上游刷新接口回包，默认值太紧会把「上游慢」
@@ -10592,7 +10605,7 @@ async def refresh_token_proxy(request: Request):
 
 
 @app.post("/api/delete")
-async def delete_account_proxy(request: Request):
+async def delete_account_proxy(request: Request, user: "str" = Depends(require_user)):
     """转发「删除账号」（账号卡片菜单）。"""
     body = await request.body()
     try:
@@ -10608,7 +10621,7 @@ async def delete_account_proxy(request: Request):
 
 
 @app.get("/api/export-accounts")
-async def export_accounts_proxy(request: Request):
+async def export_accounts_proxy(request: Request, user: "str" = Depends(require_user)):
     """转发「导出账号备份」。"""
     try:
         url = GATEWAY_BASE_URL + "/export-accounts"
@@ -10624,7 +10637,7 @@ async def export_accounts_proxy(request: Request):
 
 
 @app.post("/api/import")
-async def import_accounts_proxy(request: Request):
+async def import_accounts_proxy(request: Request, user: "str" = Depends(require_user)):
     """转发「导入账号备份」（合并式，不覆盖未列出的账号）。"""
     body = await request.body()
     try:
@@ -10640,7 +10653,7 @@ async def import_accounts_proxy(request: Request):
 
 
 @app.post("/api/account-pool/toggle")
-async def account_pool_toggle(request: Request):
+async def account_pool_toggle(request: Request, user: "str" = Depends(require_user)):
     """转发账号级停用切换（点击账号卡片上的「停用 / 启用」）。"""
     body = await request.body()
     try:
@@ -10656,7 +10669,7 @@ async def account_pool_toggle(request: Request):
 
 
 @app.post("/api/account-health/probe")
-async def account_health_probe(request: Request):
+async def account_health_probe(request: Request, user: "str" = Depends(require_user)):
     """转发「检测账号」：发一次轻量鉴权请求，只回报结论、不改配置。
 
     超时给到 45s —— 探测本身要等上游回第一个字节，5s 的默认值太紧，
@@ -10676,7 +10689,7 @@ async def account_health_probe(request: Request):
 
 
 @app.get("/api/account-health/audit")
-async def account_health_audit():
+async def account_health_audit(user: "str" = Depends(require_user)):
     """转发「一致性自检」：把凭据与模型两侧的结论并排给出。
 
     超时给到 120s —— 这个接口会对每个账号跑一次凭据探测加数次模型探测，
@@ -10714,7 +10727,7 @@ async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None)
 
 
 @app.get("/api/model-health")
-async def model_health_get():
+async def model_health_get(user: "str" = Depends(require_user)):
     """巡检配置 + 可选账号 + 上次运行状态（设置页面板数据源）。"""
     return await _forward_gateway("GET", "/model-health/config")
 
@@ -10725,7 +10738,7 @@ async def model_health_get():
 # GET 只回脱敏视图（secret 只回 has_value 布尔，绝不回明文）。
 # ---------------------------------------------------------------------------
 @app.get("/api/notify")
-async def notify_get():
+async def notify_get(user: "str" = Depends(require_user)):
     try:
         return _notify.public_view()
     except Exception as e:
@@ -10734,7 +10747,7 @@ async def notify_get():
 
 
 @app.put("/api/notify")
-async def notify_put(request: Request):
+async def notify_put(request: Request, user: "str" = Depends(require_user)):
     """保存通知配置。
 
     MoviePilot 同款行为：配置就绪后**自动注册企微菜单**（幂等覆盖式更新），
@@ -10773,7 +10786,7 @@ async def notify_put(request: Request):
 
 
 @app.post("/api/notify/menu")
-async def notify_menu(request: Request):
+async def notify_menu(request: Request, user: "str" = Depends(require_user)):
     """手动注册/更新企微自定义菜单（幂等）。body: {"action": "create"|"delete"}"""
     try:
         payload = json.loads(await request.body() or b"{}")
@@ -10787,7 +10800,7 @@ async def notify_menu(request: Request):
 
 
 @app.post("/api/notify/test")
-async def notify_test(request: Request):
+async def notify_test(request: Request, user: "str" = Depends(require_user)):
     """测试连通性：可选先保存表单再真发一条。"""
     try:
         payload = json.loads(await request.body() or b"{}")
@@ -10803,7 +10816,7 @@ async def notify_test(request: Request):
 
 
 @app.post("/api/notify/probe")
-async def notify_probe(request: Request):
+async def notify_probe(request: Request, user: "str" = Depends(require_user)):
     """渠道连通性自检（不发消息）。当前支持 telegram（getMe 验 Token）。"""
     try:
         payload = json.loads(await request.body() or b"{}")
@@ -10838,7 +10851,7 @@ except ImportError:
 
 
 @app.get("/api/assistant")
-async def assistant_get():
+async def assistant_get(user: "str" = Depends(require_user)):
     """助手配置视图：provider 注册表 + 当前配置（脱敏）。"""
     try:
         return _assistant.public_view()
@@ -10848,7 +10861,7 @@ async def assistant_get():
 
 
 @app.put("/api/assistant")
-async def assistant_put(request: Request):
+async def assistant_put(request: Request, user: "str" = Depends(require_user)):
     """保存助手配置（合并式；secret 语义与通知渠道一致）。
 
     ⚠️ 2026-10-14 修复（用户反馈「点击 OpenAI 兼容接口直接卡死」）：
@@ -10914,7 +10927,7 @@ async def _assistant_probe(payload: Optional[Dict[str, Any]] = None) -> Dict[str
 
 
 @app.post("/api/assistant/test")
-async def assistant_test(request: Request):
+async def assistant_test(request: Request, user: "str" = Depends(require_user)):
     """连通性测试（MoviePilot 的 LLMTestResult 同款语义）。"""
     try:
         payload = json.loads(await request.body() or b"{}")
@@ -10926,7 +10939,7 @@ async def assistant_test(request: Request):
 
 
 @app.post("/api/assistant/models")
-async def assistant_models(request: Request):
+async def assistant_models(request: Request, user: "str" = Depends(require_user)):
     """拉取指定 provider 的模型清单（弹窗「刷新」按钮用）。"""
     try:
         payload = json.loads(await request.body() or b"{}")
@@ -10944,7 +10957,7 @@ async def assistant_models(request: Request):
 
 
 @app.post("/api/assistant/search-test")
-async def assistant_search_test(request: Request):
+async def assistant_search_test(request: Request, user: "str" = Depends(require_user)):
     """搜索引擎连通性测试（2026-10-16 新增）。
 
     用户诉求：「每个人可以在前端 UI 可以选择常见搜索引擎输入 API
@@ -11124,13 +11137,13 @@ def _wecom_handle_async(cmd: str, session_id: Optional[str]) -> None:
 
 
 @app.put("/api/model-health")
-async def model_health_put(request: Request):
+async def model_health_put(request: Request, user: "str" = Depends(require_user)):
     """更新巡检配置（开关 / 间隔 / 账号范围 / 自动启用）。"""
     return await _forward_gateway("PUT", "/model-health/config", await request.body())
 
 
 @app.post("/api/model-health/run")
-async def model_health_run(request: Request):
+async def model_health_run(request: Request, user: "str" = Depends(require_user)):
     """立即执行一轮巡检。
 
     探测是逐个账号 × 模型发真实请求，可能耗时较久，因此这里放宽超时
@@ -11156,44 +11169,44 @@ async def gateway_info_api():
 
 
 @app.get("/api/api-keys")
-async def api_keys_get():
+async def api_keys_get(user: "str" = Depends(require_user)):
     return await _forward_gateway("GET", "/api-keys/status")
 
 
 @app.post("/api/api-keys")
-async def api_keys_create(request: Request):
+async def api_keys_create(request: Request, user: "str" = Depends(require_user)):
     return await _forward_gateway("POST", "/api-keys", await request.body())
 
 
 @app.post("/api/api-keys/update")
-async def api_keys_update(request: Request):
+async def api_keys_update(request: Request, user: "str" = Depends(require_user)):
     return await _forward_gateway("POST", "/api-keys/update", await request.body())
 
 
 @app.post("/api/api-keys/reset-stats")
-async def api_keys_reset_stats(request: Request):
+async def api_keys_reset_stats(request: Request, user: "str" = Depends(require_user)):
     return await _forward_gateway("POST", "/api-keys/reset-stats", await request.body())
 
 
 @app.post("/api/api-keys/delete")
-async def api_keys_delete(request: Request):
+async def api_keys_delete(request: Request, user: "str" = Depends(require_user)):
     return await _forward_gateway("POST", "/api-keys/delete", await request.body())
 
 
 @app.post("/api/api-keys/delete-all")
-async def api_keys_delete_all():
+async def api_keys_delete_all(user: "str" = Depends(require_user)):
     return await _forward_gateway("POST", "/api-keys/delete-all")
 
 
 @app.put("/api/api-keys/config")
-async def api_keys_config(request: Request):
+async def api_keys_config(request: Request, user: "str" = Depends(require_user)):
     return await _forward_gateway("PUT", "/api-keys/config", await request.body())
 
 
 
 
 @app.post("/api/gateway-selftest")
-async def gateway_selftest():
+async def gateway_selftest(user: "str" = Depends(require_user)):
     """从容器内实测一次网关连通性。
 
     浏览器无法直接访问 18091（跨源且网关无 CORS），所以自检必须由代理侧发起：
@@ -11316,7 +11329,7 @@ def _load_accounts_for_models() -> list:
 
 
 @app.get("/api/account-models")
-async def account_models_api():
+async def account_models_api(user: "str" = Depends(require_user)):
     """按账号返回「可用模型 + 已调用模型」，供账号卡片动态展示。
 
     两个数据源合并，缺一不可：
@@ -11508,14 +11521,14 @@ def _wb_daily_client(timeout: float = 30.0) -> httpx.AsyncClient:
 
 
 @app.get("/api/wb-daily/config")
-async def wb_daily_config_get():
+async def wb_daily_config_get(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/config")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.post("/api/wb-daily/config")
-async def wb_daily_config_post(request: Request):
+async def wb_daily_config_post(request: Request, user: "str" = Depends(require_user)):
     body = await request.body()
     async with _wb_daily_client() as client:
         r = await client.post(f"{WB_DAILY_INTERNAL}/api/wb-daily/config", content=body, headers={"Content-Type": "application/json"})
@@ -11523,35 +11536,35 @@ async def wb_daily_config_post(request: Request):
 
 
 @app.get("/api/wb-daily/accounts")
-async def wb_daily_accounts():
+async def wb_daily_accounts(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/accounts")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/catalog")
-async def wb_daily_catalog():
+async def wb_daily_catalog(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/catalog")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/runs")
-async def wb_daily_runs():
+async def wb_daily_runs(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/runs")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/run-accounts/{job_id}")
-async def wb_daily_run_accounts(job_id: str):
+async def wb_daily_run_accounts(job_id: str, user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/run-accounts/{job_id}")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/tasks")
-async def wb_daily_tasks(limit: int = 200, account: Optional[str] = None):
+async def wb_daily_tasks(limit: int = 200, account: Optional[str] = None, user: "str" = Depends(require_user)):
     """任务台账：任务维度的记录（面板「任务记录」卡片）。"""
     async with _wb_daily_client() as client:
         params = {"limit": limit}
@@ -11621,7 +11634,7 @@ def _merge_checkin_credits(payload: Any) -> Dict[str, Any]:
 
 
 @app.get("/api/wb-daily/credit-summary")
-async def wb_daily_credit_summary():
+async def wb_daily_credit_summary(user: "str" = Depends(require_user)):
     """每日任务积分聚合：今日 / 签到 / 任务 / 累计（转发到 wb-daily 服务）。"""
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/credit-summary")
@@ -11638,7 +11651,7 @@ async def wb_daily_credit_summary():
 
 
 @app.get("/api/wb-daily/task-summary")
-async def wb_daily_task_summary():
+async def wb_daily_task_summary(user: "str" = Depends(require_user)):
     """任务台账聚合：每个任务项最近一次结果 + 成功次数。"""
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/task-summary")
@@ -11646,35 +11659,35 @@ async def wb_daily_task_summary():
 
 
 @app.post("/api/wb-daily/run")
-async def wb_daily_run():
+async def wb_daily_run(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.post(f"{WB_DAILY_INTERNAL}/api/wb-daily/run")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/jobs")
-async def wb_daily_jobs():
+async def wb_daily_jobs(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/jobs")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/status/{job_id}")
-async def wb_daily_status(job_id: str):
+async def wb_daily_status(job_id: str, user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/status/{job_id}")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.delete("/api/wb-daily/abort/{job_id}")
-async def wb_daily_abort(job_id: str):
+async def wb_daily_abort(job_id: str, user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.delete(f"{WB_DAILY_INTERNAL}/api/wb-daily/abort/{job_id}")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/wb-daily/health")
-async def wb_daily_health():
+async def wb_daily_health(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/health")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")

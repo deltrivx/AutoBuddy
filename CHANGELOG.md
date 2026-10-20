@@ -31,6 +31,14 @@
 
 ---
 
+## [v1.0.8] - 2026-10-20
+
+<!-- summary: 安全修复——WebUI 全部 54 个管理端点补登录鉴权（此前 /api/import 等写操作未登录可直接调用，线上曾被写入注入测试账号） -->
+
+### 安全
+
+- **管理端点登录鉴权门**：WebUI `/api/*` 转发端点此前除少数外均无登录校验——未登录请求可直接调用 `/api/import`、`/api/delete`、`/api/refresh-token`、`/api/account-pool/toggle` 等写操作（本次线上出现 21 条注入测试残留账号即由此进入）。现新增 `require_user` 统一依赖，全部 54 个管理端点强制登录会话，未登录返回 401；登录/登出/头像/回调/favicon/gateway-info 等公开端点白名单放行。
+
 ## [v1.0.7] - 2026-10-20
 
 <!-- summary: 401 卡片视觉精修：提示块对齐正常卡片官方区高度（112px 实测），顶部外框官方「需重新登录」badge 隐藏，按钮区/模型区灰化禁用 -->
@@ -5125,7 +5133,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...HEAD
+[v1.0.8]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...v1.0.8
 [v1.0.7]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.6...v1.0.7
 [v1.0.6]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.5...v1.0.6
 [v1.0.5]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.4...v1.0.5
