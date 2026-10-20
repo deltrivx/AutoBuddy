@@ -223,6 +223,23 @@ def delete_key(key_id: str) -> bool:
     return changed
 
 
+def reset_key_stats(key_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """重置密钥统计（工单第 4 件）：callCount / lastUsedAt 清零。
+
+    **密钥本身不动** —— 客户端持有的凭据继续有效，只清计数。
+    这是运维动作（想让统计口径从头开始），不是换钥。
+    """
+    with _LOCK:
+        for record in _STATE["keys"]:
+            if str(record.get("id")) != str(key_id):
+                continue
+            record["callCount"] = 0
+            record["lastUsedAt"] = None
+            _save_locked()
+            return _public(record), None
+    return None, "key not found"
+
+
 def delete_all_keys() -> int:
     with _LOCK:
         count = len(_STATE["keys"])

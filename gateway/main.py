@@ -87,7 +87,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.5"
+VERSION_DEFAULT = "1.0.6"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -882,6 +882,10 @@ def _load_pool_config() -> Dict[str, Any]:
         "mode": "auto",  # auto | manual
         "enabledAccountIds": [],  # 空数组表示所有账号启用
         "manualAccountId": None,
+        # 调用分流（2026-10-20 工单第 3 件）：all=国内+国外同时调用（默认，保持
+        # 现有行为）；cn=只走国内账号；ai=只走国际版账号。只影响自动轮询的
+        # 候选集，不改变白名单与停用语义。
+        "callRouting": "all",  # all | cn | ai
         "updatedAt": None,
     }
     try:
@@ -986,6 +990,15 @@ def _enabled_accounts(accounts: List[Dict[str, Any]], config: Dict[str, Any],
         disabled = account_policy.disabled_ids()
         if disabled:
             candidates = [a for a in candidates if str(_account_id(a)) not in disabled]
+    # 调用分流（工单第 3 件）：cn=只走国内、ai=只走国际版、all=不过滤（默认）。
+    # 只在自动轮询路径收窄候选集；显式指定的路径传 include_disabled=True，
+    # 也顺带不过滤 variant —— 用户点名要用某个账号时不该被档位拦住。
+    if not include_disabled:
+        routing = str(config.get("callRouting") or "all").strip().lower()
+        if routing == "cn":
+            candidates = [a for a in candidates if a.get("variant") != "ai"]
+        elif routing == "ai":
+            candidates = [a for a in candidates if a.get("variant") == "ai"]
     now_ms = int(time.time() * 1000)
     return [a for a in candidates if _account_is_usable(a, now_ms)]
 
@@ -2182,6 +2195,15 @@ def update_account_pool(config: Dict[str, Any]):
     else:
         manual_id = current.get("manualAccountId")
 
+    # 调用分流：未提交沿用原值；提交则校验合法档位（all/cn/ai）。
+    if "callRouting" in config:
+        call_routing = str(config.get("callRouting") or "all").strip().lower()
+        if call_routing not in ("all", "cn", "ai"):
+            raise HTTPException(status_code=400,
+                                detail="callRouting must be all, cn or ai")
+    else:
+        call_routing = str(current.get("callRouting") or "all")
+
     # 切到 manual 时必须指名一个**有效的**账号，否则请求会被路由到空处。
     # 未提交 manualAccountId 而当前也没有可用值时，退回 auto 而不是报错 ——
     # 「只想改白名单」的请求不该因为历史配置里没有首选账号而失败。
@@ -2195,6 +2217,7 @@ def update_account_pool(config: Dict[str, Any]):
         "mode": mode,
         "enabledAccountIds": enabled,
         "manualAccountId": manual_id,
+        "callRouting": call_routing,
     })
     return {"ok": True, "config": saved, "status": account_pool_status()}
 
@@ -2688,6 +2711,8 @@ def _gateway_info() -> Dict[str, Any]:
             "usable": len([a for a in accounts if _account_is_usable(a, now_ms)]),
             "inPool": len(enabled),
             "mode": config.get("mode"),
+            # 调用分流当前档位（all/cn/ai），设置页三档开关用。
+            "callRouting": config.get("callRouting") or "all",
         },
         "features": {
             "stream": True,
@@ -2749,6 +2774,21 @@ def api_keys_update(payload: Dict[str, Any]):
     if patch.get("enabled") is False:
         _guard_last_enabled_key(str(key_id))
     record, error = api_keys.update_key(str(key_id), patch)
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+    return {"ok": True, "key": record, "status": api_keys_status()}
+
+
+@app.post("/api-keys/reset-stats")
+def api_keys_reset_stats(payload: Dict[str, Any]):
+    """重置单个密钥的统计（callCount / lastUsedAt 清零，密钥本身不变）。
+
+    前端在高危确认弹窗之后调用 —— 后端只做幂等动作，防线在 UI 层。
+    """
+    key_id = payload.get("id")
+    if not key_id:
+        raise HTTPException(status_code=400, detail="id is required")
+    record, error = api_keys.reset_key_stats(str(key_id))
     if error:
         raise HTTPException(status_code=404, detail=error)
     return {"ok": True, "key": record, "status": api_keys_status()}

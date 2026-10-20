@@ -345,6 +345,33 @@ COLLAPSE_SCRIPT = r"""
     gap: 8px;
     margin-top: 10px;
   }
+  /* 「需要重新登录」提示文字（官方积分包区 401 错误块替换用，
+     2026-10-20 工单）：标题 + 说明句。 */
+  .wb-pool-relogin-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #b91c1c;
+    line-height: 1.5;
+  }
+  .wb-pool-relogin-desc {
+    font-size: 11.5px;
+    color: #7f1d1d;
+    line-height: 1.6;
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  /* 官方积分包区 401 错误文本的替换样式（2026-10-20 工单第三次澄清）：
+     位置在操作按钮上方，样式比控制条横幅轻（这里是官方内容区的位置，
+     不能喧宾夺主），但一眼可见。 */
+  .wb-official-relogin {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px dashed rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.07);
+  }
   .wb-pool-btn {
     font-size: 11px;
     line-height: 1.8;
@@ -4498,7 +4525,11 @@ COLLAPSE_SCRIPT = r"""
     if (!cards.length) return;
 
     var pending = cards.filter(function (c) {
-      return !c.querySelector(".wb-am-box") && c.querySelector("h3");
+      if (c.querySelector(".wb-am-box")) return false;
+      if (!c.querySelector("h3")) return false;
+      // 401 需重新登录的账号：中间功能区整块换成横幅（2026-10-20 工单），
+      // 模型标签区**不注入** —— 凭据已坏，模型清单没有意义，只会稀释横幅。
+      return !wbCardNeedsRelogin(c);
     });
     if (!pending.length) return;
 
@@ -4529,6 +4560,9 @@ COLLAPSE_SCRIPT = r"""
         if (card.querySelector(".wb-am-box")) return;
         var h3 = card.querySelector("h3");
         if (!h3) return;
+        // 401 需重新登录：模型区不渲染（pending 过滤之后再兜一道 ——
+        // wbPoolCache 可能在这张卡片通过 pending 检查之后才到位）。
+        if (wbCardNeedsRelogin(card)) return;
 
         var entry = byName[(h3.textContent || "").trim()] || fallback;
         var models = (entry.models && entry.models.length) ? entry.models : fallback.models;
@@ -4781,6 +4815,60 @@ COLLAPSE_SCRIPT = r"""
         wbToast("请求失败，请刷新页面后重试", "err");
         if (done) done(null);
       });
+  }
+
+  // 401 时官方积分包区会把上游错误页**原始 HTML** 当文本渲染出来
+  // （一长串 <html><head><title>401 Authorization Required…openresty…），
+  // 出现在操作按钮上方 —— 哥哥三次反馈要把它换成一句「需要重新登录」。
+  // 这块 DIV 是官方 React 渲染的（class 带 text-destructive，错误原文
+  // 同时挂在内文和 title 属性上）；我们不猜结构，只按「内容是 401 错误页」
+  // 这个特征识别，整块替换为可读提示。
+  function wbReplaceReloginErrorBlocks() {
+    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
+    cards.forEach(function (card) {
+      var sec = card.querySelector("section");
+      if (!sec) return;
+      // 该卡片是否处于需重登状态（横幅已在）；只有这种卡片的 401 文本
+      // 才是「凭据失效」—— 正常账号偶尔的错误页文本不该被误伤。
+      var relogin = wbCardNeedsRelogin(card);
+      Array.prototype.slice.call(sec.children).forEach(function (div) {
+        if (!div.classList) return;
+        var txt = (div.textContent || "");
+        var title = (div.getAttribute("title") || "");
+        var is401Block = /401\s*(Authorization\s*Required)?/i.test(txt) && txt.indexOf("<html>") >= 0
+          || /<html>[\s\S]*401[\s\S]*Authorization[\s\S]*Required/i.test(title);
+        if (!is401Block) return;
+        if (!relogin) return;   // 正常账号不动（官方自己会重试刷新）
+        if (div.dataset.wbReloginDone === "1") return;
+        div.dataset.wbReloginDone = "1";
+        div.textContent = "";
+        div.removeAttribute("title");
+        div.className = "wb-official-relogin";
+        var t1 = document.createElement("div");
+        t1.className = "wb-pool-relogin-title";
+        t1.textContent = "⛔ 需要重新登录";
+        var t2 = document.createElement("div");
+        t2.className = "wb-pool-relogin-desc";
+        t2.textContent = "这个账号的登录凭据已失效（上游返回 401），积分与用量信息暂时无法读取。重新登录后自动恢复。";
+        div.appendChild(t1);
+        div.appendChild(t2);
+      });
+    });
+  }
+
+  // 判断一张账号卡片是否处于「需重新登录」状态（2026-10-20 工单）。
+  // 数据源是账号池缓存（/api/account-pool 的 needsRelogin 标记）；
+  // 卡片没打 data-wb-acc 标记（还没轮到控制条注入）时返回 false，
+  // 让首次渲染自然跳过，等控制条注入打了标记后再生效。
+  function wbCardNeedsRelogin(card) {
+    if (!card) return false;
+    var id = card.getAttribute("data-wb-acc");
+    if (!id || !wbPoolCache || !wbPoolCache.accounts) return false;
+    var hit = null;
+    wbPoolCache.accounts.forEach(function (a) {
+      if (a && String(a.id) === String(id)) hit = a;
+    });
+    return !!(hit && hit.needsRelogin);
   }
 
   // 构建单张账号卡片的「账号池控制条」。既给 injectAccountPool 首次注入用，
@@ -5457,6 +5545,37 @@ COLLAPSE_SCRIPT = r"""
     stRow.appendChild(stBadges);
     card.appendChild(stRow);
 
+    // ---- 3.5 调用分流三档开关（工单第 3 件）----
+    // all=全部账号（默认，保持现有行为）；cn=只走国内；ai=只走国际版。
+    // 只影响自动轮询的候选集；显式指定账号不受档位限制。
+    var routingRow = wbEl("div", "wb-api-row");
+    var routingMain = wbEl("div", "wb-api-main");
+    routingMain.appendChild(wbEl("div", "wb-api-label", "调用分流"));
+    routingMain.appendChild(wbEl("div", "wb-api-desc",
+      "自动轮询时使用哪类账号。默认「全部账号」即现有行为；切换后立即生效，已显式指定账号的调用不受影响。"));
+    routingRow.appendChild(routingMain);
+    var routingBtns = wbEl("div", null);
+    routingBtns.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;";
+    var currentRouting = String((accounts.callRouting) || "all").toLowerCase();
+    var routingChoices = [
+      ["all", "全部账号"],
+      ["cn", "国内账号"],
+      ["ai", "国外账号"]
+    ];
+    routingChoices.forEach(function (item) {
+      var on = currentRouting === item[0];
+      var b = wbEl("button", "wb-api-btn" + (on ? " wb-api-btn-on" : ""), item[1]);
+      if (on) b.title = "当前档位";
+      b.onclick = function () {
+        if (on) return;
+        wbApiAction("/api/account-pool", "PUT", { callRouting: item[0] },
+          "调用分流已切换为「" + item[1] + "」");
+      };
+      routingBtns.appendChild(b);
+    });
+    routingRow.appendChild(routingBtns);
+    card.appendChild(routingRow);
+
     // ---- 4. 密钥校验开关 ----
     var authRow = wbEl("div", "wb-api-row");
     var authMain = wbEl("div", "wb-api-main");
@@ -5580,8 +5699,32 @@ COLLAPSE_SCRIPT = r"""
         copyBtn.onclick = function () { wbCopy(k.key, "已复制该密钥明文"); };
         line.appendChild(copyBtn);
 
+        /* 工单第 4 件：编辑（改名）+ 重置（清统计）。
+           编辑走 prompt 改名，非高危不打扰；重置是高危动作，
+           与停用/删除一样必须二次确认 —— 误点一次就把累计计数抹了。 */
+        var editBtn = wbEl("button", "wb-api-btn", "编辑");
+        editBtn.onclick = function () {
+          var name = window.prompt("修改密钥名称（便于区分调用方）：", k.name || "");
+          if (name === null) return;
+          name = name.trim();
+          if (!name || name === (k.name || "")) { wbToast("名称未变"); return; }
+          wbApiAction("/api/api-keys/update", "POST", { id: k.id, name: name }, "已重命名为「" + name + "」");
+        };
+        line.appendChild(editBtn);
+
+        var resetBtn = wbEl("button", "wb-api-btn", "重置统计");
+        resetBtn.title = "清零该密钥的调用计数与最近使用时间，密钥本身不变";
+        resetBtn.onclick = function () {
+          if (!window.confirm("确认重置密钥「" + (k.name || "未命名") + "」的统计？\n" +
+              "累计调用 " + (k.callCount || 0) + " 次将被清零，且无法恢复（密钥本身不受影响）。")) return;
+          wbApiAction("/api/api-keys/reset-stats", "POST", { id: k.id }, "已重置该密钥统计");
+        };
+        line.appendChild(resetBtn);
+
         var toggleBtn = wbEl("button", "wb-api-btn", k.enabled ? "停用" : "启用");
         toggleBtn.onclick = function () {
+          if (k.enabled && !window.confirm("确认停用密钥「" + (k.name || "未命名") + "」？\n" +
+              "使用它的客户端将立即失去访问权限（401）。")) return;
           wbApiAction("/api/api-keys/update", "POST", { id: k.id, enabled: !k.enabled },
             k.enabled ? "已停用该密钥" : "已启用该密钥");
         };
@@ -5589,7 +5732,8 @@ COLLAPSE_SCRIPT = r"""
 
         var delBtn = wbEl("button", "wb-api-btn wb-api-btn-danger", "删除");
         delBtn.onclick = function () {
-          if (!window.confirm("确认删除密钥「" + (k.name || "未命名") + "」？使用它的客户端会立即失去访问权限。")) return;
+          if (!window.confirm("确认删除密钥「" + (k.name || "未命名") + "」？\n" +
+              "该操作不可恢复，使用它的客户端会立即失去访问权限。")) return;
           wbApiAction("/api/api-keys/delete", "POST", { id: k.id }, "已删除");
         };
         line.appendChild(delBtn);
@@ -8615,6 +8759,7 @@ COLLAPSE_SCRIPT = r"""
     enforceTitle();
     injectAccountModels();
     injectAccountPool();
+    wbReplaceReloginErrorBlocks();
     wbPinAccountBlocks();
     injectApiAccess();
     injectModelHealth();
@@ -10206,6 +10351,18 @@ async def account_pool_get_v2():
         needs_relogin = refresh_guard.needs_relogin_ids() or set()
     except Exception as e:
         print(f"[account-pool] 读刷新失效标记失败: {e}")
+    # 账号档案里自带的 needs_relogin（如官方禁用 / 重登失败写回 accounts.json
+    # 的 needs_relogin_reason）也要并入 —— refresh_guard 只记「运行时刷新失败」，
+    # accounts.json 里的标记是另一路来源，漏了它 Mr.H 这种号就只在角落里
+    # 静悄悄挂着，横幅永远不出来（2026-10-20 工单：必须区域级醒目显示）。
+    relogin_reasons = {}
+    for src_acc in pool_accounts.values():
+        if src_acc.get("needs_relogin"):
+            aid2 = str(src_acc.get("id") or src_acc.get("uid") or "")
+            if aid2:
+                needs_relogin.add(aid2)
+                relogin_reasons[aid2] = str(
+                    src_acc.get("needs_relogin_reason") or "").strip()
 
     enabled_ids = set(str(x) for x in (data.get("enabledAccountIds") or []))
     all_default = bool(data.get("allEnabledByDefault"))
@@ -10229,8 +10386,12 @@ async def account_pool_get_v2():
         # 账号级停用（普通正常账号也有 disabled=false，前端据此渲染启用态）
         item["disabled"] = aid in disabled_map
         item["disabledSource"] = disabled_map.get(aid)
-        # 刷新令牌已失效（需人工重新登录）
+        # 刷新令牌已失效（需人工重新登录）；原因一并带给前端横幅
         item["needsRelogin"] = aid in needs_relogin
+        if item["needsRelogin"]:
+            rr = str(src.get("needs_relogin_reason") or "").strip() \
+                or relogin_reasons.get(aid, "")
+            item["reloginReason"] = rr or "刷新令牌被上游拒绝"
         # 是否入池：给前端一个明确的布尔值，不必自己推白名单语义
         if all_default:
             item["enabled"] = not item["disabled"]
@@ -10253,6 +10414,9 @@ async def account_pool_get_v2():
             "disabled": aid in disabled_map,
             "disabledSource": disabled_map.get(aid),
             "needsRelogin": aid in needs_relogin,
+            "reloginReason": (str(src.get("needs_relogin_reason") or "").strip()
+                              or relogin_reasons.get(aid, "")
+                              or "刷新令牌被上游拒绝") if aid in needs_relogin else None,
             "count": 0,
         })
 
@@ -10940,6 +11104,11 @@ async def api_keys_create(request: Request):
 @app.post("/api/api-keys/update")
 async def api_keys_update(request: Request):
     return await _forward_gateway("POST", "/api-keys/update", await request.body())
+
+
+@app.post("/api/api-keys/reset-stats")
+async def api_keys_reset_stats(request: Request):
+    return await _forward_gateway("POST", "/api-keys/reset-stats", await request.body())
 
 
 @app.post("/api/api-keys/delete")
