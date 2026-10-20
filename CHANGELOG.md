@@ -31,6 +31,30 @@
 
 ---
 
+## [v1.0.10] - 2026-10-22
+
+<!-- summary: 账号搜索框挪到档位切换行右端并对齐官方尺寸，每日任务签到/执行两个开关彻底拆分独立持久化，账号签到与凭据板块补背景框，设备指纹与 UA 改为动态池化隔离并覆盖新账号，关于页「说明」项移除 -->
+
+### 新增
+
+- **指纹 / UA 动态池化隔离（覆盖新账号）**：`gateway/fingerprint.py` 新增 `ensure_account_fingerprints()` / `account_uid()`，分配前先扫全库收集已占用的 machineId / MAC / 硬件档位 / UA 四套集合，新画像的每一项都不得与任何既有账号相同；池容量耗尽时按 Chrome build/patch 顺延继续产出唯一 UA。触发点有两处：网关启动时给全池账号补齐（`main.py` lifespan 钩子），`wb_daily` 每次收集参与账号时再补一次 —— 账号是随时加进来的，启动钩子跑完之后新加的账号靠第二处兜住，不会漏也不会复用别人的那一套。存量账号命中即原样返回，画像不漂移。
+
+### 变更
+
+- **账号搜索框位置与尺寸**：从「账号卡片上方」挪到「国内版 / 国际版」档位切换的**同一行右端**。定位走「文本 + 结构」双判据（先按 `aria-label` 含「档位」的 tablist，再退回到含「国内版/国际版」文本的按钮父级），把档位容器改成横向 flex + 两端对齐，搜索框追加到行尾即落在最右端。尺寸逐像素对齐官方切换组：容器 h-9 = 36px、输入框 h-7 = 28px、圆角 rounded-lg = 10px、字号 text-xs = 12px、字重 font-medium = 500、白底 + 1px 边框（对齐官方未选中档位按钮）；`padding-top: 6px` 抵消 tablist 的 `padding: 4px`，修掉两者 4px 的垂直错位。移动端（≤640px）退到下一行全宽，不撑破档位行。
+- **每日任务开关彻底拆分**：「启用自动签到」更名为**启动补签**（容器起来时核验一次服务端状态、未签到账号补签），与「启用签到调度」「启用任务调度」并列放在签到调度卡内，三个开关语义清晰、各自独立持久化（`checkin_enabled` / `checkin_schedule_enabled` / `task_schedule_enabled` 三个配置字段分开读写），任一个改动不影响另外两个。
+- **账号签到与凭据板块补背景框**：该板块此前因 innerHTML 的 div 层级写漏一层而被踢出所属卡片，成了 `wb-daily-wrap` 的直接子元素 —— 没有卡片的白底 / 1px 边框 / 16px 圆角，也没有内边距，看起来像一块没框的内容贴在页面上。现重新包回 `.wb-api-card`，与同页「任务清单 / 任务记录 / 执行记录」用同一个圆角、边框、底色、内边距，左右边缘严格对齐（实测同为 x=147、宽 1116）。同时去掉 innerHTML 里多余的 `</div>`（它会反过来把 `wb-daily-wrap` 提前关掉，导致整页作用域样式失效）。
+
+### 移除
+
+- **设置 → 关于 → 说明**：整项及其文本（「非官方项目，与 WorkBuddy / CodeBuddy 官方无任何关联……」）从关于页移除，对应 `.wb-about-note` CSS 规则一并下线。「关于」卡片保留项目名 + 版本、运行位置、当前规模三块。
+
+### 修复
+
+- **`_bump_ua` 去重静默失效**：旧实现先 `build += step` 再 `replace` 已自增的版本号串，old 串在原 UA 里根本不存在，`str.replace` 静默返回原串 —— 于是「bump 过的 UA」与原 UA 一模一样，池化去重完全失效（实测 30 个账号 UA 只有 12 个唯一，重复 18 次）。现 `replace` 用原始版本号作 old 串、自增后的作 new 串，30 个账号 UA 全部唯一。
+
+---
+
 ## [v1.0.9] - 2026-10-21
 
 <!-- summary: 账号池白名单彻底收紧 + 负载均衡平摊 + 每日任务安全分级与防风控加固 + 国际版每日活跃接入 + 全量账号独立硬件指纹 -->
@@ -5161,7 +5185,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...HEAD
+[v1.0.10]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...v1.0.10
 [v1.0.9]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...v1.0.9
 [v1.0.8]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...v1.0.8
 [v1.0.7]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.6...v1.0.7

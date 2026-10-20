@@ -402,27 +402,61 @@ COLLAPSE_SCRIPT = r"""
   .wb-header-badge-hidden span:not(:has(button)):not(:has(svg[class*=chevron])) {
     visibility: hidden;
   }
-  /* 账号管理搜索框（需求 3） */
+  /* 账号管理搜索框（需求 3 + 2026-10-21 位置微调）
+     ──────────────────────────────────────────────────────────
+     位置：官方「国内版 / 国际版」档位切换的**同一行、右端对齐**。
+     官方结构实测（生产 DOM）：
+       <div class="flex items-start justify-between gap-4">        ← 页头行
+         <div class="min-w-0">                                     ← 左列
+           <h1>账号管理</h1><p>…</p>
+           <div class="flex flex-col mt-4 gap-0">                  ← 档位容器
+             <div role="tablist" aria-label="WorkBuddy 档位"
+                  class="inline-flex h-9 w-fit items-center rounded-lg
+                         bg-muted p-1 text-muted-foreground">      ← 切换组
+               <button class="inline-flex h-7 … rounded-md px-3 text-xs">国内版</button>
+               …
+     把搜索框插成「档位容器」的第二个子元素（紧跟切换组之后），
+     并让档位容器改横向 flex + justify-between，于是搜索框自然落在
+     同一行的最右端。
+     尺寸对齐官方切换组：容器 h-9=36px、圆角 10px（rounded-lg）、
+     字号 12px（text-xs）、字重 500 —— 与切换按钮视觉完全一致。 */
+  /* ⚠️ 垂直对齐的坑：wrap 与 tablist 都是 h-36，但 tablist 内部有 padding:4px，
+     里面的按钮实际落在 y+4。若 wrap 用 align-items:center，搜索框会比档位按钮
+     高 4px（实测 delta=-4，一眼能看出不在一个水平线上）。
+     这里 wrap 高 36px 但用 padding-top 抵消 tablist 的内边距 + 微调，
+     使搜索框与档位按钮**逐像素对齐**（实测 delta 1px，肉眼同一水平线）。 */
   .wb-acc-search-wrap {
     display: inline-flex;
     align-items: center;
-    margin-right: 12px;
-    margin-bottom: 8px;
+    height: 36px;                 /* 对齐官方切换组 h-9 */
+    padding-top: 6px;             /* 抵消 tablist 的 padding:4px + 视觉居中微调 */
+    box-sizing: border-box;
+    margin-left: 8px;
+    flex: 0 0 auto;
     vertical-align: middle;
   }
   .wb-acc-search-box {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(120, 120, 120, 0.08);
-    border: 1px solid rgba(120, 120, 120, 0.25);
-    border-radius: 8px;
-    padding: 4px 10px;
+    height: 28px;                 /* 对齐官方切换按钮 h-7 */
+    box-sizing: border-box;
+    /* 视觉对齐官方「未选中档位按钮」：白底 + 1px 边框 + radius 10px。
+       官方实测（computed style）：
+         tablist  bg=oklch(0.96 0.004 264)（muted） radius=12px padding=4px
+         button  bg=oklch(1 0 0)（白）       radius=10px h=28px
+                   font-size 12px / weight 500 / padding 0 12px
+       搜索框要做成「第三个档位按钮」的样子，所以用白底而不是 muted 底。 */
+    background: #ffffff;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
+    border-radius: 10px;          /* 对齐官方按钮 rounded-md */
+    padding: 0 10px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
     transition: border-color 0.15s ease, background 0.15s ease;
   }
   .wb-acc-search-box:focus-within {
     border-color: rgba(59, 130, 246, 0.65);
-    background: rgba(120, 120, 120, 0.12);
+    background: #ffffff;
   }
   .wb-acc-search-icon {
     width: 14px;
@@ -433,13 +467,20 @@ COLLAPSE_SCRIPT = r"""
   .wb-acc-search-input {
     border: none;
     background: transparent;
-    font-size: 12px;
+    font-size: 12px;              /* 对齐官方 text-xs */
+    font-weight: 500;             /* 对齐切换按钮 font-medium */
+    line-height: 28px;
     color: var(--foreground, #374151);
     outline: none;
-    width: 220px;
+    width: 200px;
+    min-width: 0;
   }
-  @media (max-width: 560px) {
-    .wb-acc-search-input { width: 140px; }
+  /* 移动端：不撑破档位行 —— 搜索框退到下一行但仍与切换组左对齐，
+     避免 iPhone 上两个控件挤在同一行互相压扁（上次移动端漏看的教训）。 */
+  @media (max-width: 640px) {
+    .wb-acc-search-wrap { margin-left: 0; width: 100%; height: 36px; padding-top: 0; }
+    .wb-acc-search-box { width: 100%; }
+    .wb-acc-search-input { width: 100%; }
   }
   .wb-acc-search-count {
     font-size: 11px;
@@ -447,6 +488,7 @@ COLLAPSE_SCRIPT = r"""
     background: rgba(120, 120, 120, 0.15);
     padding: 1px 6px;
     border-radius: 999px;
+    flex: 0 0 auto;
   }
   .wb-pool-btn {
     font-size: 11px;
@@ -1088,11 +1130,8 @@ COLLAPSE_SCRIPT = r"""
     background: rgba(120, 120, 120, 0.12);
     border-color: rgba(120, 120, 120, 0.55);
   }
-  .wb-about-note {
-    font-size: 10px;
-    line-height: 1.8;
-    color: var(--muted-foreground, #9ca3af);
-  }
+  /* .wb-about-note 的样式随「说明」那一项一起下线（2026-10-22 用户要求），
+     这里不再保留规则 —— 留着只会让以后读代码的人以为还有地方在用。 */
   /* 「运行位置」用两列网格而不是一句带分隔符的长文本 ——
      路径很长而端口很短，挤在一行里换行后必然对不齐，读起来像排版坏了。
      网格的标签列取 max-content，值列吃掉剩余宽度，天然左对齐。 */
@@ -5492,26 +5531,50 @@ COLLAPSE_SCRIPT = r"""
   }
 
   // 需求 3：账号管理页面搜索框注入与即时过滤
-  // 在账号卡片上方，OAuth扫码添加下方，四个功能按钮前方增加搜索功能
-  function wbInjectAccountSearch() {
-    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
-    if (!cards.length) return;
-    var listParent = cards[0].parentElement;
-    if (!listParent) return;
+  // 2026-10-21 位置微调（用户要求）：放到「国内版 / 国际版」档位切换的
+  // **后方、同一行、右端对齐**，尺寸与切换按钮（h-7 / rounded-lg / text-xs）对齐。
+  // 官方 DOM 实测：
+  //   div.flex.items-start.justify-between.gap-4      ← 页头行
+  //     └ div.min-w-0
+  //         └ div.flex.flex-col.mt-4.gap-0           ← 档位容器（tab 的外层）
+  //             └ div[role=tablist][aria-label="WorkBuddy 档位"]
+  //                 .inline-flex.h-9.w-fit.items-center.rounded-lg.bg-muted.p-1
+  // 定位走「文本 + 结构」双判据，不依赖易变的 class 名：
+  //   1. 先找 aria-label 含「档位」的 tablist（最稳，官方自己标了语义）；
+  //   2. 找不到再退回到「含 国内版/国际版 两个按钮」的容器。
+  function wbFindVariantSwitchGroup() {
+    var groups = document.querySelectorAll('[role="tablist"], [role="radiogroup"]');
+    for (var i = 0; i < groups.length; i++) {
+      var al = (groups[i].getAttribute("aria-label") || "");
+      if (al.indexOf("档位") >= 0) return groups[i];
+    }
+    var btns = document.querySelectorAll("button");
+    for (var j = 0; j < btns.length; j++) {
+      var t = (btns[j].textContent || "").trim();
+      if (t === "国内版" || t === "国际版") return btns[j].parentElement;
+    }
+    return null;
+  }
 
+  function wbInjectAccountSearch() {
     // 避免重复注入
     if (document.getElementById("wb-account-search-bar")) return;
 
-    // 寻找 OAuth 扫码添加下方、账号卡片上方的四个功能按钮所在的工具栏
-    var targetToolbar = null;
-    var prev = listParent.previousElementSibling;
-    while (prev) {
-      var btns = prev.querySelectorAll("button");
-      if (btns && btns.length >= 1) {
-        targetToolbar = prev;
-        break;
-      }
-      prev = prev.previousElementSibling;
+    var group = wbFindVariantSwitchGroup();
+    if (!group || !group.parentElement) return;   // 不在这页 / 结构变了 → 安静退出
+
+    // 档位容器（官方 flex flex-col mt-4 gap-0）：改成横向 + 两端对齐，
+    // 切换组在左、搜索框在右 —— 同一行右端对齐。
+    var row = group.parentElement;
+    if (row.dataset.wbSearchRow !== "1") {
+      row.dataset.wbSearchRow = "1";
+      row.style.display = "flex";
+      row.style.flexDirection = "row";
+      row.style.alignItems = "center";
+      row.style.justifyContent = "space-between";
+      row.style.flexWrap = "wrap";
+      row.style.gap = "8px";
+      row.style.width = "100%";
     }
 
     var searchWrap = document.createElement("div");
@@ -5526,16 +5589,8 @@ COLLAPSE_SCRIPT = r"""
         '<span id="wb-account-search-count" class="wb-acc-search-count" style="display:none"></span>' +
       '</div>';
 
-    if (targetToolbar) {
-      // 插入到四个功能按钮的前方
-      targetToolbar.insertBefore(searchWrap, targetToolbar.firstChild);
-    } else if (listParent.parentElement) {
-      // 兜底插入在卡片容器正前方
-      listParent.parentElement.insertBefore(searchWrap, listParent);
-    } else {
-      // 容器本身没有父节点（极少见）：退回追加在容器内最前面，绝不抛异常
-      listParent.insertBefore(searchWrap, listParent.firstChild);
-    }
+    // 插入在档位切换组的**后方**（同一父级内追加到末尾 = 同行最右端）
+    row.appendChild(searchWrap);
 
     var input = searchWrap.querySelector("#wb-account-search-input");
     var countSpan = searchWrap.querySelector("#wb-account-search-count");
@@ -7688,16 +7743,11 @@ COLLAPSE_SCRIPT = r"""
     card.appendChild(scaleRow);
 
     // ---- 4. 免责说明 ----
-    var noteRow = wbEl("div", "wb-api-row wb-api-row-stack");
-    var noteMain = wbEl("div", "wb-api-main");
-    noteMain.appendChild(wbEl("div", "wb-api-label", "说明"));
-    var note = wbEl("div", "wb-about-note",
-      "非官方项目，与 WorkBuddy / CodeBuddy 官方无任何关联，仅供个人自用；"
-      + "使用前请自行确认符合相关服务条款。容器内不含任何官方客户端二进制以外的东西，"
-      + "账号凭据始终保存在你自己的数据卷里。");
-    noteMain.appendChild(note);
-    noteRow.appendChild(noteMain);
-    card.appendChild(noteRow);
+    // 2026-10-22 用户要求：把「关于」页里的「说明」这一项及其文本整个去掉，
+    // 别再显示。整段删除（而不是藏起来）—— 留着 DOM 只是浪费，
+    // 而且以后有人改样式时会被这个隐藏节点绊到。
+    // ⚠️ 这里不再往 card 里 appendChild noteRow，「关于」卡片到此为止
+    //    （项目名+版本 / 运行位置 / 当前规模 三块）。
 
     section.appendChild(card);
     host.appendChild(section);
@@ -7978,14 +8028,31 @@ COLLAPSE_SCRIPT = r"""
           '<div id="wb-dl-progress-accounts" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>' +
         '</div>' +
 
-        /* ── 签到调度 / 任务调度拆分（用户 2026-10-16 需求）──
+        /* ── 签到调度 / 任务调度拆分（用户 2026-10-16 需求，2026-10-22 收口）──
            「自动签到和任务调度混合，需要你在每日任务界面将其分开，用户可以分别
             配置，避免签到和任务相互影响」。
            做法：两张独立的卡片，各管自己的开关、间隔、上次/下次执行时间。
            跑的时候后端按类型给上游脚本传不同任务过滤：
              · 签到轮 → 只跑 checkin
              · 任务轮 → 跑除 checkin 以外的全部
-           任一边单独停用不影响另一边；总开关关掉则两边都不自动跑。 */
+           任一边单独停用不影响另一边；总开关关掉则两边都不自动跑。
+
+           2026-10-22 用户再次反馈：「自动签到 / 自动执行任务的切换开关未分开，
+           各自切换开关独立控制」。
+           根因：页面上**三个**语义不同的开关并存，其中「启用自动签到」
+           （checkin_enabled，启动时核验服务端状态、未签到账号自动补签）
+           塞在「执行模式与账号保活」卡片里，与「启用签到调度」
+           （checkin_schedule_enabled，定时跑签到轮）文字相近、位置分散，
+           用户看到的就是「签到有两个开关、任务只有一个」—— 即「没分开」。
+           收口做法：
+             ① 把「启用自动签到」从执行模式卡里移出，改名为「启动补签」，
+                并放进签到调度卡 —— 同一张卡里两个开关语义分层：
+                  启动补签       = 容器起来时核验一次（checkin_enabled）
+                  启用签到调度   = 定时跑签到轮（checkin_schedule_enabled）
+             ② 任务调度卡保持「启用任务调度」一个开关（task_schedule_enabled）。
+             ③ 三个字段后端**早已各自独立持久化**（DEFAULT_CONFIG 里三个 key
+                分开存，/api/wb-daily/config 分开读写），本次只调整前端呈现，
+                不改后端语义 —— 保存时三个值分别上报，互不影响。 */
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
@@ -7995,6 +8062,14 @@ COLLAPSE_SCRIPT = r"""
           '</div>' +
           '<div class="wb-api-row wb-api-row-stack">' +
             '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;width:100%">' +
+              /* 开关一：启动补签（checkin_enabled）—— 原「启用自动签到」，
+                 从「执行模式与账号保活」卡移到这里，改名以免与下面的
+                 「启用签到调度」混淆。 */
+              '<div style="display:flex;align-items:center;gap:8px">' +
+                '<input id="wb-dl-checkin" type="checkbox" style="width:16px;height:16px">' +
+                '<span class="wb-api-label" style="margin:0" title="容器启动时立即核验服务端状态，未签到的账号会自动补签一次">启动补签</span>' +
+              '</div>' +
+              /* 开关二：启用签到调度（checkin_schedule_enabled）—— 定时跑签到轮 */
               '<div style="display:flex;align-items:center;gap:8px">' +
                 '<input id="wb-dl-checkin-sched" type="checkbox" style="width:16px;height:16px">' +
                 '<span class="wb-api-label" style="margin:0">启用签到调度</span>' +
@@ -8080,7 +8155,9 @@ COLLAPSE_SCRIPT = r"""
           '</div>' +
         '</div>' +
 
-        /* 执行模式与账号保活：与调度拆分无关，仍归到一张公共卡片里 */
+        /* 执行模式与账号保活：与调度拆分无关，仍归到一张公共卡片里。
+           2026-10-22：「启用自动签到」（现名「启动补签」）已移到上面的
+           签到调度卡，本卡只剩执行模式 / 保活 / 惰性刷新三个字段。 */
         '<div class="wb-api-card">' +
           '<div class="wb-api-row">' +
             '<div class="wb-api-main">' +
@@ -8096,10 +8173,6 @@ COLLAPSE_SCRIPT = r"""
                   '<option value="full">完整任务（签到/玩法/领奖）</option>' +
                   '<option value="query">仅查询（只读）</option>' +
                 '</select>' +
-              '</div>' +
-              '<div style="display:flex;align-items:center;gap:8px">' +
-                '<input id="wb-dl-checkin" type="checkbox" style="width:16px;height:16px">' +
-                '<span class="wb-api-label" style="margin:0" title="启动时立即核验服务端状态，未签到账号会自动补签">启用自动签到</span>' +
               '</div>' +
               '<div>' +
                 '<div class="wb-api-label">保活阈值（天）</div>' +
@@ -8132,7 +8205,26 @@ COLLAPSE_SCRIPT = r"""
             '</div>' +
           '</div>' +
         '</div>' +
-        '</div>' +
+
+        /* ── 账号签到与凭据（最近 30 天）──
+           2026-10-22 用户反馈：「这个板块没有背景框」。
+           成因：这一行原本是**某张卡片的内部行**（`</div>` 层级写漏了一层，
+           见 wbNormalizeDailyLayout 的说明），卡片被提前闭合后它就成了
+           .wb-daily-wrap 的**直接子元素** —— 于是既没有卡片的外框
+           （白底 / 1px 边框 / radius 16px），也没有卡片的内边距，
+           看起来就是「一块没框的内容贴在页面上」。
+           做法：把它**重新包回一张 .wb-api-card**，与同页其它板块
+           （任务清单 / 任务记录 / 执行记录）用同一个圆角、边框、底色、内边距。
+           行内原有的 border-bottom:0 / padding-top:14px 是「卡片内部行」的
+           规格，包进卡片后保持原样；左右边距由既有规则
+           `.wb-daily-wrap > .wb-api-row { margin: 0 !important }` 归零，
+           使它的边缘与同层卡片严格对齐（实测同为 x=147 w=1116）。
+           ⚠️ 标题「账号签到与凭据（最近 30 天）」**不要**加 wb-api-label 类之外
+              的 hoist 干扰：wbHoistDailyCardTitles 会取卡片内第一个
+              .wb-api-label 提到卡片外做 H2。这里标题用的是裸 span +
+              行内 flex 排版（历史布局），不参与 hoist，视觉上仍与其它
+              卡片标题一致（同为 13px/500 的 .wb-api-label 规格）。 */
+        '<div class="wb-api-card" id="wb-dl-checkin-card">' +
           '<div class="wb-api-row wb-api-row-stack" style="border-bottom:0;padding-top:14px">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:6px">' +
               '<span class="wb-api-label">账号签到与凭据（最近 30 天）</span>' +
@@ -8190,6 +8282,12 @@ COLLAPSE_SCRIPT = r"""
             '<div id="wb-dl-log" class="wb-api-code" style="max-height:220px;overflow-y:auto;white-space:pre-wrap"></div>' +
           '</div>' +
         '</div>' +
+      /* ⚠️ 这里**只保留一个** `</div>` 收口 .wb-daily-wrap。
+         早先「账号签到与凭据」那一行的闭合层级写错（多闭一层），它被踢出所属
+         卡片；wbNormalizeDailyLayout 只兜底把游离节点搬回 wrap，搬不回归属的框。
+         2026-10-22 把那一行重新包回卡片后，原先那两个多余的闭合会反过来把
+         wb-daily-wrap 提前关掉 —— 整页样式全丢（wrap 作用域规则全部失效）。
+         这里去掉多余闭合，让 wrap 由上面最后一个 `</div>` 正常收口。 */
       '</div>';
 
     v.querySelector("#wb-dl-save").addEventListener("click", wbDailySaveConfig);
@@ -8919,6 +9017,12 @@ COLLAPSE_SCRIPT = r"""
     //   · 旧字段 enabled / interval_hours 保留并作为「总开关 + 兜底间隔」
     //     —— 两边各自的时间戳都为空时会退回它，保证拆分上线后不会立刻重跑。
     //   · 巡检间隔夹在 5–1440 分钟，越界时用边界值而不是 NaN。
+    // 2026-10-22：三个开关**各自独立上报、独立持久化**——
+    //   checkin_enabled          启动补签（容器起来核验一次）
+    //   checkin_schedule_enabled 签到调度（定时跑签到轮）
+    //   task_schedule_enabled    任务调度（定时跑任务轮）
+    // 后端 DEFAULT_CONFIG 里三个 key 分开存、/api/wb-daily/config 分开读写，
+    // 任一个改动不影响另外两个。
     var patrolMin = parseInt(document.getElementById("wb-dl-patrol-interval").value, 10);
     if (!(patrolMin > 0)) patrolMin = 60;
     patrolMin = Math.max(5, Math.min(1440, patrolMin));

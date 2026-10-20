@@ -42,6 +42,14 @@ from pydantic import BaseModel
 
 import db
 
+# 硬件指纹池化隔离（v1.0.10 用户需求）：每个账号一套独立的虚拟硬件画像 + UA。
+# wb_daily 也要 import 它 —— 账号池每加载一次就补一次指纹，新加的账号
+# 在这里被当场分配，不用等网关重启。
+try:
+    from gateway import fingerprint
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import fingerprint  # type: ignore[no-redef]
+
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 CONFIG_FILE = DATA_DIR / "wb_daily_config.json"
 WORK_DIR = DATA_DIR / "wb-daily"
@@ -268,6 +276,17 @@ def build_account_store(cfg: dict | None = None) -> dict:
     cfg = cfg or load_config()
     store: dict = {}
     arr = _load_pool_accounts()
+    # 硬件指纹池化隔离（v1.0.10 用户需求）：
+    #   这一层就是「新账号触发分配」的落点 —— 账号池每加载一次，就把全部
+    #   cn 账号过一遍指纹池：库里已有的原样复用（画像不漂移），新出现的账号
+    #   当场分配一套随机硬件画像 + UA 并落盘。
+    #   放在这里而不是只在 main.py 启动时做，是因为账号是**随时**加进来的
+    #   （用户扫码/OAuth 授权后立刻出现在 accounts.json），启动钩子跑完
+    #   之后新加的账号靠这一层兜住，不会漏。
+    try:
+        fingerprint.ensure_account_fingerprints(arr)
+    except Exception as _e:
+        print(f"[wb-daily] 指纹预分配失败（用兜底画像继续）: {_e}")
     for a in arr:
         if a.get("variant") != "cn":
             continue

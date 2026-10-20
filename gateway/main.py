@@ -75,6 +75,16 @@ try:
 except ImportError:  # pragma: no cover - 取决于运行方式
     import refresh_guard  # type: ignore[no-redef]
 
+# 硬件指纹池化隔离（v1.0.10 用户需求）：
+#   账号池里每个账号一套独立的虚拟硬件画像 + UA，多账号不共用宿主机特征
+#   （相同 CPU/内存/MAC/UA 会被上游风控并案标记）。
+#   在这里 import 是为了让下面的启动钩子能直接调 ensure_account_fingerprints，
+#   把「存量账号 + 新加入账号」一次性补齐指纹。
+try:
+    from gateway import fingerprint as _fingerprint
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import fingerprint as _fingerprint  # type: ignore[no-redef]
+
 
 # ---------------------------------------------------------------------------
 # 版本号
@@ -87,7 +97,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 发布页写 v0.4.4 —— 同一份东西两个号，看的人根本没法判断自己跑的是不是最新。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.9"
+VERSION_DEFAULT = "1.0.10"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -100,6 +110,18 @@ async def lifespan(_app: FastAPI):
     if last:
         _HEALTH_RUNTIME["lastResult"] = last
         _HEALTH_RUNTIME["lastRunAt"] = last.get("checkedAt")
+    # 硬件指纹池化隔离（v1.0.10 用户需求）：
+    #   启动时为账号池里**全部**账号补齐独立指纹/UA —— 存量账号早已在库里
+    #   （原样复用，画像不漂移），新加入的账号在这里被当场分配并落盘。
+    #   这样无论账号什么时候加进来，都不会漏掉指纹、也不会复用别人的那一套。
+    #   失败不影响启动：指纹缺失时下游会退回到按 uid 稳定派生的兜底画像。
+    try:
+        _fp_stat = _fingerprint.ensure_account_fingerprints(_load_accounts())
+        if _fp_stat.get("created"):
+            print(f"[fingerprint] 本次为新账号分配指纹 {_fp_stat['created']} 套"
+                  f"（账号总数 {_fp_stat['total']}）")
+    except Exception as _e:
+        print(f"[fingerprint] 启动预分配指纹失败（不影响网关启动）: {_e}")
     task = asyncio.create_task(account_rotate_loop())
     health_task = asyncio.create_task(model_health_loop())
     upstream_task = asyncio.create_task(upstream_models_loop())
