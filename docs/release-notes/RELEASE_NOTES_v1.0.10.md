@@ -26,7 +26,7 @@
 | 字重 | font-medium = 500 | 500 |
 | 底色 | 未选中按钮白底 + 1px 边框 | 白底 + 1px 边框 + 轻投影 |
 
-**一个容易漏的坑**：tablist 自身有 `padding: 4px`，里面的按钮实际落在 `y+4`；搜索框若用 `align-items: center` 会比档位按钮高 4px，肉眼一眼能看出不在一个水平线上。这里用 `padding-top: 6px` 抵消，实测垂直偏差 1px（同一水平线）。
+**一个容易漏的坑**：tablist 自身有 `padding: 4px`，里面的按钮实际落在 `y+4`；搜索框若用 `align-items: center` + 别的 padding 值，会和档位按钮差出几像素，肉眼一眼能看出不在一个水平线上。最稳的做法是照抄 tablist 自己的值 —— `padding-top: 4px` + `align-items: flex-start`，实测与档位按钮**中心线 delta = 0px**（此前 6px + center 会低 3px）。
 
 移动端（≤640px）搜索框退到下一行、全宽，不与切换组互相压扁。
 
@@ -93,5 +93,6 @@ v1.0.9 已做存量账号的独立指纹（UUIDv5 持久化），本轮补两点
 
 - 新增 `_test_v1010_features.py`，43 项断言全绿（五处调整各一节 + 版本号同步）。
 - 全量 55 个测试文件回归全绿，含 `_test_version_sync.py`、`_test_webui_panels.py`、`_test_v109_features.py`。
-- 指纹池化隔离做了本地实测：30 账号六维度唯一、存量不漂移、幂等。
-- PC + 移动端视口各实测一遍（见交付说明）。
+- 指纹池化隔离本地实测：30 账号六维度唯一、存量不漂移、幂等；线上 `account_fingerprints.json` 32 个账号 `machineId` / `MAC` / `UA` 各 32 个唯一、零重复。
+- PC 视口实测：搜索框与档位按钮同一行、右端对齐（`sbRight = rowRight = 585`）、中心线垂直偏差 0px；每日任务页三个开关分卡就位、签到凭据板块已带回框；关于页说明项已消失。
+- 移动端（≤640px）实测：搜索框退到下一行、全宽、与切换组左对齐，页面无横向溢出。

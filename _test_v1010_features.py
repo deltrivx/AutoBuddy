@@ -53,7 +53,8 @@ check("字号/字重对齐官方 text-xs + font-medium",
       re.search(r'\.wb-acc-search-input\s*\{[^}]*font-size:\s*12px[^}]*font-weight:\s*500',
                 PROXY) is not None)
 check("消除 tablist padding 造成的 4px 错位（垂直对齐）",
-      re.search(r'\.wb-acc-search-wrap\s*\{[^}]*padding-top:\s*6px', PROXY) is not None)
+      re.search(r'\.wb-acc-search-wrap\s*\{[^}]*padding-top:\s*4px', PROXY) is not None
+      and re.search(r'\.wb-acc-search-wrap\s*\{[^}]*align-items:\s*flex-start', PROXY) is not None)
 check("移动端（≤640px）退到下一行全宽，不撑破档位行",
       re.search(r'@media \(max-width:\s*640px\)\s*\{[^}]*\.wb-acc-search-wrap', PROXY) is not None)
 check("DOM 取不到档位组时安静退出，不拖垮页面",

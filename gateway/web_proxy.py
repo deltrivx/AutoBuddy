@@ -423,13 +423,13 @@ COLLAPSE_SCRIPT = r"""
   /* ⚠️ 垂直对齐的坑：wrap 与 tablist 都是 h-36，但 tablist 内部有 padding:4px，
      里面的按钮实际落在 y+4。若 wrap 用 align-items:center，搜索框会比档位按钮
      高 4px（实测 delta=-4，一眼能看出不在一个水平线上）。
-     这里 wrap 高 36px 但用 padding-top 抵消 tablist 的内边距 + 微调，
-     使搜索框与档位按钮**逐像素对齐**（实测 delta 1px，肉眼同一水平线）。 */
+     这里 wrap 高 36px、padding-top 用 tablist 同样的 4px + align-items:flex-start，
+     搜索框与档位按钮**逐像素对齐**（实测中心线 delta=0px）。 */
   .wb-acc-search-wrap {
     display: inline-flex;
-    align-items: center;
+    align-items: flex-start;
     height: 36px;                 /* 对齐官方切换组 h-9 */
-    padding-top: 6px;             /* 抵消 tablist 的 padding:4px + 视觉居中微调 */
+    padding-top: 4px;             /* 与 tablist 的 padding:4px 完全一致 */
     box-sizing: border-box;
     margin-left: 8px;
     flex: 0 0 auto;
@@ -476,7 +476,8 @@ COLLAPSE_SCRIPT = r"""
     min-width: 0;
   }
   /* 移动端：不撑破档位行 —— 搜索框退到下一行但仍与切换组左对齐，
-     避免 iPhone 上两个控件挤在同一行互相压扁（上次移动端漏看的教训）。 */
+     避免 iPhone 上两个控件挤在同一行互相压扁（上次移动端漏看的教训）。
+     padding-top 归零，否则下一行会凭空多出 4px 空隙。 */
   @media (max-width: 640px) {
     .wb-acc-search-wrap { margin-left: 0; width: 100%; height: 36px; padding-top: 0; }
     .wb-acc-search-box { width: 100%; }
@@ -5575,6 +5576,9 @@ COLLAPSE_SCRIPT = r"""
       row.style.flexWrap = "wrap";
       row.style.gap = "8px";
       row.style.width = "100%";
+      // ⚠️ 官方容器是 flex-col（mt-4 gap-0），直接改横向后里面的
+      // 「标题 h2 + tablist」会被 space-between 甩到两端。
+      // 所以只把**切换组所在的那一层**改横向，标题保持独立一行。
     }
 
     var searchWrap = document.createElement("div");
