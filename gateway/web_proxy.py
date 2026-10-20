@@ -2129,7 +2129,7 @@ COLLAPSE_SCRIPT = r"""
     }
     function mkBtn(kind, label, src) {
       var b = document.createElement("button");
-      b.type = "button";
+      b.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       b.className = "wb-avatar-opt" + (picked === kind ? " active" : "");
       b.setAttribute("data-av", kind);
       b.title = label;
@@ -2163,6 +2163,7 @@ COLLAPSE_SCRIPT = r"""
     h.textContent = title;
     card.appendChild(h);
     var closeX = document.createElement("button");
+    closeX.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
     closeX.textContent = "×";
     closeX.style.cssText = "position:absolute;top:10px;right:12px;background:transparent;border:none;font-size:20px;line-height:1;color:var(--muted-foreground,#64748b);cursor:pointer;padding:2px 6px;";
     closeX.onclick = function() { overlay.remove(); };
@@ -2374,7 +2375,7 @@ COLLAPSE_SCRIPT = r"""
       pick.appendChild(img);
       // 与设置页保持一致：上传钮作为网格内最后一枚圆钮，同排展示。
       var uploadBtn = document.createElement("button");
-      uploadBtn.type = "button";
+      uploadBtn.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       uploadBtn.className = "wb-avatar-upload";
       uploadBtn.textContent = "+";
       uploadBtn.title = "上传自定义头像（≤200KB，PNG / JPG / WebP）";
@@ -2414,6 +2415,7 @@ COLLAPSE_SCRIPT = r"""
       card.appendChild(errEl);
 
       var save = document.createElement("button");
+      save.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       save.className = "wb-modal-btn";
       save.style.marginTop = "14px";
       save.textContent = "保存头像";
@@ -2482,6 +2484,7 @@ COLLAPSE_SCRIPT = r"""
       errEl.style.margin = "8px 0 2px";
       card.appendChild(errEl);
       var save = document.createElement("button");
+      save.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       save.className = "wb-modal-btn";
       save.style.marginTop = "14px";
       save.textContent = "保存并重新登录";
@@ -2521,6 +2524,7 @@ COLLAPSE_SCRIPT = r"""
       errEl.style.margin = "8px 0 2px";
       card.appendChild(errEl);
       var save = document.createElement("button");
+      save.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       save.className = "wb-modal-btn";
       save.style.marginTop = "14px";
       save.textContent = "保存并重新登录";
@@ -2705,6 +2709,7 @@ COLLAPSE_SCRIPT = r"""
       var menu = document.createElement("div");
       menu.className = "wb-pop-menu";
       var out = document.createElement("button");
+      out.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       out.className = "wb-pop-item danger";
       out.textContent = "退出登录";
       out.onclick = function() {
@@ -2939,6 +2944,7 @@ COLLAPSE_SCRIPT = r"""
     var mini = document.getElementById("wb-theme-mini");
     if (!mini) {
       mini = document.createElement("button");
+      mini.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       mini.type = "button";
       mini.id = "wb-theme-mini";
       mini.setAttribute("aria-label", "切换主题");
@@ -2969,6 +2975,7 @@ COLLAPSE_SCRIPT = r"""
     var btn = document.getElementById("wb-nav-toggler");
     if (!btn) {
       btn = document.createElement("button");
+      btn.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       btn.type = "button";
       btn.id = "wb-nav-toggler";
       btn.setAttribute("aria-label", "选项卡");
@@ -4210,7 +4217,7 @@ COLLAPSE_SCRIPT = r"""
 
     MODES.forEach(function (m) {
       var b = document.createElement("button");
-      b.type = "button";
+      b.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
       b.className = "wb-ts-btn";
       b.setAttribute("data-theme", m.id);
       b.setAttribute("aria-pressed", "false");
@@ -4436,6 +4443,8 @@ COLLAPSE_SCRIPT = r"""
   // 账号级停用（与模型级是两回事：这条管「整个账号参不参与轮询」）。
   // 与 wbToggleModel 同一套写法：先乐观改本地状态让点按即时，再落盘，
   // 失败就把乐观改动回滚 —— 否则界面会显示一个并未生效的状态。
+  // v1.0.5：done(ok, status) 把后端随响应带回的最新账号池状态传给调用方，
+  // 供就地重绘单张卡片（不再全表拆建）。
   function wbToggleAccount(accountId, disabled, done) {
     fetch("/api/account-pool/toggle", {
       method: "POST",
@@ -4451,15 +4460,17 @@ COLLAPSE_SCRIPT = r"""
         if (!res.ok || res.body.ok === false) {
           var d = res.body.detail;
           wbToast(typeof d === "string" && d ? d : "操作失败，请重试", true);
-          if (done) done(false);
+          if (done) done(false, null);
           return;
         }
         wbToast(disabled ? "已停用该账号 · 不再参与轮询" : "已恢复该账号参与轮询");
-        if (done) done(true);
+        // 响应体自带最新 status，同步进缓存，供就地重绘用。
+        if (res.body && res.body.status) { wbPoolCache = res.body.status; }
+        if (done) done(true, res.body && res.body.status);
       })
       .catch(function () {
         wbToast("请求失败，请刷新页面后重试", true);
-        if (done) done(false);
+        if (done) done(false, null);
       });
   }
 
@@ -4586,6 +4597,7 @@ COLLAPSE_SCRIPT = r"""
         // 巡检误禁一批、或手动调完想一次性放开时，逐个点标签太碎。
         if (accountId && (manualCount + autoCount) > 0) {
           var restore = document.createElement("button");
+          restore.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
           restore.className = "wb-am-restore";
           restore.textContent = "全部恢复 " + (manualCount + autoCount);
           restore.title = "把该账号被禁用的 " + (manualCount + autoCount)
@@ -4771,131 +4783,117 @@ COLLAPSE_SCRIPT = r"""
       });
   }
 
-  function injectAccountPool() {
-    // 官方那三个「设为当前账号 / 切换到 IDE / CLI」按钮依赖宿主桌面程序，
-    // 已在二进制里物理移除。这里注入容器自己的账号池控制：
-    //   [启用/停用] 决定该账号是否参与 API 调用；[设为首选] 固定只用这一个账号。
-    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
-    if (!cards.length) return;
+  // 构建单张账号卡片的「账号池控制条」。既给 injectAccountPool 首次注入用，
+  // 也给 toggle / 设为首选成功后就地重绘同一张卡片用（v1.0.5 交互修复的核心：
+  // 此前点一次启用/停用要把全部卡片的控制条拆掉再整体重建 —— 表现为页面抖动、
+  // 按钮位置漂移，重建期间按钮还会闪没；现在只换被点的那一根 bar）。
+  // bar 对应的卡片由调用方通过 cardEl 传入（就地重绘时用来定位旧 bar）。
+  function wbBuildPoolBar(acc, data, cardEl) {
+    var bar = document.createElement("div");
+    bar.className = "wb-pool-bar";
+    // 注意：acc 可能是后端新下发的账号对象（就地重绘路径），
+    // 也可能是首次渲染时的旧引用 —— 一律以入参为准，不闭包外层循环变量。
 
-    var pending = cards.filter(function (c) {
-      return !c.querySelector(".wb-pool-bar") && c.querySelector("h3");
-    });
-    if (!pending.length) return;
+    // 两种「不可用」要分开说，否则用户会以为是自己点错了：
+    //   - disabled：被账号级停用策略挡住（可能是人点的，也可能是巡检写的）
+    //   - 池外：不在 enabledAccountIds 白名单里
+    var accDisabled = !!acc.disabled;
+    var inPool = !!acc.enabled;
 
-    function render(data) {
-      if (!data || !data.accounts) return;
-      // 多重索引：卡片标题是账号昵称，而新账号常常没有昵称，
-      // 只能回退成账号 ID（如 a75e21b0-3ec4-...）。
-      // 只按昵称建索引的话，这些卡片在账号池控制条上完全空 —— 启用/停用、
-      // 设为首选、检测账号、调用次数四个控件都不出现，看上去像「功能缺失」。
-      // 所以 name / id / 昵称与邮箱都要注。
-      var byName = {};
-      data.accounts.forEach(function (a) {
-        if (!a) return;
-        [a.name, a.id, a.nickname, a.email].forEach(function (key) {
-          if (key) byName[String(key)] = a;
+    // v1.0.5 移动端修复：注入的按钮若落在官方 <form> 里，默认 type=submit，
+    // 点击即触发表单提交 → 整页刷新。一律显式 type="button"。
+    var toggle = document.createElement("button");
+    toggle.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
+    if (accDisabled) {
+      // 来源不同措辞不同。巡检停用用琥珀色（.wb-pool-btn-auto），
+      // 与手动停用的灰底区分开，让人一眼看出「这不是我点的」。
+      var autoOff = acc.disabledSource === "auto";
+      toggle.className = "wb-pool-btn" + (autoOff ? " wb-pool-btn-auto" : "");
+      toggle.textContent = autoOff ? "已停用（巡检）· 点击启用" : "已停用 · 点击启用";
+      toggle.title = autoOff
+        ? "可用性巡检发现这个账号登录已过期或被上游拦截，自动停用了它。\n恢复后巡检会自己放回来，也可以点这里立即启用。"
+        : "你手动停用了这个账号。点击恢复参与调用。";
+    } else if (!inPool) {
+      toggle.className = "wb-pool-btn";
+      toggle.textContent = "不在账号池 · 点击启用";
+      toggle.title = "这个账号不在账号池的启用列表里，不参与 API 调用。";
+    } else {
+      toggle.className = "wb-pool-btn wb-pool-btn-on";
+      toggle.textContent = "参与调用 · 点击停用";
+      toggle.title = "点击后这个账号不再参与自动轮询（显式指定它的请求仍可用）。";
+    }
+    toggle.onclick = function () {
+      // 防抖：一次点击还没回来前不再受理（双击曾触发两次互反提交）。
+      if (toggle.dataset.wbBusy === "1") return;
+      toggle.dataset.wbBusy = "1";
+      toggle.disabled = true;
+      var done = function () {
+        toggle.disabled = false;
+        delete toggle.dataset.wbBusy;
+      };
+      // 账号级停用优先：红/灰状态点一下就恢复。
+      if (accDisabled) {
+        // toggle 响应体自带最新账号池状态 —— 就地重绘，不再全表重建。
+        wbToggleAccount(acc.id, false, function (ok, status) {
+          done();
+          wbReplacePoolBar(acc.id, status, cardEl);
         });
+        return;
+      }
+      // 否则走账号池白名单（旧语义，保留不变）。
+      var ids = effectiveEnabledIds(data);
+      var idx = ids.indexOf(acc.id);
+      if (idx >= 0) { ids.splice(idx, 1); } else { ids.push(acc.id); }
+      var next = { enabledAccountIds: ids };
+      if (idx >= 0 && data.mode === "manual" && data.manualAccountId === acc.id) {
+        next.mode = "auto";
+        next.manualAccountId = null;
+      }
+      savePool(next, function (body) {
+        done();
+        // savePool 已把响应里的 status 写进 wbPoolCache，就地重绘。
+        wbReplacePoolBar(acc.id, (body && body.status) || wbPoolCache, cardEl);
       });
+    };
 
-      // 各账号被分摊到的请求次数（网关进程启动后累计）。
-      var counts = {};
-      (data.selectionCounts || []).forEach(function (c) { counts[c.accountId] = c.count; });
-
-      var pendingIds = data.accounts.map(function (a) { return a && a.id; }).filter(Boolean);
-
-      pending.forEach(function (card, cardIndex) {
-        if (card.querySelector(".wb-pool-bar")) return;
-        var h3 = card.querySelector("h3");
-        if (!h3) return;
-        var cardTitle = (h3.textContent || "").trim();
-        var acc = byName[cardTitle];
-        // 标题对不上时（账号无昵称、昵称被格式化过）按位置兜底。
-        if (!acc && cardIndex < pendingIds.length) {
-          acc = byName[pendingIds[cardIndex]];
+    var pinned = data.mode === "manual" && data.manualAccountId === acc.id;
+    var pin = document.createElement("button");
+    pin.type = "button"; // v1.0.5: 防 form 内默认 submit 整页刷新
+    pin.className = "wb-pool-btn" + (pinned ? " wb-pool-btn-primary" : "");
+    pin.textContent = pinned ? "首选账号 · 点击改回自动分配" : "设为首选";
+    pin.onclick = function () {
+      if (pin.dataset.wbBusy === "1") return;
+      pin.dataset.wbBusy = "1";
+      pin.disabled = true;
+      // 设为首选：必须连 enabledAccountIds 一起提交，且确保目标账号在白名单内。
+      // 若为新账号且尚未加入白名单，设为首选时自动将其追加进启用列表，
+      // 否则后端安全校验因 manualAccountId not in pool 会退回 auto，导致设置失效。
+      var ids = (data.allEnabledByDefault
+        ? (data.accounts || []).map(function (a) { return a.id; })
+        : (data.enabledAccountIds || [])).slice();
+      if (!pinned && acc.id && ids.indexOf(acc.id) === -1) {
+        ids.push(acc.id);
+      }
+      savePool(
+        pinned
+          ? { mode: "auto", manualAccountId: null, enabledAccountIds: ids }
+          : { mode: "manual", manualAccountId: acc.id, enabledAccountIds: ids },
+        function (body) {
+          pin.disabled = false;
+          delete pin.dataset.wbBusy;
+          wbReplacePoolBar(acc.id, (body && body.status) || wbPoolCache, cardEl);
         }
-        // 后端已保证账号池里每个账号都带完整字段（id/enabled/disabled/…），
-        // 这里拿不到就是**数据真的缺了**，不该用占位数据把它遮住。
-        if (!acc) {
-          console.warn("[AutoBuddy] 账号卡片在后端账号池数据里找不到条目:", cardTitle);
-          return;
-        }
+      );
+    };
 
-        var bar = document.createElement("div");
-        bar.className = "wb-pool-bar";
-
-        // 两种「不可用」要分开说，否则用户会以为是自己点错了：
-        //   - disabled：被账号级停用策略挡住（可能是人点的，也可能是巡检写的）
-        //   - 池外：不在 enabledAccountIds 白名单里
-        var accDisabled = !!acc.disabled;
-        var inPool = !!acc.enabled;
-
-        var toggle = document.createElement("button");
-        if (accDisabled) {
-          // 来源不同措辞不同。巡检停用用琥珀色（.wb-pool-btn-auto），
-          // 与手动停用的灰底区分开，让人一眼看出「这不是我点的」。
-          var autoOff = acc.disabledSource === "auto";
-          toggle.className = "wb-pool-btn" + (autoOff ? " wb-pool-btn-auto" : "");
-          toggle.textContent = autoOff ? "已停用（巡检）· 点击启用" : "已停用 · 点击启用";
-          toggle.title = autoOff
-            ? "可用性巡检发现这个账号登录已过期或被上游拦截，自动停用了它。\n恢复后巡检会自己放回来，也可以点这里立即启用。"
-            : "你手动停用了这个账号。点击恢复参与调用。";
-        } else if (!inPool) {
-          toggle.className = "wb-pool-btn";
-          toggle.textContent = "不在账号池 · 点击启用";
-          toggle.title = "这个账号不在账号池的启用列表里，不参与 API 调用。";
-        } else {
-          toggle.className = "wb-pool-btn wb-pool-btn-on";
-          toggle.textContent = "参与调用 · 点击停用";
-          toggle.title = "点击后这个账号不再参与自动轮询（显式指定它的请求仍可用）。";
-        }
-        toggle.onclick = function () {
-          // 账号级停用优先：红/灰状态点一下就恢复。
-          if (accDisabled) {
-            wbToggleAccount(acc.id, false, function () { wbPoolCache = null; refreshPool(); });
-            return;
-          }
-          // 否则走账号池白名单（旧语义，保留不变）。
-          var ids = effectiveEnabledIds(data);
-          var idx = ids.indexOf(acc.id);
-          if (idx >= 0) { ids.splice(idx, 1); } else { ids.push(acc.id); }
-          var next = { enabledAccountIds: ids };
-          if (idx >= 0 && data.mode === "manual" && data.manualAccountId === acc.id) {
-            next.mode = "auto";
-            next.manualAccountId = null;
-          }
-          savePool(next, function () { wbPoolCache = null; refreshPool(); });
-        };
-
-        var pinned = data.mode === "manual" && data.manualAccountId === acc.id;
-        var pin = document.createElement("button");
-        pin.className = "wb-pool-btn" + (pinned ? " wb-pool-btn-primary" : "");
-        pin.textContent = pinned ? "首选账号 · 点击改回自动分配" : "设为首选";
-        pin.onclick = function () {
-          // 设为首选：必须连 enabledAccountIds 一起提交，且确保目标账号在白名单内。
-          // 若为新账号且尚未加入白名单，设为首选时自动将其追加进启用列表，
-          // 否则后端安全校验因 manualAccountId not in pool 会退回 auto，导致设置失效。
-          var ids = (data.allEnabledByDefault
-            ? (data.accounts || []).map(function (a) { return a.id; })
-            : (data.enabledAccountIds || [])).slice();
-          if (!pinned && acc.id && ids.indexOf(acc.id) === -1) {
-            ids.push(acc.id);
-          }
-          savePool(
-            pinned
-              ? { mode: "auto", manualAccountId: null, enabledAccountIds: ids }
-              : { mode: "manual", manualAccountId: acc.id, enabledAccountIds: ids },
-            function () { wbPoolCache = null; refreshPool(); }
-          );
-        };
-
-        // 手动检测：发一次轻量鉴权请求，就地报告这个账号现在能不能用。
-        // 只报告、不改配置 —— 要停用由用户看着结果自己决定（旁边就是停用按钮）。
-        var probe = document.createElement("button");
-        probe.className = "wb-pool-btn";
-        probe.textContent = "检测账号";
-        probe.title = "发一次轻量鉴权请求验证凭据是否有效，不消耗额度";
-        probe.onclick = function () {
+    // 手动检测：发一次轻量鉴权请求，就地报告这个账号现在能不能用。
+    // 只报告、不改配置 —— 要停用由用户看着结果自己决定（旁边就是停用按钮）。
+    var probe = document.createElement("button");
+    probe.type = "button";
+    probe.className = "wb-pool-btn";
+    probe.textContent = "检测账号";
+    probe.title = "发一次轻量鉴权请求验证凭据是否有效，不消耗额度";
+    probe.onclick = function () {
           if (probe.dataset.wbBusy === "1") return;
           probe.dataset.wbBusy = "1";
           probe.disabled = true;
@@ -4947,25 +4945,114 @@ COLLAPSE_SCRIPT = r"""
             });
         };
 
-        var count = document.createElement("span");
-        var n = counts[acc.id] || 0;
-        count.className = "wb-pool-count" + (n > 0 ? " wb-pool-count-hot" : "");
-        // 计数标签**始终渲染**（即使是 0）——「没有调用过」本身就是有效信息，
-        // 没这个标签用户无法区分「从没调用」与「这功能不存在」。
-        count.textContent = "已调用 " + n + " 次";
+    var count = document.createElement("span");
+    var n = (window.__wbPoolCounts && window.__wbPoolCounts[acc.id]) || 0;
+    count.className = "wb-pool-count" + (n > 0 ? " wb-pool-count-hot" : "");
+    // 计数标签**始终渲染**（即使是 0）——「没有调用过」本身就是有效信息，
+    // 没这个标签用户无法区分「从没调用」与「这功能不存在」。
+    count.textContent = "已调用 " + n + " 次";
 
-        bar.appendChild(toggle);
-        bar.appendChild(pin);
-        bar.appendChild(probe);
-        bar.appendChild(count);
+    bar.appendChild(toggle);
+    bar.appendChild(pin);
+    bar.appendChild(probe);
+    bar.appendChild(count);
 
-        if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
-          var last = document.createElement("span");
-          last.className = "wb-pool-last";
-          last.textContent = "最近调用";
-          bar.appendChild(last);
+    if (data.lastSelectedAccountId && data.lastSelectedAccountId === acc.id) {
+      var last = document.createElement("span");
+      last.className = "wb-pool-last";
+      last.textContent = "最近调用";
+      bar.appendChild(last);
+    }
+
+    return bar;
+  }
+
+  // 就地重绘一张卡片的控制条：用最新账号池状态只换被点的那根 bar。
+  // 这是 v1.0.5 修「抖动 / 按钮跑位」的关键 —— 旧实现 refreshPool() 拆全部
+  // bar 再整体重建，触发的批量 DOM 变更还会惊动 MutationObserver 引发
+  // 全页 run()，用户看到的就是页面抖一下、按钮位置乱掉。
+  // cardEl 可选；不给时按 accountId 找（卡片上有 data-wb-acc 标记）。
+  function wbReplacePoolBar(accountId, status, cardEl) {
+    var data = status || wbPoolCache;
+    if (!data || !data.accounts) { refreshPool(); return; }
+    var acc = null;
+    data.accounts.forEach(function (a) {
+      if (a && String(a.id) === String(accountId)) acc = a;
+    });
+    if (!acc) { refreshPool(); return; }
+    if (!cardEl) {
+      cardEl = document.querySelector('article[data-wb-acc="' + String(accountId) + '"]');
+    }
+    if (!cardEl) { refreshPool(); return; }
+    var sec = cardEl.querySelector("section") || cardEl;
+    var old = sec.querySelector(".wb-pool-bar");
+    var fresh = wbBuildPoolBar(acc, data, cardEl);
+    if (old) {
+      // insertBefore 再 remove：同一帧内完成替换，不留空窗。
+      sec.insertBefore(fresh, old);
+      old.remove();
+    } else {
+      sec.appendChild(fresh);
+    }
+    wbPinAccountBlocks();
+  }
+
+  function injectAccountPool() {
+    // 官方那三个「设为当前账号 / 切换到 IDE / CLI」按钮依赖宿主桌面程序，
+    // 已在二进制里物理移除。这里注入容器自己的账号池控制：
+    //   [启用/停用] 决定该账号是否参与 API 调用；[设为首选] 固定只用这一个账号。
+    var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
+    if (!cards.length) return;
+
+    var pending = cards.filter(function (c) {
+      return !c.querySelector(".wb-pool-bar") && c.querySelector("h3");
+    });
+    if (!pending.length) return;
+
+    function render(data) {
+      if (!data || !data.accounts) return;
+      // 多重索引：卡片标题是账号昵称，而新账号常常没有昵称，
+      // 只能回退成账号 ID（如 a75e21b0-3ec4-...）。
+      // 只按昵称建索引的话，这些卡片在账号池控制条上完全空 —— 启用/停用、
+      // 设为首选、检测账号、调用次数四个控件都不出现，看上去像「功能缺失」。
+      // 所以 name / id / 昵称与邮箱都要注。
+      var byName = {};
+      data.accounts.forEach(function (a) {
+        if (!a) return;
+        [a.name, a.id, a.nickname, a.email].forEach(function (key) {
+          if (key) byName[String(key)] = a;
+        });
+      });
+
+      // 各账号被分摊到的请求次数（网关进程启动后累计）。
+      // 挂到 window 上，让 wbBuildPoolBar（含就地重绘路径）也能拿到。
+      var counts = {};
+      (data.selectionCounts || []).forEach(function (c) { counts[c.accountId] = c.count; });
+      window.__wbPoolCounts = counts;
+
+      var pendingIds = data.accounts.map(function (a) { return a && a.id; }).filter(Boolean);
+
+      pending.forEach(function (card, cardIndex) {
+        if (card.querySelector(".wb-pool-bar")) return;
+        var h3 = card.querySelector("h3");
+        if (!h3) return;
+        var cardTitle = (h3.textContent || "").trim();
+        var acc = byName[cardTitle];
+        // 标题对不上时（账号无昵称、昵称被格式化过）按位置兜底。
+        if (!acc && cardIndex < pendingIds.length) {
+          acc = byName[pendingIds[cardIndex]];
+        }
+        // 后端已保证账号池里每个账号都带完整字段（id/enabled/disabled/…），
+        // 这里拿不到就是**数据真的缺了**，不该用占位数据把它遮住。
+        if (!acc) {
+          console.warn("[AutoBuddy] 账号卡片在后端账号池数据里找不到条目:", cardTitle);
+          return;
         }
 
+        // 卡片标记自己的 accountId：就地重绘时按 id 直接找回，不再靠标题反查。
+        if (acc.id) { card.setAttribute("data-wb-acc", String(acc.id)); }
+
+        var bar = wbBuildPoolBar(acc, data, card);
         (card.querySelector("section") || card).appendChild(bar);
       });
     }
@@ -5224,6 +5311,11 @@ COLLAPSE_SCRIPT = r"""
     var el = document.createElement(tag);
     if (className) el.className = className;
     if (text != null) el.textContent = text;
+    // v1.0.5：注入的 button 一律显式 type="button"。
+    // 官方页面有 <form>（如账号登录表单），button 不写 type 时默认 submit，
+    // 我们的按钮一旦落在 form 内，点一下就触发表单提交整页刷新 ——
+    // 移动端「点启用直接刷新页面」就是这么来的。
+    if (tag === "button") el.type = "button";
     return el;
   }
 

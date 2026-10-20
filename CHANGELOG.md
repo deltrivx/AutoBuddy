@@ -31,6 +31,20 @@
 
 ---
 
+## [v1.0.5] - 2026-10-20
+
+<!-- summary: 修复账号卡片开关抖动 / 按钮跑位 / 移动端整页刷新三处交互缺陷，vendor 脚本升级 v3.14 支持 500 积分补偿领取 -->
+
+### 修复
+
+- **账号卡片开关不再整页抖动**：toggle / 设为首选 / 保存池配置成功后改为按 `accountId` 就地原子重绘该卡片账号条（新增 `wbBuildPoolBar` 单卡片构建器与 `wbReplacePoolBar` 原子替换工具），不再全表拆除后异步重注入，消除空窗与整页重排。
+- **按钮不再跑位**：重建的账号条以 `insertBefore + remove` 原位替换，不再追加到 section 末尾与 React 异步内容竞争位置。
+- **移动端不再整页刷新**：注入的 24 处 `<button>` 全部显式 `type="button"`（`wbEl` 统一设置 + 14 处裸 `createElement` 补齐），不再被官方 `<form>` 当作 submit 触发刷新。
+
+### 变更
+
+- **vendor 脚本 v3.7 → v3.14**：`gateway/vendor/workbuddy_daily.py` 升级，新增 500 积分补偿逻辑（`compensation-status` 查询、`claim-compensation` 领取、领取后回查确认到账）；CLI 接口与既有调用方式完全兼容。
+
 ## [v1.0.4] - 2026-10-18
 
 <!-- summary: 模型拉取支持国际版双通道并发与幂等合并，补齐国际版出站路由映射，国际独占模型定向放行，导出账号默认脱敏 -->
@@ -5083,7 +5097,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.4...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.5...HEAD
+[v1.0.5]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.4...v1.0.5
 [v1.0.4]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.3...v1.0.4
 [v1.0.3]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.2...v1.0.3
 [v1.0.2]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.1...v1.0.2
