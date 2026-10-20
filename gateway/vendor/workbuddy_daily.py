@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🌱 WorkBuddy Daily - 全能签到脚本 v3.7
+🌱 WorkBuddy Daily - 全能签到脚本 v3.14
 ════════════════════════════════════════════════════════════════
 
 📌 这是什么
@@ -57,6 +57,10 @@
         想两者兼得：WORKBUDDY_TASKS=checkin,travel,chat_5（保留一个对话类任务）
    PUSHPLUS_TOKEN            【可选】PushPlus 推送（微信）
    BARK_URL                  【可选】Bark 推送（iOS），如 https://api.day.app/xxxxxxxx
+   WXPUSHER_APP_TOKEN        【可选】WxPusher 应用令牌（AT_ 开头）：官网 https://wxpusher.zjiecode.com
+                             创建应用后获得，扫码关注该应用即可用微信收推送
+   WXPUSHER_UID              【可选】WxPusher 用户 UID（UID_ 开头，扫码关注后在「我的」页查看；
+                             多个用逗号/分号分隔，如 UID_aaa,UID_bbb）
    WECOM_WEBHOOK             【可选】企业微信群机器人（完整 URL 或仅 key）
    DINGTALK_WEBHOOK          【可选】钉钉群机器人 webhook（安全设置：自定义关键词或加签）
    DINGTALK_SECRET           【可选】钉钉加签密钥（机器人选「加签」时必填）
@@ -822,7 +826,7 @@ def claim(s, code, log):
         log("   领奖[%s]: HTTP %s" % (code, r.status_code))
 
 
-def report(s, uid, nick, events):
+def report(s, uid, nick, events, base=None, headers=None):
     """events: list of dict；自动补全信封"""
     UA_SHORT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WorkBuddy/5.5.4"
     mid = derive_id(uid, "machine")   # 稳定指纹：同账号每次相同
@@ -841,7 +845,8 @@ def report(s, uid, nick, events):
         env.update(e)
         out.append(env)
     try:
-        r = s.post(BASE + "/v2/report", json=out, timeout=15, verify=False)
+        r = s.post((base or BASE) + "/v2/report", json=out, timeout=15,
+                   headers=headers, verify=False)
         return r.status_code
     except Exception:
         return 0
@@ -1055,6 +1060,100 @@ def _checkin_tail(s):
         return ""
 
 
+def t_daily_activity(s, uid, nick, log):
+    """点亮成长中心活跃连登。
+
+    签到接口只推进签到活动自己的连签；成长中心的 `growth/streak` 与热力图
+    只认 `/v2/report` 的 `chat_request_send`。每天补发一条，幂等。
+    """
+    state_file = os.getenv("WORKBUDDY_ACTIVITY_STATE", "").strip() or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "workbuddy_activity_state.json")
+    today = beijing_today().isoformat()
+    state = {}
+    try:
+        if os.path.isfile(state_file):
+            with open(state_file, "r", encoding="utf-8") as handle:
+                value = json.load(handle)
+                state = value if isinstance(value, dict) else {}
+    except Exception:
+        state = {}
+    if state.get(uid) == today:
+        log("   🔥每日活跃: 今日已上报，跳过")
+        return
+    now = int(time.time() * 1000)
+    token = str(uuid.uuid4())
+    conv_id = "wb-daily-" + token
+    event = {
+        "eventCode": "chat_request_send",
+        "timestamp": now,
+        "reportDelay": 0,
+        "mode": "craft",
+        "conversationId": conv_id,
+        "requestId": conv_id,
+        "inputLength": 12,
+        "requestModelId": "deepseek-v4-flash",
+        "requestModelName": "DeepSeek V4 Flash",
+        "isPlan": False,
+        "isAutoExecuteTerminal": False,
+        "isAutoModify": False,
+        "codebaseEnable": False,
+        "maxToken": 0,
+        "maxSteps": 0,
+        "temperature": 0,
+        "maxRetries": 0,
+        "mentionContexts": [],
+        "knowledgeId": [],
+        "knowledgeName": [],
+        "codebaseId": "",
+        "mentionContextCount": 0,
+        "command": "",
+        "expertId": "",
+        "recommendId": "",
+        "skillId": "",
+        "skillCount": 0,
+        "totalCount": 0,
+        "fileUri": "",
+        "presentAt": now,
+        "traceId": "",
+        "rootRequestId": conv_id,
+        "parentConversationId": conv_id,
+        "agentName": "default",
+        "agentType": "conversation",
+        "userId": uid,
+    }
+    status = report(
+        s, uid, nick, [event],
+        base=CBDOMAIN,
+        headers={
+            "Origin": CBDOMAIN,
+            "Referer": CBDOMAIN + "/",
+            "User-Agent": "CLI/2.63.2 CodeBuddy/2.63.2",
+            "X-User-Id": uid,
+            "X-Domain": "copilot.tencent.com",
+        },
+    )
+    if status not in (200, 201):
+        log("   🔥每日活跃: 上报失败 HTTP %s" % status)
+        return
+    try:
+        state[uid] = today
+        with open(state_file, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+    except Exception as exc:
+        log("   🔥每日活跃: 本地去重状态保存失败 %s" % str(exc)[:50])
+    try:
+        data = (s.get("https://copilot.tencent.com/activity/growth/streak",
+                      timeout=20, verify=False).json().get("data") or {})
+        days = (data.get("streak") or {}).get("days")
+        if days in (None, 0):
+            log("   🔥每日活跃: 已上报，连登读数稍后刷新")
+        else:
+            log("   🔥每日活跃: 已点亮，连登 %s 天" % days)
+    except Exception:
+        log("   🔥每日活跃: 已上报")
+
+
 def t_sign(s, uid, nick, log):
     """每日签到 + 签到活动读数（连签天数 / 累计积分 / 连签奖励日）
 
@@ -1065,6 +1164,9 @@ def t_sign(s, uid, nick, log):
     try:
         d = api_retry(s, "POST", BASE + "/v2/billing/meter/daily-checkin", body={},
                       retries=3, gap=2.0).json()
+        if is_enterprise_denial(None, d):
+            log("   🏢 企业版账号：上游不支持签到与个人成长任务（本次跳过）")
+            return
         if d.get("code") in (0, 200):
             credit = (d.get("data") or {}).get("credit")
         msg = (d.get("msg") or "")[:40]
@@ -1075,6 +1177,7 @@ def t_sign(s, uid, nick, log):
         log("   ✅签到成功 +%s积分%s" % (credit, tail))
     else:
         log("   ✅签到: %s%s" % (msg or "今天已签到，请明天再来", tail))
+    t_daily_activity(s, uid, nick, log)
 
 
 def t_accept_all(s, uid, nick, log):
@@ -1460,7 +1563,7 @@ def t_glm52(s, uid, nick, log):
 
 
 
-# ---------- 互动玩法（移植自 workbuddy_checkin.py 验证代码） ----------
+# ---------- 互动玩法（经实测验证的成长中心链路） ----------
 def t_lottery(s, uid, nick, log):
     """抽奖：查剩余次数并全部抽完"""
     try:
@@ -1557,7 +1660,7 @@ def t_travel(s, uid, nick, log):
                 log("   🐾旅行: 🎉领取礼物 +%s积分" % rr.get("data", {}).get("reward_credit", 0))
             else:
                 log("   🐾旅行: 领取失败 %s" % str(rr.get("msg", ""))[:40])
-            return
+                return
         if state == "traveling":
             remain = max(0, (sd.get("arrive_at", 0) - sd.get("server_now", 0)) // 60)
             log("   🐾旅行: 旅行中，约%s分钟后到达" % remain)
@@ -2009,20 +2112,57 @@ def _desktop_fingerprint_fallback(s, uid, nick, log, need_rich, need_skill):
 
 
 
-def t_gift_compensation(s, uid, nick, log):
-    """礼包(每号一次) + 补偿领取(活动开启时)"""
+def t_compensation(s, log):
+    """按用量管理页面口径查询、领取并回查一次性补偿。"""
+    url = BASE + "/billing/meter/compensation-status"
+
+    def status():
+        response = s.post(url, json={}, timeout=15, verify=False).json()
+        if response.get("code") != 0 or not isinstance(response.get("data"), dict):
+            raise ValueError("补偿状态接口未返回有效数据")
+        return response["data"]
+
     try:
-        r = s.post(BASE + "/billing/meter/claim-gift", json={}, timeout=15, verify=False).json()
+        current = status()
+    except Exception as exc:
+        log("   ⚠️补偿状态查询失败: %s" % type(exc).__name__)
+        return
+    if not current.get("active"):
+        return
+    if current.get("claimed"):
+        log("   🎊补偿积分: 已领取")
+        return
+
+    credit = current.get("credit_num", "?")
+    deadline = current.get("end_time", "")
+    log("   🎊补偿待领取: %s积分%s" % (credit, "（截止%s）" % deadline if deadline else ""))
+    try:
+        result = s.post(CBDOMAIN + "/billing/meter/claim-compensation",
+                        json={}, timeout=15, verify=False).json()
+    except Exception as exc:
+        log("   ⚠️补偿领取请求异常: %s" % type(exc).__name__)
+        result = {}
+
+    # 请求可能成功但响应丢失；只以服务端最终状态确认到账。
+    try:
+        if status().get("claimed"):
+            log("   ✅补偿领取成功: +%s积分" % credit)
+            return
+    except Exception as exc:
+        log("   ⚠️补偿领取后状态回查失败: %s" % type(exc).__name__)
+        return
+    log("   ⚠️补偿领取未确认: %s" % str(result.get("msg") or "请稍后重试")[:80])
+
+
+def t_gift_compensation(s, uid, nick, log):
+    """礼包(每号一次) + 活动补偿。"""
+    try:
+        r = s.post(CBDOMAIN + "/billing/meter/claim-gift", json={}, timeout=15, verify=False).json()
         if r.get("code") == 0:
             log("   🎊新手礼包: +%s积分" % r.get("data", {}).get("credit", "?"))
     except Exception:
         pass
-    try:
-        r = s.post(BASE + "/billing/meter/claim-compensation", json={}, timeout=15, verify=False).json()
-        if r.get("code") == 0:
-            log("   🎊补偿领取: +%s积分" % r.get("data", {}).get("credit", "?"))
-    except Exception:
-        pass
+    t_compensation(s, log)
 
 
 def t_makeup(s, uid, nick, log):
@@ -2226,6 +2366,105 @@ def t_lighthouse(s, uid, nick, log):
         log("   腾讯轻量云专家: 失败 %s" % str(e)[:60])
     st, cur, tgt = prog(s, "Expert_lighthouse")
     log("   腾讯轻量云专家: %s %s/%s" % (st, cur, tgt))
+
+
+VALORANT_EXPERT = {"id": "ex_xQHHD1u5Jkua", "name": "无畏契约拼豆专家", "version": "1.2.1"}
+
+
+def t_valorant(s, uid, nick, log):
+    """无畏契约拼豆专家：真实对话 + 专家召唤/使用桌面链。"""
+    st, cur, tgt = prog(s, "WorkBuddy_Valorant")
+    if st is None:
+        log("   无畏契约拼豆专家: 不在当前任务列表，跳过")
+        return
+    if st in ("completed", "claimed"):
+        log("   无畏契约拼豆专家: %s %s/%s" % (st, cur, tgt))
+        return
+    expert = dict(VALORANT_EXPERT)
+    try:
+        for item in get_normal_experts(20):
+            if (item.get("id") or "") == expert["id"] or "无畏契约" in (item.get("name") or ""):
+                expert["id"] = item.get("id") or expert["id"]
+                expert["name"] = item.get("name") or expert["name"]
+                expert["version"] = item.get("version") or expert["version"]
+                break
+    except Exception:
+        pass
+    prompt = "你好，请简单介绍一下无畏契约拼豆玩法，回答OK即可"
+    conv_id = ""
+    mid = ""
+    try:
+        growth_events = [{
+            "eventCode": "ExpertActualUse", "id": expert["id"],
+            "extra": {"name": expert["name"], "expertTitle": expert["name"],
+                      "expertType": "agent", "source": "builtin",
+                      "version": expert["version"], "cost": 0,
+                      "characterCount": len(prompt)},
+            "expertType": "agent",
+        }]
+        meta = {"codebuddy.ai": {
+            "growthEvent": json.dumps(growth_events, ensure_ascii=False),
+            "promptRequestId": str(uuid.uuid4()),
+            "clientSendTime": int(time.time() * 1000), "userId": uid,
+            "mode": "LOCAL", "model": "fast-model", "expertId": expert["id"],
+            "expert": {"id": expert["id"], "name": expert["name"], "prompt": prompt[:50]},
+            "tags": ["expert:" + expert["id"]],
+        }}
+        conv_id, _txt, mid = webchat2(s, "valorant", prompt, meta)
+    except Exception as exc:
+        log("   无畏契约拼豆专家: 对话异常 %s" % str(exc)[:50])
+    if conv_id and mid:
+        summon = [
+            {"eventCode": "expert_summon_click", "id": expert["id"], "name": expert["name"],
+             "expertTitle": expert["name"], "type": "agent", "expertType": "agent",
+             "source": "builtin", "mode": "LOCAL"},
+            {"eventCode": "expert_summoned", "id": expert["id"], "name": expert["name"],
+             "expertTitle": expert["name"], "type": "agent", "expertType": "agent",
+             "source": "builtin", "version": expert["version"], "mode": "LOCAL"},
+        ]
+        chain = desktop_chat_sequence(uid, nick, conv_id, mid, mid)
+        for event in chain:
+            if event.get("eventCode") == "agent_task_created":
+                event.update({"has_expert": True, "expert_id": expert["id"],
+                              "expert_name": expert["name"], "expert_industry_id": ""})
+        chain.append({
+            "eventCode": "expert_actual_use", "id": expert["id"], "name": expert["name"],
+            "expertTitle": expert["name"], "type": "", "expertType": "agent",
+            "source": "builtin", "version": expert["version"], "cost": 0,
+            "characterCount": len(prompt), "mode": "LOCAL",
+            "conversationId": conv_id, "requestId": mid, "messageId": mid,
+            "requestModelId": "fast-model", "requestModelName": "fast-model",
+        })
+        try:
+            report_desktop_events(s, uid, nick, summon + chain)
+        except Exception as exc:
+            log("   无畏契约拼豆专家: 桌面链上报失败 %s" % str(exc)[:50])
+        time.sleep(4)
+        status = prog(s, "WorkBuddy_Valorant")[0]
+        if status in ("completed", "claimed"):
+            st, cur, tgt = prog(s, "WorkBuddy_Valorant")
+            log("   无畏契约拼豆专家: %s %s/%s" % (st, cur, tgt))
+            return
+    try:
+        request_id = mid or str(uuid.uuid4())
+        conversation_id = conv_id or ("conv-" + str(uuid.uuid4()))
+        report(s, uid, nick, [
+            {"eventCode": "expert_summoned", "id": expert["id"], "name": expert["name"],
+             "type": "agent", "expertTitle": expert["name"], "expertType": "agent",
+             "source": "builtin", "timestamp": int(time.time() * 1000)},
+            {"eventCode": "expert_actual_use", "id": expert["id"], "name": expert["name"],
+             "expertTitle": expert["name"], "type": "agent", "expertType": "agent",
+             "source": "builtin", "version": expert["version"], "cost": 0,
+             "characterCount": len(prompt), "conversationId": conversation_id,
+             "requestId": request_id, "messageId": request_id,
+             "requestModelId": "fast-model", "requestModelName": "fast-model",
+             "userId": uid},
+        ])
+        time.sleep(3)
+    except Exception as exc:
+        log("   无畏契约拼豆专家: 失败 %s" % str(exc)[:60])
+    st, cur, tgt = prog(s, "WorkBuddy_Valorant")
+    log("   无畏契约拼豆专家: %s %s/%s" % (st, cur, tgt))
 
 
 MP_HEADER = {"X-Client-Platform": "miniprogram",
@@ -2893,6 +3132,30 @@ def _accept_with_verify(s, code, log):
 
 
 # ---------- 单账号全流程 ----------
+def is_enterprise_denial(status_code, payload):
+    """企业版账号「无个人成长体系」判定（上游 2026-10-07 A/B 实测口径，panel 仓库同款）。
+
+    企业号：GET /activity/growth/* 与 /v2/activity/growth/tasks 一律 403
+    「growth system is only available for personal users」；签到 / claim-gift /
+    claim-compensation 走 400 code 10001「企业账号不支持该操作」。
+    命中即按企业版处理：跳过签到与全部成长/互动任务，不再误报「凭据失效」。
+    """
+    if isinstance(payload, dict):
+        try:
+            blob = json.dumps(payload, ensure_ascii=False).lower()
+        except Exception:
+            blob = str(payload).lower()
+    else:
+        blob = str(payload or "").lower()
+    if status_code == 403:
+        return (("growth system" in blob) or ("personal user" in blob)
+                or ("成长" in blob and "个人" in blob))
+    code = payload.get("code") if isinstance(payload, dict) else None
+    if status_code in (400, None) and code == 10001:
+        return ("企业" in blob) or ("enterprise" in blob)
+    return False
+
+
 def run_account(idx, acc, do_desktop):
     msgs = []
     tag = "账号%d" % idx
@@ -2917,16 +3180,24 @@ def run_account(idx, acc, do_desktop):
 
     log("")
     log("╭─ 👤 账号%d  %s" % (idx, mask_phone(acc.get("note", ""))))
-    # 查询
-    credits, paid = queryCredits(s)
-    usage = queryUsage(s)
+    # 先探成长域：企业版账号在这里就能识别（无个人成长体系），
+    # 避免把上游 403 误报成「凭据失效」、也避免对注定被拒的端点空发请求。
     rp = s.get(BASE + "/v2/activity/growth/profile", timeout=25, verify=False)
     pj = _json_or_empty(rp)
     if rp.status_code in (401, 403) or not pj:
+        if is_enterprise_denial(rp.status_code, pj):
+            log("  🏢 企业版账号：无个人成长体系（上游对签到/成长端点一律拒绝，实测口径）")
+            log("     已跳过签到与全部成长/互动任务；积分额度请在企业后台或企业接口查询")
+            summary["enterprise"] = True
+            summary["rest"] = ["企业版账号（无个人成长体系）"]
+            return msgs, summary
         log("  ❌ 凭据失效（HTTP %s）：AT/RT 已过期或被轮换 —— 请重新登录桌面端，或用 workbuddy_login.py" % rp.status_code)
         log("     重新获取一行「手机号:AT:RT」后更新变量，本账号本次跳过（不影响其他账号）")
         return msgs, {"idx": idx, "note": acc.get("note", ""), "done": 0, "total": 0,
                       "rest": ["凭据失效"], "level": "?", "energy": "?"}
+    # 查询
+    credits, paid = queryCredits(s)
+    usage = queryUsage(s)
     prof = pj.get("data", {}) or {}
     energy = (_json_or_empty(s.get(BASE + "/v2/activity/growth/energy", timeout=25,
                                             verify=False)).get("data") or {}).get("balance")
@@ -3008,6 +3279,7 @@ def run_account(idx, acc, do_desktop):
     _run("GLM-5.2/和AI聊天5次", ["Model_chat_GLM5.2", "chat_5"], lambda: t_glm52(s, uid, nick, log))
     _run("夜猫子", ["black_cat"], lambda: t_black_cat(s, uid, nick, log))
     _run("腾讯轻量云专家", ["Expert_lighthouse"], lambda: t_lighthouse(s, uid, nick, log))
+    _run("无畏契约拼豆专家", ["WorkBuddy_Valorant"], lambda: t_valorant(s, uid, nick, log))
     _run("小程序对话", ["Sequential_Tasks_1"], lambda: t_sequential_tasks(s, uid, nick, log))
     _run("小程序专家对话", ["Sequential_Tasks_2"], lambda: t_sequential_tasks_2(s, uid, nick, log))
     _run("小程序对话5次", ["Sequential_Tasks_3"], lambda: t_sequential_tasks_3(s, uid, nick, log))
@@ -3016,13 +3288,13 @@ def run_account(idx, acc, do_desktop):
     _run("小程序对话10次", ["Sequential_Tasks_6"], lambda: t_sequential_tasks_6(s, uid, nick, log))
     _run("小程序灵感功能", ["Sequential_Tasks_7"], lambda: t_sequential_tasks_7(s, uid, nick, log))
     _run("徽章", ["badges"], lambda: t_badges(s, uid, nick, log))
-    _run("抽奖", ["lottery"], lambda: t_lottery(s, uid, nick, log))
     _run("盲盒", ["blindbox"], lambda: t_blindbox(s, uid, nick, log))
     _run("Buddy 信息", ["buddy_info"], lambda: t_buddy_info(s, uid, nick, log))
     _run("派猫猫旅行", ["travel"], lambda: t_travel(s, uid, nick, log))
-    _run("连登兑换", ["redeem"], lambda: t_redeem(s, uid, nick, log, streak.get("days")))
-    _run("礼包/补偿", ["gift"], lambda: t_gift_compensation(s, uid, nick, log))
     _run("补签", ["makeup"], lambda: t_makeup(s, uid, nick, log))
+    _run("连登兑换", ["redeem"], lambda: t_redeem(s, uid, nick, log, streak.get("days")))
+    _run("抽奖", ["lottery"], lambda: t_lottery(s, uid, nick, log))
+    _run("礼包/补偿", ["gift"], lambda: t_gift_compensation(s, uid, nick, log))
     _run("工作台搭建师", ["workstation_expert"], lambda: t_workstation(s, uid, nick, log, tok))
     t_unknown_tasks(s, uid, nick, log)   # 未覆盖任务检测不受过滤影响
     # 领奖
@@ -3156,6 +3428,39 @@ def _bark_notify(title, content):
         print("📢 Bark 推送失败: %s" % str(d.get("message", ""))[:80])
     except Exception as e:
         print("📢 Bark 异常: %s" % str(e)[:80])
+    return False
+
+
+def _wxpusher_notify(title, content):
+    """WxPusher 推送（微信）；未配置 WXPUSHER_APP_TOKEN / WXPUSHER_UID 则跳过。
+
+    与其它渠道并列，配了就推。UID 支持多个（逗号/分号分隔）。
+    注：接口外层 code=1000 仅表示「受理成功」，实际送达要看 data[] 里每个 uid 的状态码，
+    因此这里要求至少一个接收人 code=1000 才算推送成功。
+    """
+    token = os.environ.get("WXPUSHER_APP_TOKEN", "").strip()
+    uids = [u.strip() for u in re.split(r"[,;，\s]+", os.environ.get("WXPUSHER_UID", "")) if u.strip()]
+    if not token or not uids:
+        return False
+    try:
+        s = requests.Session(); s.trust_env = False
+        r = s.post("https://wxpusher.zjiecode.com/api/send/message",
+                   json={"appToken": token, "content": content, "summary": title[:100],
+                         "contentType": 1, "uids": uids, "verifyPayType": 0},
+                   timeout=20, verify=False)
+        d = r.json()
+        if d.get("code") == 1000:
+            items = d.get("data") or []
+            ok = [x for x in items if x.get("code") == 1000]
+            if ok:
+                print("📢 WxPusher 推送成功（%d/%d 个接收人）" % (len(ok), len(uids)))
+                return True
+            why = "；".join(sorted({str(x.get("status") or x.get("code"))[:80] for x in items}))
+            print("📢 WxPusher 未送达: %s" % (why[:120] or "无明细"))
+            return False
+        print("📢 WxPusher 推送失败: %s" % str(d.get("msg", ""))[:80])
+    except Exception as e:
+        print("📢 WxPusher 异常: %s" % str(e)[:80])
     return False
 
 
@@ -3303,18 +3608,19 @@ def _ql_notify(title, content):
 
 
 def send_notify_all(title, content):
-    """推送到所有已配置的渠道：PushPlus / Bark / 企业微信 / 钉钉 / 青龙默认通知。
+    """推送到所有已配置的渠道：PushPlus / Bark / WxPusher / 企业微信 / 钉钉 / 青龙默认通知。
 
     配了哪个推哪个，都没配就只打印一行说明（不影响签到流程）。
     """
     results = [send_notify(title, content),        # PushPlus
                _bark_notify(title, content),       # Bark (iOS)
+               _wxpusher_notify(title, content),   # WxPusher (微信)
                _wecom_notify(title, content),      # 企业微信
                _dingtalk_notify(title, content),   # 钉钉
                _ql_notify(title, content)]         # 青龙面板默认通知
     if not any(results):
-        print("ℹ️ 未配置推送渠道（PUSHPLUS_TOKEN / BARK_URL / WECOM_WEBHOOK / DINGTALK_WEBHOOK / "
-              "青龙应用授权 QL_CLIENT_ID+QL_CLIENT_SECRET 任选其一）")
+        print("ℹ️ 未配置推送渠道（PUSHPLUS_TOKEN / BARK_URL / WXPUSHER_APP_TOKEN+WXPUSHER_UID / "
+              "WECOM_WEBHOOK / DINGTALK_WEBHOOK / 青龙应用授权 QL_CLIENT_ID+QL_CLIENT_SECRET 任选其一）")
     return any(results)
 
 
