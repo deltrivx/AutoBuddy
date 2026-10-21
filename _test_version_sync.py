@@ -19,13 +19,9 @@ ROOT = Path(__file__).parent
 # 匹配「像版本号」的串。两侧都排除数字和点，否则 `127.0.0.1` 这种地址
 # 会被切成 `127.0.0` 误报。
 #
-# 版本号规范（哥哥 2026-10-21 定）：`vYYYY.MM.DD.NN` 四段，末段是「当天第几版」，
-# 固定两位补零。
-#   v2026.10.21.01  = 今天第 1 版
-#   v2026.10.21.09  = 第 9 版
-#   v2026.10.21.10  = 第 10 版
-# 末段必须是两位，不许出现 `2026.10.21.1` 这种单位数写法。
-# 兼容存量三段式（v1.0.11 等历史版本），故四段可选。
+# 版本号规范：语义化 `vX.Y.Z` 三位制（2026-10-21 复确认）。
+# 曾短暂试过四段日期制（v2026.10.21.03），已废弃，故四段形态仍被正则兼容
+# 以免历史版本段被误判，但新版本一律三位。
 VERSION_RX = re.compile(r"(?<![\d.])v?\d+\.\d+\.\d+(?:\.\d{2})?(?![\d.])")
 
 _ok = 0
@@ -48,13 +44,9 @@ src = (ROOT / "gateway" / "main.py").read_text(encoding="utf-8")
 matched = re.search(r'^VERSION_DEFAULT\s*=\s*"([^"]+)"\s*$', src, re.M)
 check("main.py 里有唯一的版本常量 VERSION_DEFAULT", matched is not None)
 version = matched.group(1) if matched else ""
-# 版本号形如 x.y.z（历史存量）或 x.y.z.NN（现行规范：末段两位补零）。
-check("版本号形如 x.y.z 或 x.y.z.NN（末段两位）",
-      bool(re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d{2})?", version)), f"got {version!r}")
-# 末段单位数是哥哥明令禁止的写法，这条是护栏不是锦上添花。
-check("末段不是单位数（必须两位补零）",
-      not re.search(r"\.\d(?=[^\d]|$)", version.split(".")[-1]) if len(version.split(".")) > 3 else True,
-      f"got {version!r}，末段应为 01/09/10 这种两位")
+# 版本号形如 x.y.z（语义化三位制）。
+check("版本号形如 x.y.z（语义化三位制）",
+      bool(re.fullmatch(r"\d+\.\d+\.\d+", version)), f"got {version!r}")
 
 # 常量必须被真正用起来：FastAPI 元信息与 /health、/gateway/info 都读它。
 # 只要有一处还写着字面量，界面上就会出现第二个版本号。
@@ -67,18 +59,13 @@ check("版本只有一处定义（VERSION_DEFAULT）",
 
 print("\n[2] 与 CHANGELOG 对齐")
 changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-# 版本段标题形如 `## [v0.4.5] - 2026-09-19`（方括号里允许带 v 前缀），
-# 现行规范是四段末段两位补零：`## [v2026.10.21.04] - 2026-10-21`。
+# 版本段标题形如 `## [v0.4.5] - 2026-09-19`（方括号里允许带 v 前缀）。
 released = re.findall(r"^##\s*\[v?(\d+\.\d+\.\d+(?:\.\d{2})?)\]", changelog, re.M)
 check("CHANGELOG 里有已发布的版本段", bool(released), f"got {released[:5]}")
 if released:
     check(f"最新发布版本就是 {version}", released[0] == version,
           f"CHANGELOG 最新是 {released[0]}，main.py 是 {version}")
 check(f"CHANGELOG 里存在 [{version}] 段", version in released, f"got {released[:5]}")
-# 末段单位数是哥哥明令禁止的，CHANGELOG 里一个都不许有。
-single_digit_tail = [v for v in released
-                     if len(v.split(".")) > 3 and not re.fullmatch(r"\d{2}", v.split(".")[-1])]
-check("CHANGELOG 里没有单位数末段的版本", not single_digit_tail, f"违规 {single_digit_tail}")
 check("CHANGELOG 保留 [未发布] 段", "## [未发布]" in changelog)
 
 # 文末链接区由人维护，漏一行不会有任何报错 —— 只是 GitHub 上「对比上一版」的链接失效。

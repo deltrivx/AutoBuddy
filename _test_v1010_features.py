@@ -146,13 +146,12 @@ check("「关于」卡片仍保留 项目名+版本 / 运行位置 / 当前规�
 
 # ------------------------------------------------------------ 版本号一致性
 print("\n[6] 版本号")
-# 版本号规范（哥哥 2026-10-21 定）：`vYYYY.MM.DD.NN` 四段日期制，末段两位补零。
-# 本文件的五项改动随 v1.0.10 上线；此处只确认常量在规范内、且末段不是单位数。
-check("VERSION_DEFAULT 是四段末段两位或三段式",
-      re.search(r'^VERSION_DEFAULT = "\d+\.\d+\.\d+(?:\.\d{2})?"\s*$', MAIN, re.M) is not None)
+# 版本号规范 2026-10-21 复确认为语义化三位制（四段日期制已撤销）。
+# 本文件的五项改动随 v1.0.10 上线，此处只确认常量与 CHANGELOG 仍在三位制上。
+check("VERSION_DEFAULT 是语义化三位制",
+      re.search(r'^VERSION_DEFAULT = "\d+\.\d+\.\d+"\s*$', MAIN, re.M) is not None)
 CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-check("CHANGELOG 有现行规范的版本段",
-      re.search(r"^## \[v\d+\.\d+\.\d+(\.\d{2})?\]", CHANGELOG, re.M) is not None)
+check("CHANGELOG 有三段式版本段", re.search(r"^## \[v\d+\.\d+\.\d+\]", CHANGELOG, re.M) is not None)
 
 print("\n" + "=" * 31)
 print(f"测试结果: 通过 {_ok} 项, 失败 {len(_fail)} 项")
