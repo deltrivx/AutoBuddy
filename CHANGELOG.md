@@ -31,6 +31,29 @@
 
 ---
 
+## [v1.0.18] - 2026-10-21
+
+<!-- summary: 安全修复——网关本体（18091）32 个零鉴权路由补齐登录门，与 WebUI 同一套会话判定；账号池落盘前留时间戳备份，注入不再不留痕 -->
+
+### 安全
+
+- **网关本体 32 个零鉴权路由补齐登录门**（第二次同类事件）。v1.0.8 给 WebUI（18090）的 54 个管理端点补过 `require_user`，但**网关本体（`gateway/main.py`，18091）一个都没覆盖** —— 而 18091 是 host 网络、`0.0.0.0` 监听，局域网内任何主机都能直连。日志实证：`192.168.31.2` 在 03:47:23 `POST /import` 200、03:48:20 `POST /delete` 200。
+
+  修复要点：
+
+  - `main.py` 新增 `get_current_user` / `require_user`，判定与 `web_proxy.require_user` 完全一致（读同一个 `db.validate_session`，未登录 401）。复制一份实现而非跨进程 import：两个进程各自独立运行、模块状态不共享，要保证一致的是**判定标准**。
+  - **30 个路由挂门**，逐个核对用途。`/gateway/info` 虽只读，但响应含账号规模、密钥统计等侦察信息，一并挂门。
+  - **5 个端点刻意保留公开**（代码注释里写了理由）：`GET /health`（容器探活 / Unraid 监控 / 部署验证必须无凭据可达，加了门会把监控打成 401、反而掩盖真实故障）、`GET/POST /api/notify/wecom/callback`（企业微信服务器固定回调入口，外部发起、不可能带本站会话；安全性来自 `cb_token`/`cb_aes_key` 签名校验）、`GET /v1/models` 与 `POST /v1/chat/completions`（含 `/models`、`/chat/completions` 别名，OpenAI 兼容 API 走 `api_keys` 那套 `_gateway_auth`，与会话门是两个体系）。
+  - **不打断自家前端**：WebUI 代理转发到网关时新增 `_gw_headers()`，把浏览器的 `autobuddy_session` Cookie 透传过去（26 个转发调用点逐个核对）。少了这一步，账号管理面板会在加门后全部 401 —— 那不是修好了安全，是把自家前端打断了。`/health` 与 `/v1/models` 的转发按设计不带头。
+  - 回归测试 `_test_gateway_auth_gate.py` 58 项断言：逐路由核对「白名单外一律挂门」+ 白名单不许混进高危写端点 + 转发透传 + 公开端点不被误挂。
+
+### 变更
+
+- **账号池落盘前留底**（「注入不留痕」的直接原因）。`_save_accounts()` 此前不留任何痕迹，备份链最新一份能停在事件发生前数小时。现按仓内既有的 `backup_policy()` 思路补上：写入前把权威源（`/data/.wb-switch/accounts.json`）复制成 `accounts.json.bak-<UTC 时间戳>`，最多保留 20 份、超出删最旧 —— 账号池最高频的写入来源是「刷新令牌」（一次刷新就落盘一次），全留会撑爆目录。留底失败一律吞掉，绝不打断写入；只对权威源留底，容器副本是从同一份 payload 同步出来的，内容必然一致。
+
+---
+
+## [v1.0.17] - 2026-10-21
 ## [v1.0.17] - 2026-10-21
 
 <!-- summary: 修复账号卡片点「启用」时按钮跑到卡片底部（flex 折行点随按钮文案长度漂移），并补齐注入按钮 innerHTML 路径缺失的 type="button"（移动端整页刷新） -->
@@ -5312,7 +5335,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.17...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.18...HEAD
+[v1.0.18]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.17...v1.0.18
 [v1.0.17]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.16...v1.0.17
 [v1.0.16]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.15...v1.0.16
 [v1.0.15]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.14...v1.0.15

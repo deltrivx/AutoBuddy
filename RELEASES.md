@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17)
+**当前稳定版：** [v1.0.18](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.18)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,8 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.18](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.18) | 2026-10-21 | 安全修复——网关本体（18091）32 个零鉴权路由补齐登录门，与 WebUI 同一套会话判定；账号池落盘前留时间戳备份，注入不再不留痕 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.18.md) |
+| [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17) | 2026-10-21 | — | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.17.md) |
 | [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17) | 2026-10-21 | 修复账号卡片点「启用」时按钮跑到卡片底部（flex 折行点随按钮文案长度漂移），并补齐注入按钮 innerHTML 路径缺失的 type="button"（移动端整页刷新） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.17.md) |
 | [v1.0.16](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.16) | 2026-10-21 | 异常账号卡片登录提醒区域尺寸下调（不再比它替代的正常区域还高），模型区内框高度改为按同页正常卡实测对齐，只调尺寸不动结构 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.16.md) |
 | [v1.0.15](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.15) | 2026-10-21 | 修复 v1.0.14 解除风控标记按钮假成功的缺陷——请求被 catch-all 路由转给官方后端返回 200，标记实际未被清除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.15.md) |
@@ -209,7 +211,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.17    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.18    # 锁定版本
 ```
 
 ## 部署产物

@@ -11208,7 +11208,7 @@ async def token_stats_api(request: Request, user: "str" = Depends(require_user))
     return stats
 
 @app.get("/api/reqstats")
-async def reqstats_api(limit: int = 50, user: "str" = Depends(require_user)):
+async def reqstats_api(request: Request, limit: int = 50, user: "str" = Depends(require_user)):
     """请求级指标（成功率 / 耗时分位 / 最近请求）。
 
     转发到网关进程的 /reqlog 拿数据。
@@ -11223,7 +11223,8 @@ async def reqstats_api(limit: int = 50, user: "str" = Depends(require_user)):
     """
     try:
         async with _internal_client(timeout=5.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/reqlog", params={"limit": limit})
+            r = await client.get(GATEWAY_BASE_URL + "/reqlog", params={"limit": limit},
+                                headers=_gw_headers(request))
             return Response(
                 content=r.content, status_code=r.status_code,
                 media_type="application/json",
@@ -11240,7 +11241,7 @@ GATEWAY_MODELS_URL = os.getenv("AB_GATEWAY_MODELS_URL", GATEWAY_BASE_URL + "/v1/
 
 
 @app.get("/api/account-pool-official")
-async def account_pool_get_official(user: "str" = Depends(require_user)):
+async def account_pool_get_official(request: Request, user: "str" = Depends(require_user)):
     """向官方网关直取的原始账号池状态（保留作为回退与排查对比入口）。
 
     注意：真正的 `/api/account-pool` 由下方 `account_pool_status_api()` 提供（带字段补充）。
@@ -11249,7 +11250,8 @@ async def account_pool_get_official(user: "str" = Depends(require_user)):
     """
     try:
         async with _internal_client(timeout=5.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status",
+                                headers=_gw_headers(request))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11258,11 +11260,12 @@ async def account_pool_get_official(user: "str" = Depends(require_user)):
 
 
 @app.get("/api/account-pool-legacy")
-async def account_pool_get_legacy(user: "str" = Depends(require_user)):
+async def account_pool_get_legacy(request: Request, user: "str" = Depends(require_user)):
     """官方账号池状态的原始转发（保留作为回退入口，供排查对比）。"""
     try:
         async with _internal_client(timeout=5.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status",
+                                headers=_gw_headers(request))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11271,7 +11274,7 @@ async def account_pool_get_legacy(user: "str" = Depends(require_user)):
 
 
 @app.get("/api/account-pool")
-async def account_pool_get_v2(user: "str" = Depends(require_user)):
+async def account_pool_get_v2(request: Request, user: "str" = Depends(require_user)):
     """替官方账号池状态补上“新账号”所需的展示字段（昵称/邮箱与账号级停用状态）。
 
     背景：官方 `/api/account-pool` 只在 `selectionCounts` 里回已有调用记录的
@@ -11286,7 +11289,8 @@ async def account_pool_get_v2(user: "str" = Depends(require_user)):
     """
     try:
         async with _internal_client(timeout=8.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status")
+            r = await client.get(GATEWAY_BASE_URL + "/account-pool/status",
+                                headers=_gw_headers(request))
             if r.status_code != 200:
                 return Response(content=r.content, status_code=r.status_code,
                                 media_type="application/json")
@@ -11422,7 +11426,7 @@ async def account_pool_put(request: Request, user: "str" = Depends(require_user)
         async with _internal_client(timeout=5.0) as client:
             r = await client.put(GATEWAY_BASE_URL + "/account-pool/config",
                                  content=body,
-                                 headers={"Content-Type": "application/json"})
+                                 headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11431,12 +11435,13 @@ async def account_pool_put(request: Request, user: "str" = Depends(require_user)
 
 
 @app.get("/api/account-pool/selections")
-async def account_pool_selections(limit: int = 50, user: "str" = Depends(require_user)):
+async def account_pool_selections(request: Request, limit: int = 50, user: "str" = Depends(require_user)):
     """转发选账号分摊流水：各账号被分摊到的请求次数 + 最近明细。"""
     try:
         async with _internal_client(timeout=5.0) as client:
             r = await client.get(GATEWAY_BASE_URL + "/account-pool/selections",
-                                 params={"limit": limit})
+                                 params={"limit": limit},
+                                 headers=_gw_headers(request))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11456,7 +11461,7 @@ async def account_models_put(request: Request, user: "str" = Depends(require_use
         async with _internal_client(timeout=5.0) as client:
             r = await client.put(GATEWAY_BASE_URL + "/account-models/config",
                                  content=body,
-                                 headers={"Content-Type": "application/json"})
+                                 headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11476,7 +11481,7 @@ async def account_models_restore(request: Request, user: "str" = Depends(require
         async with _internal_client(timeout=5.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-models/restore",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11485,11 +11490,12 @@ async def account_models_restore(request: Request, user: "str" = Depends(require
 
 
 @app.post("/api/account-pool/selections/reset")
-async def account_pool_selections_reset(user: "str" = Depends(require_user)):
+async def account_pool_selections_reset(request: Request, user: "str" = Depends(require_user)):
     """清空选账号流水，便于重新观测并发分摊。"""
     try:
         async with _internal_client(timeout=5.0) as client:
-            r = await client.post(GATEWAY_BASE_URL + "/account-pool/selections/reset")
+            r = await client.post(GATEWAY_BASE_URL + "/account-pool/selections/reset",
+                                  headers=_gw_headers(request))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11509,7 +11515,7 @@ async def refresh_token_proxy(request: Request, user: "str" = Depends(require_us
         async with _internal_client(timeout=40.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/refresh-token",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11525,7 +11531,7 @@ async def delete_account_proxy(request: Request, user: "str" = Depends(require_u
         async with _internal_client(timeout=20.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/delete",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11541,7 +11547,7 @@ async def export_accounts_proxy(request: Request, user: "str" = Depends(require_
         if request.url.query:
             url += f"?{request.url.query}"
         async with _internal_client(timeout=20.0) as client:
-            r = await client.get(url)
+            r = await client.get(url, headers=_gw_headers(request))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11557,7 +11563,7 @@ async def import_accounts_proxy(request: Request, user: "str" = Depends(require_
         async with _internal_client(timeout=30.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/import",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11573,7 +11579,7 @@ async def account_pool_toggle(request: Request, user: "str" = Depends(require_us
         async with _internal_client(timeout=5.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-pool/toggle",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11596,7 +11602,7 @@ async def account_pool_risk_flag_clear(request: Request, user: "str" = Depends(r
         async with _internal_client(timeout=5.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-pool/risk-flag/clear",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11616,7 +11622,7 @@ async def account_health_probe(request: Request, user: "str" = Depends(require_u
         async with _internal_client(timeout=45.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-health/probe",
                                   content=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11625,7 +11631,7 @@ async def account_health_probe(request: Request, user: "str" = Depends(require_u
 
 
 @app.get("/api/account-health/audit")
-async def account_health_audit(user: "str" = Depends(require_user)):
+async def account_health_audit(request: Request, user: "str" = Depends(require_user)):
     """转发「一致性自检」：把凭据与模型两侧的结论并排给出。
 
     超时给到 120s —— 这个接口会对每个账号跑一次凭据探测加数次模型探测，
@@ -11633,7 +11639,8 @@ async def account_health_audit(user: "str" = Depends(require_user)):
     """
     try:
         async with _internal_client(timeout=120.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/account-health/audit")
+            r = await client.get(GATEWAY_BASE_URL + "/account-health/audit",
+                                headers=_gw_headers(request))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11648,13 +11655,47 @@ async def account_health_audit(user: "str" = Depends(require_user)):
 # 否则会被 `/{path:path}` 抢走并转发到官方后端 57890（那边没有这些接口）。
 # ---------------------------------------------------------------------------
 
-async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None):
-    """把请求转发到网关（18091）。失败返回 502 而不是让页面白屏。"""
+# ---------------------------------------------------------------------------
+# 转发到网关（main.py，18091）时的登录态透传
+#
+# 背景（v1.0.18 安全修复）：网关本体此前 37 个路由里 32 个零鉴权，
+# 未登录 POST /import 即可往账号池合并写入任意账号（线上实测两次）。
+# 现在这些端点统一挂了 require_user 门，与 WebUI 侧同一套会话判定。
+#
+# 于是这里多了一件事：**WebUI 代理转发到网关时必须把用户的会话 Cookie 带上**。
+# 转发是容器内 loopback HTTP 调用，不带 Cookie 的话网关看到的就是"未登录"，
+# 整个账号管理面板会全部 401 —— 那不是修好了安全，是把自家前端打断了。
+#
+# 判据就是浏览器那个 `autobuddy_session` Cookie（见 db.create_session）：
+# 它在 WebUI 登录时种下、验证走 db.validate_session，网关侧读的是同一个 db。
+# ---------------------------------------------------------------------------
+GW_SESSION_COOKIE = "autobuddy_session"
+
+
+def _gw_headers(request: Optional[Request], body: Optional[bytes] = None) -> Dict[str, Any]:
+    """构造转发到网关的请求头：带 Content-Type 与登录态 Cookie。"""
+    headers: Dict[str, Any] = {"Content-Type": "application/json"} if body else {}
     try:
-        headers = {"Content-Type": "application/json"} if body else None
+        token = (request.cookies or {}).get(GW_SESSION_COOKIE) if request is not None else None
+    except Exception:
+        token = None
+    if token:
+        headers["Cookie"] = f"{GW_SESSION_COOKIE}={token}"
+    return headers
+
+
+async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None,
+                           request: Optional[Request] = None):
+    """把请求转发到网关（18091）。失败返回 502 而不是让页面白屏。
+
+    ``request`` 用于透传登录态 Cookie（见上方 _gw_headers 说明）——
+    网关的管理端点现已挂 require_user 门，不带会话会被判 401。
+    """
+    try:
+        headers = _gw_headers(request, body)
         async with _internal_client(timeout=10.0) as client:
             r = await client.request(method, GATEWAY_BASE_URL + path,
-                                     content=body, headers=headers)
+                                     content=body, headers=headers or None)
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -11663,9 +11704,9 @@ async def _forward_gateway(method: str, path: str, body: Optional[bytes] = None)
 
 
 @app.get("/api/model-health")
-async def model_health_get(user: "str" = Depends(require_user)):
+async def model_health_get(request: Request, user: "str" = Depends(require_user)):
     """巡检配置 + 可选账号 + 上次运行状态（设置页面板数据源）。"""
-    return await _forward_gateway("GET", "/model-health/config")
+    return await _forward_gateway("GET", "/model-health/config", request=request)
 
 
 # ---------------------------------------------------------------------------
@@ -12075,7 +12116,7 @@ def _wecom_handle_async(cmd: str, session_id: Optional[str]) -> None:
 @app.put("/api/model-health")
 async def model_health_put(request: Request, user: "str" = Depends(require_user)):
     """更新巡检配置（开关 / 间隔 / 账号范围 / 自动启用）。"""
-    return await _forward_gateway("PUT", "/model-health/config", await request.body())
+    return await _forward_gateway("PUT", "/model-health/config", await request.body(), request=request)
 
 
 @app.post("/api/model-health/run")
@@ -12090,7 +12131,7 @@ async def model_health_run(request: Request, user: "str" = Depends(require_user)
         async with _internal_client(timeout=300.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/model-health/run",
                                   content=body or b"{}",
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_gw_headers(request, body or b"{}"))
             return Response(content=r.content, status_code=r.status_code,
                             media_type="application/json")
     except Exception as e:
@@ -12099,44 +12140,51 @@ async def model_health_run(request: Request, user: "str" = Depends(require_user)
 
 
 @app.get("/api/gateway-info")
-async def gateway_info_api():
-    """连接信息：对外地址、端点、模型/账号规模、密钥状态。"""
-    return await _forward_gateway("GET", "/gateway/info")
+async def gateway_info_api(request: Request, user: "str" = Depends(require_user)):
+    """连接信息：对外地址、端点、模型/账号规模、密钥状态。
+
+    2026-10-21 v1.0.18 起从公开白名单里移出并挂上 require_user：
+    它转发到的网关 /gateway/info 已挂门（响应含账号规模、密钥统计等
+    侦察信息），代理侧若继续公开，等于换个路径就能无凭据读到同一份数据。
+    三个使用点（账号池统计 / KPI / 关于页）都在登录后的管理界面里，
+    前端对失败都有 `r.ok ? r.json() : {}` 兜底，不会白屏。
+    """
+    return await _forward_gateway("GET", "/gateway/info", request=request)
 
 
 @app.get("/api/api-keys")
-async def api_keys_get(user: "str" = Depends(require_user)):
-    return await _forward_gateway("GET", "/api-keys/status")
+async def api_keys_get(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", "/api-keys/status", request=request)
 
 
 @app.post("/api/api-keys")
 async def api_keys_create(request: Request, user: "str" = Depends(require_user)):
-    return await _forward_gateway("POST", "/api-keys", await request.body())
+    return await _forward_gateway("POST", "/api-keys", await request.body(), request=request)
 
 
 @app.post("/api/api-keys/update")
 async def api_keys_update(request: Request, user: "str" = Depends(require_user)):
-    return await _forward_gateway("POST", "/api-keys/update", await request.body())
+    return await _forward_gateway("POST", "/api-keys/update", await request.body(), request=request)
 
 
 @app.post("/api/api-keys/reset-stats")
 async def api_keys_reset_stats(request: Request, user: "str" = Depends(require_user)):
-    return await _forward_gateway("POST", "/api-keys/reset-stats", await request.body())
+    return await _forward_gateway("POST", "/api-keys/reset-stats", await request.body(), request=request)
 
 
 @app.post("/api/api-keys/delete")
 async def api_keys_delete(request: Request, user: "str" = Depends(require_user)):
-    return await _forward_gateway("POST", "/api-keys/delete", await request.body())
+    return await _forward_gateway("POST", "/api-keys/delete", await request.body(), request=request)
 
 
 @app.post("/api/api-keys/delete-all")
-async def api_keys_delete_all(user: "str" = Depends(require_user)):
-    return await _forward_gateway("POST", "/api-keys/delete-all")
+async def api_keys_delete_all(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/api-keys/delete-all", request=request)
 
 
 @app.put("/api/api-keys/config")
 async def api_keys_config(request: Request, user: "str" = Depends(require_user)):
-    return await _forward_gateway("PUT", "/api-keys/config", await request.body())
+    return await _forward_gateway("PUT", "/api-keys/config", await request.body(), request=request)
 
 
 
@@ -12185,7 +12233,8 @@ async def gateway_selftest(user: "str" = Depends(require_user)):
             steps.append({"name": "模型清单 /v1/models", "ok": False, "detail": str(e)})
 
         try:
-            r = await client.get(GATEWAY_BASE_URL + "/api-keys/status")
+            r = await client.get(GATEWAY_BASE_URL + "/api-keys/status",
+                                headers=_gw_headers(request))
             keys = {}
             if r.status_code == 200:
                 try:
@@ -12265,7 +12314,7 @@ def _load_accounts_for_models() -> list:
 
 
 @app.get("/api/account-models")
-async def account_models_api(user: "str" = Depends(require_user)):
+async def account_models_api(request: Request, user: "str" = Depends(require_user)):
     """按账号返回「可用模型 + 已调用模型」，供账号卡片动态展示。
 
     两个数据源合并，缺一不可：
@@ -12292,7 +12341,8 @@ async def account_models_api(user: "str" = Depends(require_user)):
     disabled_sources_by_account = {}
     try:
         async with _internal_client(timeout=5.0) as client:
-            r = await client.get(GATEWAY_BASE_URL + "/account-models/config")
+            r = await client.get(GATEWAY_BASE_URL + "/account-models/config",
+                                headers=_gw_headers(request))
             if r.status_code == 200:
                 body = r.json() or {}
                 disabled_by_account = body.get("policy") or {}

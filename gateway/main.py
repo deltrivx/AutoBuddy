@@ -3,6 +3,7 @@ import json
 import asyncio
 import logging
 import re
+import shutil
 import threading
 import time
 from collections import Counter
@@ -17,7 +18,7 @@ CREDIT_WEIGHT_SCHED = (os.getenv("AB_CREDIT_WEIGHT", "1") or "1").strip() not in
 # 低余额号彻底闲置（实测无封顶时 3:1 会让 A 吃满 30/30）。
 _WEIGHT_CAP = float(os.getenv("AB_CREDIT_WEIGHT_CAP", "8") or 8)
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import httpx
 
@@ -57,6 +58,14 @@ try:
     from gateway import session_sticky
 except ImportError:  # pragma: no cover - 取决于运行方式
     import session_sticky  # type: ignore[no-redef]
+
+# 会话校验（登录态）：web_proxy（18090）那份鉴权门用的是 db.validate_session，
+# 这里复用同一个函数，不另写一套判定逻辑 —— 两份会话判定一旦漂移，
+# 「在 WebUI 已登录」与「网关认不认」就会对不上。
+try:
+    from gateway import db as _db
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import db as _db  # type: ignore[no-redef]
 
 try:
     from gateway import credit_floor
@@ -105,7 +114,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.17"
+VERSION_DEFAULT = "1.0.18"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -152,6 +161,49 @@ SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
 MODEL_POLICY_FILE = DATA_DIR / "model_policy.json"
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://www.codebuddy.ai/v2")
 CN_BASE_URL = os.getenv("CN_BASE_URL", "https://copilot.tencent.com/v2")
+
+# ---------------------------------------------------------------------------
+# 管理端点鉴权门（2026-10-21 v1.0.18 安全修复）
+#
+# 背景：v1.0.8 给 **web_proxy（18090）** 的 /api/* 转发端点补了 54 道
+# require_user 门，但网关本体（main.py，18091）一个都没覆盖 —— 而 18091 是
+# host 网络，局域网内谁都能直连。线上实测：未登录 POST /import 直接 200，
+# 往账号池里合并写入任意账号（第二次同类事件）；/delete 同样敞开。
+#
+# 判定逻辑与 web_proxy.require_user **完全一致**：读同一个 db.validate_session，
+# 未登录抛 401。复制一份实现而不是 import 过来，是因为两个进程各自独立运行
+# （web_proxy 与 main 是 entrypoint 里两条 uvicorn），跨进程 import 会各自持有
+# 一份模块状态；而共享判定标准（同一个 db 模块）才是真正要保证的东西。
+#
+# **不加门的端点**（刻意保留公开，见各路由注释）：
+#   /health                     —— 容器健康检查，监控/探活必须能无凭据访问
+#   /api/notify/wecom/callback  —— 企业微信服务器回调，外部固定入口，无法带会话
+#   /v1/*                       —— OpenAI 兼容 API，鉴权走 api_keys（_gateway_auth），
+#                                  与会话门是两套体系：客户端拿不到浏览器会话
+# 注意：**loopback 不是免检理由**。18091 是 0.0.0.0 监听而非 127.0.0.1
+# （entrypoint.sh 启动时不绑定地址），局域网内任何主机都能直连；
+# 容器内 loopback 调用（web_proxy 转发、assistant、notify）若需要访问
+# 加了门的管理端点，必须自带合法会话，这一点在加门时已逐个核对过。
+# ---------------------------------------------------------------------------
+def get_current_user(autobuddy_session: Optional[str] = Cookie(None)) -> Optional[str]:
+    """从会话 Cookie 解析当前登录用户；未登录返回 None。"""
+    if not autobuddy_session:
+        return None
+    try:
+        return _db.validate_session(autobuddy_session)
+    except Exception:
+        return None
+
+
+def require_user(user: Optional[str] = Depends(get_current_user)) -> str:
+    """管理 API 的统一鉴权门。未登录（或会话过期）一律 401。
+
+    与 web_proxy.require_user 同一套判定：未登录请求不得触达任何
+    读写账号池 / 密钥 / 巡检配置的端点。
+    """
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或会话已过期")
+    return user
 
 # 国际版模型端点映射与独占命名空间（v1.0.4 引入）
 # 真实上游实测确认：codebuddy.ai / workbuddy.ai 国际版端点与国内版域名隔离，
@@ -869,6 +921,52 @@ def get_active_account() -> Optional[Dict[str, Any]]:
     return accounts[0] if accounts else None
 
 
+# 账号池权威源落盘前的留底份数上限。
+# 取 20 的理由：账号池的写入来源里最高频的是「刷新令牌」（每次刷新都会
+# _save_accounts 一次），一天可能几十次；全留会把目录撑爆，全不留又回到
+# 「注入了查不到」。20 份足够回看最近若干次变更，超出删最旧。
+_ACCOUNTS_BAK_KEEP = 20
+
+
+def _backup_accounts(primary: Path) -> Optional[Path]:
+    """把账号池权威源复制一份带时间戳的备份，返回备份路径。
+
+    与 ``model_policy.backup_policy`` / ``account_policy.backup_policy`` 同一思路：
+    落盘前留底，失败一律吞掉、绝不打断写入（账号数据写不上去比少一份备份严重得多）。
+
+    只对**权威源**（``/data/.wb-switch/accounts.json``）留底：容器副本
+    （``DATA_DIR/accounts.json``）是从同一份 payload 同步出来的，内容必然一致，
+    各留一份只是重复占空间。
+    """
+    try:
+        if not primary.exists():
+            return None
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        target = primary.with_name(f"{primary.name}.bak-{stamp}")
+        # 同一秒内多次写入（批量刷新令牌时会）不要互相覆盖。
+        if target.exists():
+            target = primary.with_name(f"{primary.name}.bak-{stamp}-{os.getpid()}")
+        shutil.copyfile(primary, target)
+        _prune_accounts_backups(primary)
+        return target
+    except Exception as e:
+        print(f"[accounts] 留底失败（不影响写入）: {e}")
+        return None
+
+
+def _prune_accounts_backups(primary: Path) -> None:
+    """只留最近 ``_ACCOUNTS_BAK_KEEP`` 份备份，超出的删最旧（按文件名时间戳排序）。"""
+    try:
+        baks = sorted(primary.parent.glob(f"{primary.name}.bak-*"))
+        for stale in baks[:-_ACCOUNTS_BAK_KEEP] if _ACCOUNTS_BAK_KEEP > 0 else baks:
+            try:
+                stale.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _save_accounts(accounts: List[Dict[str, Any]]) -> None:
     """把账号列表写回账号池文件。
 
@@ -879,6 +977,15 @@ def _save_accounts(accounts: List[Dict[str, Any]]) -> None:
 
     写入采用「先写临时文件再原子替换」，避免中途中断把账号文件写坏。
     权限沿用既存文件的属主/权限，不因覆写而改变。
+
+    **落盘前留底**（2026-10-21 v1.0.18 新增）：把权威源（官方那份）复制成
+    ``accounts.json.bak-<UTC 时间戳>``，与 model_policy / account_policy 的
+    ``backup_policy()`` 同一套思路 —— 一次导入可能新增/更新整批账号，
+    万一内容不对，用户需要的是「整份回退」，而不是逐个账号删。
+    此前这里不留任何痕迹，这正是「账号被注入了但看不出是谁、什么时候」
+    的直接原因（备份链最新一份停在事件发生前数小时）。
+    只对权威源留底、且最多保留 ``_ACCOUNTS_BAK_KEEP`` 份（超出的删最旧），
+    避免每次刷新令牌都攒一个新文件。
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     primary = Path("/data/.wb-switch/accounts.json")
@@ -888,6 +995,8 @@ def _save_accounts(accounts: List[Dict[str, Any]]) -> None:
         targets.append(local)
 
     payload = json.dumps(accounts, ensure_ascii=False, indent=2)
+    # 留底在任何写入之前：写坏了还能拿回写前那一份。
+    _backup_accounts(primary)
     for target in targets:
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -2088,7 +2197,7 @@ def _jwt_exp_of(token: str) -> Optional[int]:
 
 
 @app.post("/refresh-token")
-def refresh_token_api(payload: Dict[str, Any]):
+def refresh_token_api(payload: Dict[str, Any], user: str = Depends(require_user)):
     """刷新单个账号的令牌（账号卡片菜单的「刷新 Token」）。
 
     只动这一个账号：拿到新 AT/RT 后写回账号文件（官方那份 + 本地副本），
@@ -2164,7 +2273,7 @@ def refresh_token_api(payload: Dict[str, Any]):
 
 
 @app.post("/delete")
-def delete_account_api(payload: Dict[str, Any]):
+def delete_account_api(payload: Dict[str, Any], user: str = Depends(require_user)):
     """删除账号（账号卡片菜单的「删除账号」）。
 
     同时清掉它的模型禁用策略与账号级停用记录 —— 不清会留下孤立条目，
@@ -2237,7 +2346,7 @@ _EXPORT_SECRET_KEYS = frozenset({"access_token", "refresh_token", "auth_raw", "p
 
 
 @app.get("/export-accounts")
-def export_accounts_api(exportSecrets: bool = False):
+def export_accounts_api(exportSecrets: bool = False, user: str = Depends(require_user)):
     """导出账号备份。
 
     默认**剔除刷新令牌等串行凭据**（exportSecrets=false）—— 备份常被丢到网盘、
@@ -2261,7 +2370,7 @@ def export_accounts_api(exportSecrets: bool = False):
 
 
 @app.post("/import")
-def import_accounts_api(payload: Dict[str, Any]):
+def import_accounts_api(payload: Dict[str, Any], user: str = Depends(require_user)):
     """导入账号备份（合并式，不覆盖同名之外的账号）。
 
     按 ID 去重：备份里已有的账号更新，没有的新增，**不删除**当前任何账号。
@@ -2292,7 +2401,7 @@ def import_accounts_api(payload: Dict[str, Any]):
 
 
 @app.get("/account-pool/status")
-def account_pool_status():
+def account_pool_status(user: str = Depends(require_user)):
     accounts = _load_accounts()
     config = _load_pool_config()
     enabled_ids = {str(x) for x in config.get("enabledAccountIds") or []}
@@ -2361,7 +2470,7 @@ def _risk_flag_view() -> Dict[str, Dict[str, Any]]:
 
 
 @app.post("/account-pool/risk-flag/clear")
-def account_risk_flag_clear(payload: Dict[str, Any]):
+def account_risk_flag_clear(payload: Dict[str, Any], user: str = Depends(require_user)):
     """解除某账号的风控标记（账号卡片浮层里的「解除标记」按钮）。
 
     **只应由人工触发。** 上游没说这个账号好了，我们就不该擅自说好了 ——
@@ -2376,7 +2485,7 @@ def account_risk_flag_clear(payload: Dict[str, Any]):
 
 
 @app.get("/account-pool/selections")
-def account_pool_selections(limit: int = 50):
+def account_pool_selections(limit: int = 50, user: str = Depends(require_user)):
     """选账号分摊观测：各账号命中次数 + 最近明细。
 
     用于回答「并发请求是否真的分摊到了多个账号，而不是只用了其中一个」。
@@ -2385,7 +2494,7 @@ def account_pool_selections(limit: int = 50):
 
 
 @app.post("/account-pool/selections/reset")
-def reset_account_pool_selections():
+def reset_account_pool_selections(user: str = Depends(require_user)):
     """清空选账号流水，便于做干净的压测观测。**同时清掉磁盘上的副本**，
     否则下次重启会把旧流水又读回来，看起来像「清零没生效」。"""
     with _SELECTION_LOCK:
@@ -2395,7 +2504,7 @@ def reset_account_pool_selections():
 
 
 @app.put("/account-pool/config")
-def update_account_pool(config: Dict[str, Any]):
+def update_account_pool(config: Dict[str, Any], user: str = Depends(require_user)):
     """更新账号池配置。
 
     **未提交的字段保持原值，而不是被重置成默认值。** 这一点是必须的：
@@ -2477,7 +2586,7 @@ def update_account_pool(config: Dict[str, Any]):
 # 于是独立成文件，两份都只能**减少**参与调用的账号。
 
 @app.post("/account-pool/toggle")
-def toggle_account_disabled(payload: Dict[str, Any]):
+def toggle_account_disabled(payload: Dict[str, Any], user: str = Depends(require_user)):
     """停用 / 启用单个账号（人在界面上点的，来源记 manual）。
 
     停用的语义是「轮询时不选它」，**不是**禁止调用 ——
@@ -2508,7 +2617,7 @@ def toggle_account_disabled(payload: Dict[str, Any]):
 
 
 @app.post("/account-health/probe")
-def probe_account_credentials(payload: Dict[str, Any]):
+def probe_account_credentials(payload: Dict[str, Any], user: str = Depends(require_user)):
     """就地检测一个账号的凭据是否有效（不消耗额度、不改配置）。
 
     只报告结论。要停用它由用户看着结果自己决定（旁边就是停用按钮）——
@@ -2591,7 +2700,7 @@ def probe_account_credentials(payload: Dict[str, Any]):
 
 
 @app.get("/account-health/audit")
-def audit_account_health():
+def audit_account_health(user: str = Depends(require_user)):
     """对全部账号做一次一致性自检，逐账号给出「凭据」与「模型」两侧的结论。
 
     为什么需要它：凭据有效性与模型可用性是**两个独立维度**，
@@ -2729,7 +2838,7 @@ def audit_account_health():
 # ---------------------------------------------------------------------------
 
 @app.get("/account-models/config")
-def account_models_config():
+def account_models_config(user: str = Depends(require_user)):
     """返回模型禁用策略，供账号卡片渲染标签的禁用态。
 
     同时给出两种视图：
@@ -2748,7 +2857,7 @@ def account_models_config():
 
 
 @app.put("/account-models/config")
-def update_account_models_config(payload: Dict[str, Any]):
+def update_account_models_config(payload: Dict[str, Any], user: str = Depends(require_user)):
     """切换某账号某个模型的禁用状态。**这里的写入一律标记为手动（manual）。**
 
     入参两种写法，都支持：
@@ -2799,7 +2908,7 @@ def update_account_models_config(payload: Dict[str, Any]):
 
 
 @app.post("/account-models/restore")
-def restore_account_models(payload: Dict[str, Any]):
+def restore_account_models(payload: Dict[str, Any], user: str = Depends(require_user)):
     """一键恢复某账号被禁用的模型。
 
     入参：``{"accountId": "...", "scope": "all" | "auto"}``
@@ -2968,20 +3077,26 @@ def _gateway_info() -> Dict[str, Any]:
 
 
 @app.get("/gateway/info")
-def gateway_info():
-    """连接信息面板的数据源：地址、端点、模型/账号规模、密钥状态。"""
+def gateway_info(user: str = Depends(require_user)):
+    """连接信息面板的数据源：地址、端点、模型/账号规模、密钥状态。
+
+    加门理由：响应里带账号规模、可用数、密钥统计与禁用组合数 ——
+    是标准的侦察信息（"这台机器上有多少账号、有几个能用"）。
+    WebUI 侧 /api/gateway-info 转发点已有 require_user，网关本体这一侧
+    此前是裸的，等于同一份数据换个端口就能无凭据读到。
+    """
     return _gateway_info()
 
 
 @app.get("/api-keys/status")
-def api_keys_status():
+def api_keys_status(user: str = Depends(require_user)):
     info = api_keys.get_config()
     info["gateway"] = _gateway_info()
     return info
 
 
 @app.post("/api-keys")
-def api_keys_create(payload: Optional[Dict[str, Any]] = None):
+def api_keys_create(payload: Optional[Dict[str, Any]] = None, user: str = Depends(require_user)):
     record, error = api_keys.create_key((payload or {}).get("name"))
     if error:
         raise HTTPException(status_code=400, detail=error)
@@ -3008,7 +3123,7 @@ def _guard_last_enabled_key(key_id: str) -> None:
 
 
 @app.post("/api-keys/update")
-def api_keys_update(payload: Dict[str, Any]):
+def api_keys_update(payload: Dict[str, Any], user: str = Depends(require_user)):
     key_id = payload.get("id")
     if not key_id:
         raise HTTPException(status_code=400, detail="id is required")
@@ -3024,7 +3139,7 @@ def api_keys_update(payload: Dict[str, Any]):
 
 
 @app.post("/api-keys/reset-stats")
-def api_keys_reset_stats(payload: Dict[str, Any]):
+def api_keys_reset_stats(payload: Dict[str, Any], user: str = Depends(require_user)):
     """重置单个密钥的统计（callCount / lastUsedAt 清零，密钥本身不变）。
 
     前端在高危确认弹窗之后调用 —— 后端只做幂等动作，防线在 UI 层。
@@ -3039,7 +3154,7 @@ def api_keys_reset_stats(payload: Dict[str, Any]):
 
 
 @app.post("/api-keys/delete")
-def api_keys_delete(payload: Dict[str, Any]):
+def api_keys_delete(payload: Dict[str, Any], user: str = Depends(require_user)):
     key_id = payload.get("id")
     if not key_id:
         raise HTTPException(status_code=400, detail="id is required")
@@ -3050,7 +3165,7 @@ def api_keys_delete(payload: Dict[str, Any]):
 
 
 @app.post("/api-keys/delete-all")
-def api_keys_delete_all():
+def api_keys_delete_all(user: str = Depends(require_user)):
     """一键清空。仅用于「重置成未设防状态」，前端会二次确认。
 
     开着密钥校验时不允许清空：清完就没人能调了。要重置请先关掉校验 —— 这里选择
@@ -3065,7 +3180,7 @@ def api_keys_delete_all():
 
 
 @app.put("/api-keys/config")
-def api_keys_config(payload: Dict[str, Any]):
+def api_keys_config(payload: Dict[str, Any], user: str = Depends(require_user)):
     if "requireKey" not in payload:
         raise HTTPException(status_code=400, detail="requireKey is required")
     require = bool(payload.get("requireKey"))
@@ -3079,6 +3194,12 @@ def api_keys_config(payload: Dict[str, Any]):
 
 @app.get("/health")
 def health():
+    """健康检查。**刻意不加会话门**（v1.0.18 安全修复中明确保留公开）。
+
+    理由：容器健康检查 / Unraid 探活 / `curl 127.0.0.1:18091/health` 验证部署
+    都必须能无凭据访问，加了门会把监控全部打成 401，反而掩盖真实故障。
+    响应只含版本号、模型计数与账号是否可用这类运行态摘要，不含账号明细与密钥。
+    """
     acc = get_active_account()
     catalog = get_model_catalog()
     return {
@@ -3093,7 +3214,7 @@ def health():
     }
 
 @app.get("/reqlog")
-def reqlog_snapshot(limit: int = 50):
+def reqlog_snapshot(limit: int = 50, user: str = Depends(require_user)):
     """请求级指标快照（成功率 / 耗时分位 / 最近请求）。
 
     指标是**进程内内存态**，只有网关进程（18091）持有。WebUI 代理（18090）必须走 HTTP 转发拿到，不能在自己进程 import —— 那是另一个实例，永远是空。
@@ -3109,6 +3230,11 @@ def reqlog_snapshot(limit: int = 50):
 # 企业微信回调（接收消息服务器）：公网入口由 nginx(autobuddy.deltrivx.com) → 本网关。
 # GET = 启用验证（回显解密后的 echostr）；POST = 收消息（加密 XML → 回复加密 XML）。
 # 配置在 notify_config.json 的 wecom.cb_* 字段；未配置时 GET 回 403、POST 回空。
+#
+# **刻意不加会话门**（v1.0.18 安全修复中明确保留公开）：这是企业微信服务器的
+# 固定回调入口，请求由外部平台发起，不可能携带本站的登录会话 Cookie；
+# 它的安全性来自 cb_token / cb_aes_key 签名校验（见 notify.wecom_callback_verify），
+# 未配置回调密钥时直接 403。
 # ---------------------------------------------------------------------------
 @app.get("/api/notify/wecom/callback")
 def wecom_callback_get(request: Request):
@@ -3134,6 +3260,12 @@ async def wecom_callback_post(request: Request):
 @app.get("/v1/models")
 @app.get("/models")
 async def list_models(request: Request):
+    """模型清单。**不加会话门**（v1.0.18 安全修复中明确保留公开）。
+
+    鉴权走 api_keys 那套（_gateway_auth：未开启密钥校验时放行，loopback 免检），
+    与会话门是两套体系 —— OpenAI 兼容客户端拿不到浏览器会话 Cookie，
+    在这里挂 require_user 会直接把所有下游客户端打死。
+    """
     gate = _gateway_auth(request)
     if not gate["ok"]:
         raise HTTPException(status_code=401, detail=gate.get("detail") or "Unauthorized")
@@ -3230,6 +3362,11 @@ def accumulate_delta(msg: Dict[str, Any], delta: Dict[str, Any]) -> None:
 @app.post("/v1/chat/completions")
 @app.post("/chat/completions")
 async def chat_completions(request: Request):
+    """对话补全。**不加会话门**（v1.0.18 安全修复中明确保留公开）。
+
+    鉴权同样走 api_keys（_gateway_auth），见 list_models 的说明 ——
+    下游客户端是 OpenAI 兼容调用方，没有也不该有本站登录会话。
+    """
     start_time = time.time()
 
     # 访问密钥校验（默认关闭）。开启后 /v1/* 需携带 Authorization: Bearer <key>
@@ -3802,12 +3939,12 @@ async def account_rotate_loop() -> None:
 
 
 @app.get("/rotate/status")
-def rotate_status():
+def rotate_status(user: str = Depends(require_user)):
     return _rotate_state_snapshot()
 
 
 @app.post("/rotate/run")
-def rotate_run():
+def rotate_run(user: str = Depends(require_user)):
     return rotate_once()
 
 
@@ -3937,20 +4074,20 @@ def health_config_snapshot() -> Dict[str, Any]:
 
 
 @app.get("/model-health/config")
-def model_health_config():
+def model_health_config(user: str = Depends(require_user)):
     """返回巡检配置、可选账号清单与上次运行状态。"""
     return health_config_snapshot()
 
 
 @app.put("/model-health/config")
-def update_model_health_config(payload: Dict[str, Any]):
+def update_model_health_config(payload: Dict[str, Any], user: str = Depends(require_user)):
     """更新巡检配置（只覆盖显式给出的字段）。"""
     model_health.merge_config(payload or {})
     return health_config_snapshot()
 
 
 @app.get("/model-health/status")
-def model_health_status():
+def model_health_status(user: str = Depends(require_user)):
     return {
         "ok": True,
         "config": model_health.load_config(),
@@ -3961,7 +4098,7 @@ def model_health_status():
 
 
 @app.post("/model-health/run")
-def model_health_run(payload: Optional[Dict[str, Any]] = None):
+def model_health_run(payload: Optional[Dict[str, Any]] = None, user: str = Depends(require_user)):
     """立即执行一轮巡检（不改变开关状态）。
 
     请求体可临时覆盖本轮参数（如只探测某几个账号），便于先小范围试跑。

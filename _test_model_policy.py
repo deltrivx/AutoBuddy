@@ -100,6 +100,11 @@ ns = {
 import model_policy as _mp  # noqa: E402
 
 ns["model_policy"] = _mp
+# Cookie / Depends / HTTPException：main.py 的鉴权门（v1.0.18 起）在切片范围内，
+# 直接文本执行时这些名字必须存在，否则 NameError。
+ns["Cookie"] = lambda default=None, *a, **k: default
+ns["Depends"] = lambda dep=None, *a, **k: dep
+ns["HTTPException"] = type("HTTPException", (Exception,), {})
 # 抽取需要的常量与函数体
 start = src.index("DATA_DIR = Path(")
 end = src.index("def infer_owner(")

@@ -61,6 +61,10 @@ _fastapi.FastAPI = _App
 _fastapi.HTTPException = _HTTPException
 _fastapi.Request = type("Request", (), {})
 _fastapi.Response = type("Response", (), {})
+# Cookie / Depends：main.py 的 require_user 门用（v1.0.18 起）。
+# Cookie 真实签名是 Cookie(default=None, ...)，这里用一个透传默认值的桩。
+_fastapi.Cookie = lambda default=None, *a, **k: default
+_fastapi.Depends = lambda dep=None, *a, **k: dep
 sys.modules["fastapi"] = _fastapi
 
 _resp = types.ModuleType("fastapi.responses")

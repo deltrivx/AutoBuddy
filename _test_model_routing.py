@@ -69,6 +69,11 @@ ns["SELECTION_LOG_FILE"] = tmp / "selection_logs.json"
 ns["MODEL_POLICY_FILE"] = tmp / "model_policy.json"
 ns["MODEL_ALIAS_MAP"] = {"hy4": "hy3"}
 ns["DATA_DIR"] = tmp
+# Cookie / Depends / HTTPException：main.py 的鉴权门（v1.0.18 起）在切片范围内，
+# 直接文本执行时这些名字必须存在，否则 NameError。
+ns["Cookie"] = lambda default=None, *a, **k: default
+ns["Depends"] = lambda dep=None, *a, **k: dep
+ns["HTTPException"] = type("HTTPException", (Exception,), {})
 
 exec(compile(seg1, "consts", "exec"), ns)
 exec(compile(seg_policy, "policy", "exec"), ns)
