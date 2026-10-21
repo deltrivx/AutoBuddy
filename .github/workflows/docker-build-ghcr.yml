@@ -92,15 +92,20 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # 版本号规范：语义化 `vX.Y.Z` 三位制（feature 进 minor，bugfix 进 patch）。
-          # 曾短暂试过四段日期制（v2026.10.21.03），已废弃 —— 它不是标准 semver，
-          # `type=semver` 对它一条标签都产不出（源码里 semver.valid() 返回 null 后
-          # 该规则静默跳过、不报错），tag 推送后 GHCR 会只剩 latest。
-          # 剥 v 前缀用 type=match 的捕获组，不用 type=ref,event=tag ——
-          # 后者**不剥 v**（源码 procRefTag() 只做 replace(/^refs\/tags\//)，
-          # 官方文档表格也是 refs/tags/v1.2.3 → v1.2.3）。
-          # 2026-10-21 实测踩过：v2026.10.21.03 被推成了 v2026.10.21.03。
-          # type=match 抓组后，v1.0.11 → 1.0.11，再由 semver 规则补 1.0。
+          # 版本号规范（哥哥 2026-10-21 定）：`vYYYY.MM.DD.NN` 四段日期制，
+          # 末段是「当天第几版」，固定两位补零 —— v2026.10.21.01 / .09 / .10。
+          # 四段号**不是标准 semver**：`type=semver` 对它一条标签都产不出
+          # （源码里 semver.valid() 返回 null 后该规则静默跳过、不报错），
+          # 于是 tag 推送时镜像会只剩 latest 或干脆没标签。
+          # 因此版本标签靠下面这条 type=match 兜底，它不挑版本形态。
+          # ⚠️ 为什么不用 type=ref,event=tag：它**不剥 v 前缀**
+          # （源码 procRefTag() 只做 replace(/^refs\/tags\//)，官方文档表格
+          # 也是 refs/tags/v1.2.3 → v1.2.3）。2026-10-21 实测踩过：
+          # v2026.10.21.03 被推成了 v2026.10.21.03。
+          # type=match 靠捕获组剥 v，四段和三段一视同仁：
+          #   v2026.10.21.04 → 2026.10.21.04
+          #   v1.0.11        → 1.0.11
+          # 存量三段式的 x.y.z / x.y 标签仍由下面两条 semver 规则产出。
           # 注：type=match / type=semver 在 latest=auto 下各产一条 latest，
           # 与上面那条 raw latest 会重复，buildx 自动去重，无实际影响。
           tags: |

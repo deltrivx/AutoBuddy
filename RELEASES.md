@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.11](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.11)
+**当前稳定版：** [v2026.10.21.04](https://github.com/deltrivx/autobuddy/releases/tag/v2026.10.21.04)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,7 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v1.0.11](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.11) | 2026-10-21 | 版本号规范回归语义化三位制，撤销四段日期制试验；顺带修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.11.md) |
+| [v2026.10.21.04](https://github.com/deltrivx/autobuddy/releases/tag/v2026.10.21.04) | 2026-10-21 | 版本号正式切换为四段日期制（末段两位补零、按当天第几版累进），修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2026.10.21.04.md) |
 | [v1.0.10](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.10) | 2026-10-22 | 账号搜索框挪到档位切换行右端并对齐官方尺寸，每日任务签到/执行两个开关彻底拆分独立持久化，账号签到与凭据板块补背景框，设备指纹与 UA 改为动态池化隔离并覆盖新账号，关于页「说明」项移除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.10.md) |
 | [v1.0.9](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.9) | 2026-10-21 | 账号池白名单彻底收紧 + 负载均衡平摊 + 每日任务安全分级与防风控加固 + 国际版每日活跃接入 + 全量账号独立硬件指纹 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.9.md) |
 | [v1.0.8](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.8) | 2026-10-20 | 安全修复——WebUI 全部 54 个管理端点补登录鉴权（此前 /api/import 等写操作未登录可直接调用，线上曾被写入注入测试账号） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.8.md) |
@@ -204,7 +204,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.11    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:2026.10.21.04    # 锁定版本
 ```
 
 ## 部署产物
