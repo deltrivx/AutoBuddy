@@ -77,42 +77,36 @@ check("④ 提示块不出现在 header 里（只在 section 内）",
       'div.className = "wb-official-relogin"' in PROXY
       and 'card.querySelector("header")' in PROXY)
 
-# 2026-10-21 尺寸微调的三个可量化断言（防止回退到「比正常区还高」的状态）：
-print("\n[2c] 登录提醒块尺寸契约（要比正常对应区小）")
+# 2026-10-21 工单：异常卡与正常卡视觉对齐契约（登录提醒区占满原积分包展示区，高度严格对齐一致）：
+print("\n[2c] 登录提醒块尺寸契约（占满原积分展示区并居中对齐）")
 _relogin_block = PROXY.split(".wb-official-relogin {")[1].split("}")[0]
-check("不再有 min-height:80px 硬撑（实测那 80px 是钉高度的唯一原因）",
-      "min-height: 80px" not in _relogin_block and "min-height: 0" in _relogin_block)
-check("padding 从 12px 14px 收窄（原始值不得残留）",
-      "padding: 12px 14px" not in _relogin_block)
-check("块高不再大于其替代的正常区域（65px）：靠收紧 padding/gap/字号实现",
-      re.search(r'padding:\s*[1-9]px', _relogin_block) is not None
-      and re.search(r'gap:\s*[01]px', _relogin_block) is not None)
+check("给足 min-height 对齐正常卡积分区域高度",
+      "min-height: 140px" in _relogin_block)
+check("舒适 padding 且垂直居中展示",
+      "padding: 12px 14px" in _relogin_block and "justify-content: center" in _relogin_block)
 _title_block = PROXY.split(".wb-pool-relogin-title {")[1].split("}")[0]
 _desc_block = PROXY.split(".wb-pool-relogin-desc {")[1].split("}")[0]
-check("标题字号 13px → 11px、行高 1.5 → 1.3",
-      "font-size: 13px" not in _title_block and "font-size: 11px" in _title_block
-      and "line-height: 1.5" not in _title_block and "line-height: 1.3" in _title_block)
-check("说明字号 11.5px → 10px、行高 1.6 → 1.35",
-      "font-size: 11.5px" not in _desc_block and "font-size: 10px" in _desc_block
-      and "line-height: 1.6" not in _desc_block and "line-height: 1.35" in _desc_block)
-# 内框高度对齐：JS 就地量同页正常卡的模型区高度，不写死像素。
+check("标题字号 13px、行高 1.4",
+      "font-size: 13px" in _title_block and "line-height: 1.4" in _title_block)
+check("说明字号 11px、行高 1.45",
+      "font-size: 11px" in _desc_block and "line-height: 1.45" in _desc_block)
+# 内框高度对齐：JS 就地量同页正常卡的模型区高度与积分区高度，不写死像素。
 check("内框对齐用内容驱动（量同页正常卡模型区高度），不拍脑袋定值",
       "wbAmH" in PROXY and "donor.getBoundingClientRect().height" in PROXY)
+check("登录提醒区用内容驱动对齐同页正常卡积分区高度",
+      "wbReloginH" in PROXY and "donorCredit" in PROXY)
 check("恢复登录后撤掉对齐高度（不留下过期的固定高度）",
-      'am.style.minHeight = ""' in PROXY)
+      'am.style.minHeight = ""' in PROXY and 'rbox.style.minHeight = ""' in PROXY)
 check("模型区标题行给足 24px 行高（对齐正常卡）",
       re.search(r'\.wb-relogin-disabled \.wb-am-title\s*\{[^}]*min-height:\s*24px', PROXY) is not None)
-# 移动端：窄屏 desc 折行会变多，必须限行，否则「更小」在手机上失效。
-check("移动端 desc 限 2 行（-webkit-line-clamp），防窄屏折行撑高",
-      "-webkit-line-clamp: 2" in PROXY)
 
-print("\n[3] 需求 3 & 9: 账号搜索过滤框及双法则排序（正常优先/积分降序）")
+print("\n[3] 需求 3 & 9: 账号搜索过滤框及三原则排序（正常优先/非白名单居中/异常沉底；分类内积分降序）")
 check("注入账号搜索框组件",
       "wb-acc-search-input" in PROXY)
-check("双法则排序：正常账号优先（异常沉底）",
-      "a.meta.rank !== b.meta.rank" in PROXY and "isAbnormal" in PROXY)
-check("双法则排序：正常账号间按实时积分降序排列",
-      "b.meta.credits !== a.meta.credits" in PROXY)
+check("三原则排序：正常(0)优先、非白名单(1)靠后、异常(2)沉底",
+      "a.meta.rank !== b.meta.rank" in PROXY and "inPool" in PROXY and "isAbnormal" in PROXY)
+check("三原则排序：分类内部按实时积分降序排列",
+      "b.meta.credits !== a.meta.credits" in PROXY and "hasCredits" in PROXY)
 check("后端 /api/account-pool 注入实时积分数据",
       'item["credits"] = float(balances.get(aid' in PROXY or 'balances.get(aid' in PROXY)
 

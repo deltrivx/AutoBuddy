@@ -385,44 +385,36 @@ COLLAPSE_SCRIPT = r"""
     min-width: 118px;
     text-align: center;
   }
-  /* 「需要重新登录」提示文字（官方积分包区 401 错误块替换用，
-     2026-10-20 工单）：标题 + 说明句。
-     2026-10-21 尺寸微调（哥哥反馈「登录提醒区域要比原来的正常区域小」）：
-     原来这块实测 86px 高，而正常卡对应位置（积分包内容区）只有 65px ——
-     提醒块反倒比它要替代的内容更高，一眼突兀。现在压到 53px 上下：
-     padding 12/14 → 5/10、gap 4 → 1、标题 13/1.5 → 11/1.3、
-     desc 11.5/1.6 → 10/1.35，并去掉 min-height:80px 的硬撑
-     （实测那 80px 是唯一把这块钉高的东西，去掉后自然高度 53px）。 */
+  /* 「需要重新登录」提示文字（官方积分包区 401 错误块替换用）：标题 + 说明句。
+     异常信息直接居中展示在原积分展示区域，保持与正常卡片相同的区域高度与排版节奏。 */
   .wb-pool-relogin-title {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: #b91c1c;
-    line-height: 1.3;
+    line-height: 1.4;
   }
   .wb-pool-relogin-desc {
-    font-size: 10px;
+    font-size: 11px;
     color: #7f1d1d;
-    line-height: 1.35;
+    line-height: 1.45;
     min-width: 0;
   }
-  /* 官方积分包区 401 错误文本的替换样式（2026-10-20 工单第三次澄清）：
-     位置在操作按钮上方，样式比控制条横幅轻（这里是官方内容区的位置，
-     不能喧宾夺主），但一眼可见。2026-10-20 四校：不撑满内框——
-     高度只包内容（auto），是 section 里的一块，不是整屏。
-     2026-10-21 尺寸微调：这块要比它所替代的正常区域（积分包内容区，实测 65px）
-     **更小**，否则异常卡会比正常卡还高。同时 margin-top:12px 顶替被隐藏的
-     官方第二块（实测 17px 高 + 12px 上间距），让异常卡与正常卡的间距节奏一致。 */
+  /* 官方积分包区 401 错误文本的替换样式：
+     位置在操作按钮上方，占满原积分包展示区域。
+     使其与正常卡片上方积分展示区的高度完全对齐一致，使整张卡片上下排版严格对称。 */
   .wb-official-relogin {
     display: flex;
     flex-direction: column;
-    gap: 1px;
-    padding: 5px 10px;
+    justify-content: center;
+    gap: 4px;
+    padding: 12px 14px;
     border-radius: 10px;
     border: 1px dashed rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.07);
     flex: 0 0 auto;
     height: auto !important;
-    min-height: 0 !important;
+    min-height: 140px;
+    box-sizing: border-box;
     margin-top: 12px;
     word-break: break-word !important;
     overflow-wrap: break-word !important;
@@ -546,18 +538,14 @@ COLLAPSE_SCRIPT = r"""
     .wb-acc-search-wrap { margin-left: 0; width: 100%; height: 36px; padding-top: 0; }
     .wb-acc-search-box { width: 100%; }
     .wb-acc-search-input { width: 100%; }
-    /* 移动端登录提醒块：窄屏 desc 更容易折行（PC 334px 内容宽 2 行，
-       390px 视口下内容宽约 310px，同样文案可能变 3 行），一旦多折一行
-       整块就被撑高、「比正常区域小」的效果在手机上失效。
-       这里把 desc 压到 9.5px/1.3 并允许最多 2 行（第 3行截断加省略号），
-       块高因此钉在 50px 上下，不随屏宽漂移。 */
-    .wb-official-relogin { padding: 4px 9px; gap: 1px; }
-    .wb-pool-relogin-title { font-size: 10.5px; line-height: 1.25; }
+    /* 移动端登录提醒块：占满对应积分区域高度并自适应居中 */
+    .wb-official-relogin { padding: 10px 12px; gap: 3px; min-height: 130px; }
+    .wb-pool-relogin-title { font-size: 12px; line-height: 1.3; }
     .wb-pool-relogin-desc {
-      font-size: 9.5px;
-      line-height: 1.3;
+      font-size: 10.5px;
+      line-height: 1.35;
       display: -webkit-box;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
@@ -5170,6 +5158,32 @@ COLLAPSE_SCRIPT = r"""
         }
       }
     }
+    // 登录提醒区域高度对齐正常卡（使异常就显示在原来显示积分的区域，两边区域一样大）
+    var reloginBox = sec.querySelector(".wb-official-relogin");
+    if (reloginBox && !reloginBox.dataset.wbReloginH) {
+      var donorCredit = null;
+      var cards2 = document.querySelectorAll("article[data-wb-acc]");
+      for (var j = 0; j < cards2.length; j++) {
+        var other2 = cards2[j];
+        if (other2 === card) continue;
+        if (other2.querySelector(".wb-relogin-disabled") || other2.querySelector(".wb-official-relogin")) continue;
+        var osec = other2.querySelector("section");
+        if (!osec) continue;
+        var pBar = osec.querySelector(".wb-pool-bar");
+        var first = osec.firstElementChild;
+        if (first && first !== pBar && first.getBoundingClientRect().height > 50) {
+          donorCredit = first;
+          break;
+        }
+      }
+      if (donorCredit) {
+        var ch = Math.round(donorCredit.getBoundingClientRect().height);
+        if (ch >= 80) {
+          reloginBox.style.minHeight = ch + "px";
+          reloginBox.dataset.wbReloginH = String(ch);
+        }
+      }
+    }
   }
 
   function wbApplyReloginEnabled(card) {
@@ -5180,12 +5194,16 @@ COLLAPSE_SCRIPT = r"""
       el.classList.remove("wb-relogin-disabled");
       el.removeAttribute("aria-disabled");
     });
-    // 一并撤掉灰化时给模型区设的对齐高度，否则账号恢复后卡片仍钉着
-    // 一个不属于它的高度（正常卡的内容会变，那个快照值是过期的）。
+    // 一并撤掉灰化时给模型区与登录提醒区设的对齐高度
     var am = sec.querySelector(".wb-am-box");
     if (am && am.dataset.wbAmH) {
       delete am.dataset.wbAmH;
       am.style.minHeight = "";
+    }
+    var rbox = sec.querySelector(".wb-official-relogin");
+    if (rbox && rbox.dataset.wbReloginH) {
+      delete rbox.dataset.wbReloginH;
+      rbox.style.minHeight = "";
     }
   }
 
@@ -5907,9 +5925,10 @@ COLLAPSE_SCRIPT = r"""
     });
   }
 
-  // 需求 9：优化账号页面卡片排序
-  // 第一法则：账号正常优先，异常排在正常后面
-  // 第二法则：同一状态积分多的靠前，积分少的靠后（降序）
+  // 需求 9：优化账号页面卡片排序（三原则排序法则）
+  // 第一原则：正常卡片排在最前，非白名单靠后，最后是异常卡片
+  // 第二原则：三种分类内部再按照积分多少排序，积分多的靠前，积分少的靠后
+  // 第三原则：没有积分的卡片不用管理排序顺序
   function wbSortAccountCards() {
     var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
     if (cards.length < 2) return;
@@ -5933,7 +5952,7 @@ COLLAPSE_SCRIPT = r"""
       var title = (h3 ? h3.textContent : "").trim();
       var acc = (id && accMap[String(id)]) || (title && accMap[title]) || null;
 
-      // 异常状态判断（第 1 法则）：
+      // 异常状态判断（401失效、停用、被上游拦截）：
       // 1. 账号对象上有 disabled 或 needsRelogin 标记；
       // 2. 卡片上有 wb-relogin-disabled 样式；
       // 3. wbCardNeedsRelogin(card) 为真；
@@ -5946,22 +5965,50 @@ COLLAPSE_SCRIPT = r"""
       if (card.querySelector(".wb-official-relogin") || card.querySelector(".wb-relogin-disabled")) {
         isAbnormal = true;
       }
-      var rank = isAbnormal ? 1 : 0; // 0 = 正常优先，1 = 异常靠后
 
-      // 积分值获取（第 2 法则）：
+      // 白名单判断（在账号池中）：
+      var inPool = false;
+      if (acc) {
+        inPool = !!acc.enabled;
+      } else {
+        var btn = card.querySelector(".wb-pool-bar > .wb-pool-btn:first-child");
+        if (btn) {
+          var btnTxt = (btn.textContent || "").trim();
+          if (btnTxt.indexOf("参与调用") >= 0) inPool = true;
+          if (btnTxt.indexOf("已停用") >= 0) isAbnormal = true;
+        }
+      }
+
+      // 第一原则三层等级：0=正常优先，1=非白名单靠后，2=异常卡片垫底
+      var rank = 1;
+      if (isAbnormal) {
+        rank = 2;
+      } else if (inPool) {
+        rank = 0;
+      } else {
+        rank = 1;
+      }
+
+      // 第二原则 & 第三原则：积分获取与排序判定
+      var hasCredits = false;
       var credits = 0;
-      if (acc && typeof acc.credits === "number") {
+      if (acc && typeof acc.credits === "number" && !isNaN(acc.credits)) {
         credits = acc.credits;
-      } else if (acc && typeof acc.balance === "number") {
+        hasCredits = true;
+      } else if (acc && typeof acc.balance === "number" && !isNaN(acc.balance)) {
         credits = acc.balance;
+        hasCredits = true;
       } else {
         // 从 DOM 中提取数字兜底
         var txt = card.textContent || "";
         var m = txt.match(/(\d+(?:\.\d+)?)\s*(?:积分|credits?)/i);
-        if (m) credits = parseFloat(m[1]) || 0;
+        if (m) {
+          credits = parseFloat(m[1]) || 0;
+          hasCredits = true;
+        }
       }
 
-      return { rank: rank, credits: credits, title: title, id: id || "" };
+      return { rank: rank, hasCredits: hasCredits, credits: credits, title: title, id: id || "" };
     }
 
     var cardMetas = cards.map(function (c) {
@@ -5969,16 +6016,22 @@ COLLAPSE_SCRIPT = r"""
     });
 
     cardMetas.sort(function (a, b) {
-      // 第一法则：正常 (rank 0) 优先于异常 (rank 1)
+      // 第一原则：正常卡片 (0) 优先，非白名单 (1) 靠后，最后是异常卡片 (2)
       if (a.meta.rank !== b.meta.rank) {
         return a.meta.rank - b.meta.rank;
       }
-      // 第二法则：同状态内积分多的靠前（降序）
-      if (b.meta.credits !== a.meta.credits) {
-        return b.meta.credits - a.meta.credits;
+      // 第二原则 & 第三原则：同分类内部，有积分的按积分降序排序；没有积分的不用参与排序（排在有积分后面或保持稳定）
+      if (a.meta.hasCredits && b.meta.hasCredits) {
+        if (b.meta.credits !== a.meta.credits) {
+          return b.meta.credits - a.meta.credits;
+        }
+      } else if (a.meta.hasCredits && !b.meta.hasCredits) {
+        return -1;
+      } else if (!a.meta.hasCredits && b.meta.hasCredits) {
+        return 1;
       }
       // 稳定排序兜底：标题或 ID
-      return a.meta.title.localeCompare(b.meta.title);
+      return (a.meta.title || a.meta.id).localeCompare(b.meta.title || b.meta.id);
     });
 
     // 检查是否已是目标顺序，避免无意义的 DOM 重排

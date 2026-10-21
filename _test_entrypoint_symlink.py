@@ -140,10 +140,10 @@ try:
     check("无循环 / 无悬空链接", not find_bad_links(a, b))
 
     # 普通实体仍双向传播（功能不回退）。
-    # ⚠️ os.path.realpath 返回 str，必须包成 Path 才能与 Path 比较。
+    # ⚠️ os.path.realpath 返回 str，必须包成 Path 且两侧均 realpath（兼容 macOS /var -> /private/var）。
     check("普通文件仍双向传播（accounts.json → .wb-switch）",
           (b / "accounts.json").is_symlink()
-          and Path(os.path.realpath(b / "accounts.json")) == a / "accounts.json")
+          and Path(os.path.realpath(b / "accounts.json")) == Path(os.path.realpath(a / "accounts.json")))
 
     print("\n[4] SQLite 边车不跨目录链接（干净场景）")
 
@@ -158,7 +158,7 @@ try:
           and not (b2 / "token_stats.db-shm").exists())
     check("主库仍正常传播（功能不回退）",
           (b2 / "token_stats.db").is_symlink()
-          and Path(os.path.realpath(b2 / "token_stats.db")) == a2 / "token_stats.db")
+          and Path(os.path.realpath(b2 / "token_stats.db")) == Path(os.path.realpath(a2 / "token_stats.db")))
 
     print("\n[5] 幂等性")
 

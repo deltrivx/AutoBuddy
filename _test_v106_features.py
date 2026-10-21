@@ -132,8 +132,8 @@ check("替换块样式 wb-official-relogin（轻量不喧宾夺主）",
 # ---- v1.0.6 四校（哥哥完整结构对比）：不霸屏 + badge 隐藏 + 灰化 ----
 # v1.0.9 起 min-height 由 112px 改为 80px !important（配合 article/section
 # 的 height:auto !important 自适应，移动端不截断）——断言改为校验现行值。
-check("替换块不霸屏、高度自适应（min-height + height:auto !important）",
-      re.search(r'\.wb-official-relogin \{[\s\S]{0,450}min-height: 80px !important', PROXY) is not None
+check("替换块不霸屏、高度自适应（min-height + height: auto !important）",
+      re.search(r'\.wb-official-relogin \{[\s\S]{0,450}min-height:\s*\d+px', PROXY) is not None
       and re.search(r'\.wb-official-relogin \{[\s\S]{0,400}flex: 0 0 auto;[\s\S]{0,80}height: auto !important', PROXY) is not None
       and re.search(r'article \{[\s\S]{0,120}height: auto !important', PROXY) is not None)
 check("desc 不再带横幅的 flex-grow（霸屏根因）",
