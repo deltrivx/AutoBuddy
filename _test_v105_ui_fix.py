@@ -88,6 +88,39 @@ check("不再有「全表 remove 后重建」的 toggle 回调",
 check("wbPinAccountBlocks 仍在（控制条/模型区顺序恒定的既有保障）",
       "function wbPinAccountBlocks()" in JS)
 
+print("\n[6] v1.0.17 工单第 2 件：启用时按钮跑位 / 移动端整页刷新")
+# 6.1 按钮跑位：根因是 .wb-pool-bar 的 flex-wrap:wrap 遇上启用前后文案长度变化。
+#     修法三层，逐层断言，改坏即红。
+check("控制条按钮不参与压缩、不自行断行（flex:0 0 auto + nowrap）",
+      re.search(r"\.wb-pool-btn \{[^}]*flex:\s*0 0 auto", SRC, re.S) is not None
+      and re.search(r"\.wb-pool-btn \{[^}]*white-space:\s*nowrap", SRC, re.S) is not None)
+check("启用/停用主按钮三种状态宽度取齐（min-width，折行点不随状态跳）",
+      re.search(r"\.wb-pool-bar\s*>\s*\.wb-pool-btn:first-child\s*\{[^}]*min-width:\s*118px", SRC, re.S) is not None)
+check("窄屏主按钮最小宽度收紧（640px 档，按钮组尽量留同一行）",
+      re.search(r"\.wb-pool-bar\s*>\s*\.wb-pool-btn:first-child\s*\{[^}]*min-width:\s*104px", SRC, re.S) is not None)
+check("「已调用 N 次」与「最近调用」靠最右（margin-left:auto，换行只发生在按钮组↔统计之间）",
+      re.search(r"\.wb-pool-last \{[^}]*margin-left:\s*auto", SRC, re.S) is not None)
+check("计数标签同样锁定不压缩不断行",
+      re.search(r"\.wb-pool-count \{[^}]*flex:\s*0 0 auto", SRC, re.S) is not None)
+check("模型区「全部恢复」按钮锁定宽度（计数徽标增减不把它挤下去）",
+      re.search(r"\.wb-am-restore \{[^}]*flex:\s*0 0 auto", SRC, re.S) is not None)
+
+# 6.2 移动端整页刷新：v1.0.5 只覆盖了 createElement 路径，漏了 innerHTML 字符串路径。
+#     这里把两条路径一起锁死 —— 以后新增注入按钮，漏哪条都会红。
+inner = re.findall(r"<button[^>]*>", JS)
+leak_inner = [t for t in inner if 'type="button"' not in t]
+check("innerHTML 注入的 <button> 全部显式 type=\"button\"（v1.0.5 的盲区）",
+      not leak_inner, f"漏了 {len(leak_inner)} 处：{leak_inner[:3]}")
+leak_ce = re.findall(r'\b(\w+) = document\.createElement\("button"\);\n(?! +\1\.type = "button")', JS)
+check("createElement 注入的 <button> 仍无漏补（v1.0.5 原有断言保留）",
+      not leak_ce, f"漏了 {leak[:3]}")
+# 登录弹窗与每日任务面板历史上是漏得最狠的两处，点名锁住
+for bid in ["wb-login-submit", "wb-dl-abort", "wb-dl-save", "wb-dl-run",
+            "wb-dl-tasks-all-btn", "wb-dl-checkin-all-btn",
+            "wb-dl-refresh-tasks", "wb-dl-refresh-runs"]:
+    check(f"{bid} 带 type=\"button\"",
+          re.search(r'<button id="' + re.escape(bid) + r'"\s+type="button"', JS) is not None)
+
 print("\n[5] vendor 脚本为 v3.14（含 500 积分补偿）")
 check("vendor 自报 v3.14", "v3.14" in VENDOR[:600], "头部版本行")
 check("已下线补偿接口被安全跳过（需求6：claim-compensation 报 400，不再请求）",

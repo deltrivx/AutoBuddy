@@ -31,6 +31,26 @@
 
 ---
 
+## [v1.0.17] - 2026-10-21
+
+<!-- summary: 修复账号卡片点「启用」时按钮跑到卡片底部（flex 折行点随按钮文案长度漂移），并补齐注入按钮 innerHTML 路径缺失的 type="button"（移动端整页刷新） -->
+
+### 修复
+
+- **账号卡片点「启用」时按钮跑到卡片底部**（2026-10-20 工单第 2 件，v1.0.5 修过一次但未根治）：账号池控制条 `.wb-pool-bar` 是 `flex-wrap: wrap`，而启用/停用三种状态的按钮文案长度不同（「不在账号池 · 点击启用」9 字 → 「参与调用 · 点击停用」8 字；「已停用 · 点击启用」7 字 → 同上）。点「启用」后 `wbReplacePoolBar` 就地重建这根条，主按钮一换文案宽度就变，**折行点跟着漂移**，后面的按钮与「已调用 N 次」被甩到下一行 —— 用户看到的就是「按钮跑到卡片底部」。移动端（390px 视口、约 310px 内容宽）上 4~5 个元素本来就要折行，这个效应最明显。
+
+  三层修法，都不动 DOM 结构（`_test_v105_ui_fix.py` 新增 16 项断言逐条锁住）：
+
+  1. `gateway/web_proxy.py`：`.wb-pool-btn` 加 `flex: 0 0 auto` + `white-space: nowrap` —— 按钮不参与压缩变形，也不自行断行。
+  2. 启用/停用主按钮（`.wb-pool-bar > .wb-pool-btn:first-child`）给 `min-width: 118px` + `text-align: center`，窄屏（`max-width: 640px`）收紧到 `104px` 并把条间距 `gap` 收到 6px —— 三种状态宽度取齐，折行点不再随状态跳。
+  3. 「已调用 N 次」与「最近调用」加 `margin-left: auto` 独占最右（同时 `flex: 0 0 auto` + `nowrap`）—— 换行只发生在「按钮组 ↔ 统计」之间，按钮组三个的相对位置永远不变。
+
+  模型区「全部恢复」按钮（`.wb-am-restore`）同一个病：标题行 `flex-wrap` 上的「已禁用 / 巡检」徽标数量一增减就把它挤到下一行，一并加 `flex: 0 0 auto` + `nowrap`。
+
+- **移动端整页刷新（注入按钮 innerHTML 路径漏 `type="button"`）**：v1.0.5 只覆盖了 `document.createElement("button")` 路径，漏掉 innerHTML 字符串路径。本次补齐 9 处：登录弹窗的「登 录」按钮，以及每日任务面板的「中止」「保存配置」「立即执行」「全部执行任务」「全部立即签到」「刷新」（任务）/「刷新」（执行）各一枚。这些按钮落在官方 `<form>` 内时默认 `type=submit`，点一下即触发表单提交整页刷新 —— 移动端窄屏下按钮更容易被官方 form 包裹，命中率更高。`_test_v105_ui_fix.py` 新增两条反向断言（innerHTML 路径 + 8 个具体按钮 id）把盲区焊死。
+
+---
+
 ## [v1.0.16] - 2026-10-21
 
 <!-- summary: 异常账号卡片登录提醒区域尺寸下调（不再比它替代的正常区域还高），模型区内框高度改为按同页正常卡实测对齐，只调尺寸不动结构 -->
@@ -5292,7 +5312,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.16...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.17...HEAD
+[v1.0.17]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.16...v1.0.17
 [v1.0.16]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.15...v1.0.16
 [v1.0.15]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.14...v1.0.15
 [v1.0.14]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.13...v1.0.14

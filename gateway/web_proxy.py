@@ -353,6 +353,38 @@ COLLAPSE_SCRIPT = r"""
     gap: 8px;
     margin-top: 10px;
   }
+  /* 2026-10-21 工单第 2 件：「账号卡片启用时按钮跑到卡片底部」。
+     根因是这条控制条的 flex-wrap:wrap 遇上**启用前后按钮文案长度变化**：
+     「不在账号池 · 点击启用」(9 字) → 「参与调用 · 点击停用」(8 字)，
+     「已停用 · 点击启用」(7 字) → 同上，宽度一改，折行点跟着改，
+     后面的按钮/计数就被甩到下一行 —— 用户看到的就是「按钮跑到卡片底部」。
+     移动端（390px 视口、约 310px 内容宽）上 4 个元素本来就要折行，
+     这个效应最明显。三层修法（都不动 DOM 结构）：
+       ① 按钮一律 flex:0 0 auto + nowrap：不被压缩变形，也不自行断行；
+       ② toggle 按钮给 min-width：三种状态宽度取齐，折行点不随状态跳；
+       ③ 计数/「最近调用」改 margin-left:auto 独占右侧：换行只发生在
+          「按钮组 ↔ 统计」之间，按钮组三个的相对位置永远不变。 */
+  .wb-pool-btn {
+    font-size: 11px;
+    line-height: 1.8;
+    padding: 1px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(120, 120, 120, 0.35);
+    background: transparent;
+    color: var(--foreground, #374151);
+    cursor: pointer;
+    /* ① 不参与压缩、不自行断行（前述工单） */
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  /* ② 启用/停用主按钮：三种文案（不在账号池·点击启用 / 已停用·点击启用 /
+     参与调用·点击停用）统一到一个最小宽度，切换状态时该按钮宽度不变，
+     后面的按钮与计数不会被推着换行。取 118px：够放最长的
+     「不在账号池 · 点击启用」，PC 与移动端一致（移动端靠字号微调补）。 */
+  .wb-pool-bar > .wb-pool-btn:first-child {
+    min-width: 118px;
+    text-align: center;
+  }
   /* 「需要重新登录」提示文字（官方积分包区 401 错误块替换用，
      2026-10-20 工单）：标题 + 说明句。
      2026-10-21 尺寸微调（哥哥反馈「登录提醒区域要比原来的正常区域小」）：
@@ -529,6 +561,14 @@ COLLAPSE_SCRIPT = r"""
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    /* 账号池控制条（2026-10-21 工单第 2 件「启用时按钮跑到卡片底部」）：
+       窄屏约 310px 内容宽，4~5 个元素必然折行。上面已用
+       flex:0 0 auto + min-width + margin-left:auto 保证「按钮组 ↔ 统计」
+       分开换行、按钮组内部不错位；这里再把间距与主按钮最小宽度收一档，
+       让按钮组三个尽量留在同一行。 */
+    .wb-pool-bar { gap: 6px; }
+    .wb-pool-bar > .wb-pool-btn:first-child { min-width: 104px; }
+    .wb-pool-btn { padding: 1px 8px; }
   }
   .wb-acc-search-count {
     font-size: 11px;
@@ -538,16 +578,7 @@ COLLAPSE_SCRIPT = r"""
     border-radius: 999px;
     flex: 0 0 auto;
   }
-  .wb-pool-btn {
-    font-size: 11px;
-    line-height: 1.8;
-    padding: 1px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(120, 120, 120, 0.35);
-    background: transparent;
-    color: var(--foreground, #374151);
-    cursor: pointer;
-  }
+  /* 主按钮宽度取齐规则见上方 .wb-pool-bar > .wb-pool-btn:first-child 的注释 */
   .wb-pool-btn:hover { background: rgba(120, 120, 120, 0.12); }
   .wb-pool-btn-on {
     border-color: rgba(34, 197, 94, 0.55);
@@ -719,6 +750,12 @@ COLLAPSE_SCRIPT = r"""
     border-radius: 999px;
     border: 1px dashed rgba(120, 120, 120, 0.45);
     color: var(--muted-foreground, #6b7280);
+    flex: 0 0 auto;
+    white-space: nowrap;
+    /* 2026-10-21 工单第 2 件：与「已调用 N 次」一起靠最右，二者之间用
+       auto 均分剩余空间。这样窄屏换行只发生在「按钮组 ↔ 统计」之间，
+       按钮组三个的相对位置不受影响。 */
+    margin-left: auto;
   }
   /* 该账号累计被分摊到的请求次数（进程启动后累计） */
   .wb-pool-count {
@@ -729,6 +766,8 @@ COLLAPSE_SCRIPT = r"""
     background: rgba(120, 120, 120, 0.14);
     color: var(--muted-foreground, #6b7280);
     font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
   .wb-pool-count-hot {
     background: rgba(59, 130, 246, 0.16);
@@ -843,6 +882,11 @@ COLLAPSE_SCRIPT = r"""
     background: transparent;
     border: 1px solid rgba(29, 78, 216, 0.35);
     transition: background .15s ease, border-color .15s ease;
+    /* 2026-10-21 工单第 2 件：标题行是 flex-wrap，计数徽标数量会随
+       「已禁用 / 巡检」增减而变化。按钮若不锁定自身宽度，徽标一多一少
+       就把它挤到下一行 —— 与账号池控制条同一个病。 */
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
   .wb-am-restore:hover:not(:disabled) {
     background: rgba(29, 78, 216, 0.08);
@@ -2244,7 +2288,7 @@ COLLAPSE_SCRIPT = r"""
           '</div>' +
         '</div>' +
         '<div id="wb-login-err" style="color:#ef4444;font-size:12px;display:none;margin-top:2px;"></div>' +
-        '<button id="wb-login-submit" style="margin-top:6px;width:100%;padding:9px;border-radius:8px;background:#3b82f6;color:#ffffff;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background 0.2s;">登 录</button>' +
+        '<button id="wb-login-submit" type="button" style="margin-top:6px;width:100%;padding:9px;border-radius:8px;background:#3b82f6;color:#ffffff;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background 0.2s;">登 录</button>' +
       '</div>';
       
     overlay.appendChild(card);
@@ -8624,9 +8668,9 @@ COLLAPSE_SCRIPT = r"""
               '<div class="wb-api-desc">上次执行：<span id="wb-dl-lastrun" class="wb-api-mono">—</span>　下次到期：<span id="wb-dl-nextdue" class="wb-api-mono">—</span></div>' +
             '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
-              '<button id="wb-dl-abort" class="wb-api-btn wb-api-btn-danger" style="display:none">中止</button>' +
-              '<button id="wb-dl-save" class="wb-api-btn">保存配置</button>' +
-              '<button id="wb-dl-run" class="wb-api-btn wb-api-btn-primary">立即执行</button>' +
+              '<button id="wb-dl-abort" type="button" class="wb-api-btn wb-api-btn-danger" style="display:none">中止</button>' +
+              '<button id="wb-dl-save" type="button" class="wb-api-btn">保存配置</button>' +
+              '<button id="wb-dl-run" type="button" class="wb-api-btn wb-api-btn-primary">立即执行</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -8658,8 +8702,8 @@ COLLAPSE_SCRIPT = r"""
               // 「全部执行任务」与「全部立即签到」并列（用户 2026-10-13 反馈：
               // 有手动签到按钮但没有手动执行任务按钮）。
               '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
-                '<button id="wb-dl-tasks-all-btn" class="wb-api-btn">全部执行任务</button>' +
-                '<button id="wb-dl-checkin-all-btn" class="wb-api-btn">全部立即签到</button>' +
+                '<button id="wb-dl-tasks-all-btn" type="button" class="wb-api-btn">全部执行任务</button>' +
+                '<button id="wb-dl-checkin-all-btn" type="button" class="wb-api-btn">全部立即签到</button>' +
               '</div>' +
             '</div>' +
             '<div class="wb-api-desc" style="margin-bottom:6px">自动关联账号池里的国内版（cn）账号，新增账号无需在此登记；刷新令牌只读共用（实测续期后旧令牌仍有效，无烧号风险）。</div>' +
@@ -8687,7 +8731,7 @@ COLLAPSE_SCRIPT = r"""
               '<div class="wb-api-label">任务记录</div>' +
               '<div class="wb-api-desc" id="wb-dl-tasks-sum">每个任务项最近一次执行结果与成功次数（内置 SQLite 持久化）</div>' +
             '</div>' +
-            '<button id="wb-dl-refresh-tasks" class="wb-api-btn">刷新</button>' +
+            '<button id="wb-dl-refresh-tasks" type="button" class="wb-api-btn">刷新</button>' +
           '</div>' +
           '<div id="wb-dl-tasks" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
         '</div>' +
@@ -8699,7 +8743,7 @@ COLLAPSE_SCRIPT = r"""
               '<div class="wb-api-label">执行记录</div>' +
               '<div class="wb-api-desc" id="wb-dl-runs-sum">最近执行轮次（点击任一轮查看逐账号明细）</div>' +
             '</div>' +
-            '<button id="wb-dl-refresh-runs" class="wb-api-btn">刷新</button>' +
+            '<button id="wb-dl-refresh-runs" type="button" class="wb-api-btn">刷新</button>' +
           '</div>' +
           '<div id="wb-dl-runs" class="wb-api-row wb-api-row-stack" style="flex-direction:column"></div>' +
           '<div id="wb-dl-log-wrap" style="display:none">' +
