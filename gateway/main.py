@@ -114,7 +114,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.19"
+VERSION_DEFAULT = "1.0.20"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -962,7 +962,25 @@ def _backup_accounts(primary: Path) -> Optional[Path]:
 
 
 def _prune_accounts_backups(primary: Path) -> None:
-    """只留最近 ``_ACCOUNTS_BAK_KEEP`` 份备份，超出的删最旧。
+    """只留最近 ``_ACCOUNTS_BAK_KEEP`` 份**自动留底**，超出的删最旧。
+
+    **只清理本函数自己生成的那种**（``accounts.json.bak-YYYYMMDD-HHMMSS``，
+    同秒多次再带 ``-1`` / ``-2`` 后缀），人工命名的备份一个都不碰。
+
+    为什么必须区分：早期用 ``glob(f"{primary.name}.bak-*")``，那个通配符
+    会把**所有** ``accounts.json.bak-`` 开头的文件都算进来，包括这些
+    人工命名的留证：
+
+      - ``accounts.json.bak-rmmrh-20261020-200536``  唯一的 32 条干净源
+      - ``accounts.json.bak-before-recovery-*``      污染态留证
+      - ``accounts.json.bak-manual-*``               手工固化的备份
+      - ``bak-deljunk-*`` / ``bak-prerestore-*`` / ``bak-before-*`` / ``bak-dead-*``
+
+    一旦自动留底的份数堆过 ``_ACCOUNTS_BAK_KEEP``，这些**不可再生的人工
+    留证就会按 mtime 被当"旧垃圾"删掉**——而它们往往是唯一一份能回到某个
+    历史状态的凭据。2026-10-21 隔离实测确认了匹配范围：glob 命中 11 个文件，
+    其中 9 个是人工命名的。当时总数未超上限所以侥幸没删，但这是悬在留证
+    头上的刀。改成按形态过滤后，人工留证与自动留底各走各的，互不影响。
 
     排序用 **mtime** 而不是文件名：同一秒内的备份带 ``-1`` / ``-2`` 后缀，
     与不带后缀的那个混在一起时字典序不稳定（``...053050`` < ``...053050-1``
@@ -970,7 +988,14 @@ def _prune_accounts_backups(primary: Path) -> None:
     误删更新鲜的那份。
     """
     try:
-        baks = [p for p in primary.parent.glob(f"{primary.name}.bak-*") if p.is_file()]
+        # 只认自动留底的形态：bak-YYYYMMDD-HHMMSS，同秒后缀 -1/-2/… 可选。
+        stamp_rx = re.compile(
+            r"^" + re.escape(primary.name) + r"\.bak-\d{8}-\d{6}(-\d+)?$"
+        )
+        baks = [
+            p for p in primary.parent.iterdir()
+            if p.is_file() and stamp_rx.match(p.name)
+        ]
         baks.sort(key=lambda p: p.stat().st_mtime)
         for stale in baks[:-_ACCOUNTS_BAK_KEEP] if _ACCOUNTS_BAK_KEEP > 0 else baks:
             try:

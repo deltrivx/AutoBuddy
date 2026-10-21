@@ -31,6 +31,29 @@
 
 ---
 
+## [v1.0.20] - 2026-10-22
+
+<!-- summary: 修自动留底清理范围的通配符 bug——人工命名的留证（32 条干净源、污染态留证、手工备份）会被当旧垃圾删掉；新增 22 项专项测试锁住清理边界 -->
+
+### 修复
+
+- **自动留底的清理范围过宽，会误删人工命名的留证**。`_prune_accounts_backups()` 原来用 `glob(f"{primary.name}.bak-*")` 挑文件，那个通配符会匹配**所有** `accounts.json.bak-` 开头的文件，不止自己生成的时间戳形态：
+
+  | 会被误删的 | 是什么 |
+  | :--- | :--- |
+  | `accounts.json.bak-rmmrh-20261020-200536` | **唯一的 32 条干净源**（国内 27 + 国际 5） |
+  | `accounts.json.bak-before-recovery-*` | 污染态留证 |
+  | `accounts.json.bak-manual-*` | 手工固化的备份 |
+  | `bak-deljunk-*` / `bak-prerestore-*` / `bak-before-*` / `bak-dead-*` | 历次治理的退路 |
+
+  一旦自动留底的份数堆过 `_ACCOUNTS_BAK_KEEP`（20），这些**不可再生的人工留证就会按 mtime 被当"旧垃圾"删掉** —— 而它们往往是唯一一份能回到某个历史状态的凭据。隔离实测确认了匹配范围：glob 命中 11 个文件，其中 9 个是人工命名的。当时总数未超上限所以侥幸没删，但这是悬在留证头上的刀。
+
+  改为按形态过滤：只认 `accounts.json.bak-YYYYMMDD-HHMMSS`（同秒多次再带 `-1` / `-2` 后缀，与 `_backup_accounts()` 的命名严格对齐），人工命名的一个都不碰。自动留底仍受 20 份上限约束，该清的还是清。
+
+- **测试切片漏了一个顶层名字，被 except 吞成静默失败**。`_prune_accounts_backups()` 改用 `re.compile` 后，测试文件 exec 切片时的命名空间没提供 `re`，函数内的 NameError 被它自己的 `except Exception: pass` 吞掉 —— 表现为「prune 一个都不删」且无任何报错。这暴露了留底机制「失败一律吞掉」的设计盲区：**静默失败与成功在外部无法区分**。已在测试里补上 `re`，并加一条断言检查切片命名空间完整性。
+
+---
+
 ## [v1.0.19] - 2026-10-22
 
 <!-- summary: 修 v1.0.18 留底机制自身的两个 bug——同秒多次留底会互相覆盖丢内容、清理排序会误删更新鲜的那份 -->
@@ -5351,7 +5374,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.19...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.20...HEAD
+[v1.0.20]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.19...v1.0.20
 [v1.0.19]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.18...v1.0.19
 [v1.0.18]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.17...v1.0.18
 [v1.0.17]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.16...v1.0.17
