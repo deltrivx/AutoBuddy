@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.15](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.15)
+**当前稳定版：** [v1.0.16](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.16)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.16](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.16) | 2026-10-21 | 异常账号卡片登录提醒区域尺寸下调（不再比它替代的正常区域还高），模型区内框高度改为按同页正常卡实测对齐，只调尺寸不动结构 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.16.md) |
 | [v1.0.15](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.15) | 2026-10-21 | 修复 v1.0.14 解除风控标记按钮假成功的缺陷——请求被 catch-all 路由转给官方后端返回 200，标记实际未被清除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.15.md) |
 | [v1.0.14](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.14) | 2026-10-21 | 账号卡片新增「被上游风控标记」徽章与推送通知，标记落在独立存储里、与本地停用彻底分开；只通知不自动停用，也不碰账号数据文件 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.14.md) |
 | [v1.0.13](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.13) | 2026-10-21 | 补齐单账号风控预警推送（只通知不自动停用）与打卡事件时间戳抖动两项真缺口，均不改账号数据、不新增自动处置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.13.md) |
@@ -207,7 +208,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.15    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.16    # 锁定版本
 ```
 
 ## 部署产物

@@ -50,6 +50,62 @@ check("前端注入异常卡片模型区灰化样式",
 check("移动端自适应 CSS 消除截断",
       re.search(r'\[class\*="min-\[420px\]:flex"\]', PROXY) is not None)
 
+# 2026-10-21 工单：异常卡「只调尺寸、不动结构」的四校契约。
+# 这是哥哥明确要求保留的异常态效果，任何后续改动（含尺寸微调）都不得破坏。
+# 断言全部走源码字面量 —— CSS 与 JS 都在 web_proxy.py 里，改坏了这里立刻红。
+print("\n[2b] 异常卡四校结构契约（2026-10-21 尺寸微调后仍须成立）")
+# ① 顶部外框只留右侧两个按钮：官方「需重新登录」badge 被隐藏，且选择器
+#    刻意排除含 button / chevron 的 span，不动右侧两个功能按钮。
+check("① 顶部外框官方 badge 隐藏、且不误伤右侧两个按钮",
+      ".wb-header-badge-hidden span:not(:has(button)):not(:has(svg[class*=chevron]))" in PROXY)
+# ② 内框含重新登录提示 + 按钮区 + 模型区：三者都在 section 里被处理。
+check("② 内框三件套（提示块/控制条/模型区）都在 section 内处理",
+      'card.querySelector("section")' in PROXY
+      and ".wb-official-relogin" in PROXY
+      and 'sec.querySelector(".wb-pool-bar")' in PROXY
+      and 'sec.querySelector(".wb-am-box")' in PROXY)
+# ③ 右侧按钮/框内按钮区/模型区灰化且不可操作：grayscale + pointer-events:none。
+check("③ 灰化含 grayscale + pointer-events:none（不可操作）",
+      re.search(r'\.wb-relogin-disabled\s*\{[^}]*filter:\s*grayscale\(1\)', PROXY) is not None
+      and re.search(r'\.wb-relogin-disabled\s*\{[^}]*pointer-events:\s*none', PROXY) is not None)
+# ④ 提示块不放顶部外框、也不撑满内框：flex:0 0 auto + height:auto，无 flex:1。
+check("④ 提示块不撑满内框（flex:0 0 auto + height:auto）",
+      re.search(r'\.wb-official-relogin\s*\{[^}]*flex:\s*0 0 auto', PROXY) is not None
+      and re.search(r'\.wb-official-relogin\s*\{[^}]*height:\s*auto\s*!important', PROXY) is not None
+      and "flex: 1" not in PROXY.split(".wb-official-relogin {")[1].split("}")[0])
+check("④ 提示块不出现在 header 里（只在 section 内）",
+      'div.className = "wb-official-relogin"' in PROXY
+      and 'card.querySelector("header")' in PROXY)
+
+# 2026-10-21 尺寸微调的三个可量化断言（防止回退到「比正常区还高」的状态）：
+print("\n[2c] 登录提醒块尺寸契约（要比正常对应区小）")
+_relogin_block = PROXY.split(".wb-official-relogin {")[1].split("}")[0]
+check("不再有 min-height:80px 硬撑（实测那 80px 是钉高度的唯一原因）",
+      "min-height: 80px" not in _relogin_block and "min-height: 0" in _relogin_block)
+check("padding 从 12px 14px 收窄（原始值不得残留）",
+      "padding: 12px 14px" not in _relogin_block)
+check("块高不再大于其替代的正常区域（65px）：靠收紧 padding/gap/字号实现",
+      re.search(r'padding:\s*[1-9]px', _relogin_block) is not None
+      and re.search(r'gap:\s*[01]px', _relogin_block) is not None)
+_title_block = PROXY.split(".wb-pool-relogin-title {")[1].split("}")[0]
+_desc_block = PROXY.split(".wb-pool-relogin-desc {")[1].split("}")[0]
+check("标题字号 13px → 11px、行高 1.5 → 1.3",
+      "font-size: 13px" not in _title_block and "font-size: 11px" in _title_block
+      and "line-height: 1.5" not in _title_block and "line-height: 1.3" in _title_block)
+check("说明字号 11.5px → 10px、行高 1.6 → 1.35",
+      "font-size: 11.5px" not in _desc_block and "font-size: 10px" in _desc_block
+      and "line-height: 1.6" not in _desc_block and "line-height: 1.35" in _desc_block)
+# 内框高度对齐：JS 就地量同页正常卡的模型区高度，不写死像素。
+check("内框对齐用内容驱动（量同页正常卡模型区高度），不拍脑袋定值",
+      "wbAmH" in PROXY and "donor.getBoundingClientRect().height" in PROXY)
+check("恢复登录后撤掉对齐高度（不留下过期的固定高度）",
+      'am.style.minHeight = ""' in PROXY)
+check("模型区标题行给足 24px 行高（对齐正常卡）",
+      re.search(r'\.wb-relogin-disabled \.wb-am-title\s*\{[^}]*min-height:\s*24px', PROXY) is not None)
+# 移动端：窄屏 desc 折行会变多，必须限行，否则「更小」在手机上失效。
+check("移动端 desc 限 2 行（-webkit-line-clamp），防窄屏折行撑高",
+      "-webkit-line-clamp: 2" in PROXY)
+
 print("\n[3] 需求 3 & 9: 账号搜索过滤框及双法则排序（正常优先/积分降序）")
 check("注入账号搜索框组件",
       "wb-acc-search-input" in PROXY)

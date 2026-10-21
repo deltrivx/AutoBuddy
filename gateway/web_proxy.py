@@ -354,34 +354,44 @@ COLLAPSE_SCRIPT = r"""
     margin-top: 10px;
   }
   /* 「需要重新登录」提示文字（官方积分包区 401 错误块替换用，
-     2026-10-20 工单）：标题 + 说明句。 */
+     2026-10-20 工单）：标题 + 说明句。
+     2026-10-21 尺寸微调（哥哥反馈「登录提醒区域要比原来的正常区域小」）：
+     原来这块实测 86px 高，而正常卡对应位置（积分包内容区）只有 65px ——
+     提醒块反倒比它要替代的内容更高，一眼突兀。现在压到 53px 上下：
+     padding 12/14 → 5/10、gap 4 → 1、标题 13/1.5 → 11/1.3、
+     desc 11.5/1.6 → 10/1.35，并去掉 min-height:80px 的硬撑
+     （实测那 80px 是唯一把这块钉高的东西，去掉后自然高度 53px）。 */
   .wb-pool-relogin-title {
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 600;
     color: #b91c1c;
-    line-height: 1.5;
+    line-height: 1.3;
   }
   .wb-pool-relogin-desc {
-    font-size: 11.5px;
+    font-size: 10px;
     color: #7f1d1d;
-    line-height: 1.6;
+    line-height: 1.35;
     min-width: 0;
   }
   /* 官方积分包区 401 错误文本的替换样式（2026-10-20 工单第三次澄清）：
      位置在操作按钮上方，样式比控制条横幅轻（这里是官方内容区的位置，
      不能喧宾夺主），但一眼可见。2026-10-20 四校：不撑满内框——
-     高度只包内容（auto），是 section 里的一块，不是整屏。 */
+     高度只包内容（auto），是 section 里的一块，不是整屏。
+     2026-10-21 尺寸微调：这块要比它所替代的正常区域（积分包内容区，实测 65px）
+     **更小**，否则异常卡会比正常卡还高。同时 margin-top:12px 顶替被隐藏的
+     官方第二块（实测 17px 高 + 12px 上间距），让异常卡与正常卡的间距节奏一致。 */
   .wb-official-relogin {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 12px 14px;
+    gap: 1px;
+    padding: 5px 10px;
     border-radius: 10px;
     border: 1px dashed rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.07);
     flex: 0 0 auto;
     height: auto !important;
-    min-height: 80px !important;
+    min-height: 0 !important;
+    margin-top: 12px;
     word-break: break-word !important;
     overflow-wrap: break-word !important;
   }
@@ -404,6 +414,20 @@ COLLAPSE_SCRIPT = r"""
     filter: grayscale(1);
     pointer-events: none;
     user-select: none;
+  }
+  /* 异常卡内框与正常卡对齐（2026-10-21 工单：「内部区域高度未对齐正常卡片」）。
+     实测差异（同 334px 内容宽）：
+       模型区标题行  异常 18px  vs  正常 24px   ← 异常态没有「已禁用/巡检」徽标
+                                                  与「全部恢复」按钮，行被压矮
+       模型区总高    异常 330px vs  正常 336px  ← 上面那 6px 差额的直接来源
+     正常卡顶部的「积分/用量标题行 + 副标题行 + 积分包内容区」共 136px（含间距），
+     异常卡这三块被隐藏，只留一枚登录提醒块 —— 卡片整体因此比正常卡矮一截。
+     这里不硬填那 136px（内容差异就是差异，填了反而是假的），只把**同名区域**
+     逐项对齐：标题行给足 24px 行高。模型区的 min-height 不写死像素 ——
+     由 JS 在同页正常卡上量实际高度再设（见 wbApplyReloginDisabled），
+     PC 与移动端各自适配，不拍脑袋。 */
+  .wb-relogin-disabled .wb-am-title {
+    min-height: 24px;
   }
   /* 顶部外框官方「需重新登录」badge 隐藏（四校）：提示只出现在内框。
      只遮 header 里的 badge 行（span 容器），不动右侧两个按钮。 */
@@ -490,6 +514,21 @@ COLLAPSE_SCRIPT = r"""
     .wb-acc-search-wrap { margin-left: 0; width: 100%; height: 36px; padding-top: 0; }
     .wb-acc-search-box { width: 100%; }
     .wb-acc-search-input { width: 100%; }
+    /* 移动端登录提醒块：窄屏 desc 更容易折行（PC 334px 内容宽 2 行，
+       390px 视口下内容宽约 310px，同样文案可能变 3 行），一旦多折一行
+       整块就被撑高、「比正常区域小」的效果在手机上失效。
+       这里把 desc 压到 9.5px/1.3 并允许最多 2 行（第 3行截断加省略号），
+       块高因此钉在 50px 上下，不随屏宽漂移。 */
+    .wb-official-relogin { padding: 4px 9px; gap: 1px; }
+    .wb-pool-relogin-title { font-size: 10.5px; line-height: 1.25; }
+    .wb-pool-relogin-desc {
+      font-size: 9.5px;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
   }
   .wb-acc-search-count {
     font-size: 11px;
@@ -5063,6 +5102,30 @@ COLLAPSE_SCRIPT = r"""
       el.classList.add("wb-relogin-disabled");
       el.setAttribute("aria-disabled", "true");
     });
+    // 模型区高度对齐正常卡（2026-10-21 工单：「内部区域高度未对齐正常卡片」）。
+    // 异常态没有「已禁用 / 巡检」徽标与「全部恢复」按钮，标题行从 24px 塌到
+    // 18px，模型区总高随之从 336px 掉到 330px —— 两张卡并排时内框下沿差一截。
+    // 修法不写死像素：就地量一张**同页正常卡**的模型区实际高度，搬过来。
+    // 这样 PC（约 336px）与移动端各自适配，内容变了也跟着变，不会拍脑袋定值。
+    // 量不到（全页都是异常卡）就退回不设，让内容自然决定高度。
+    if (amBox && !amBox.dataset.wbAmH) {
+      var donor = null;
+      var cards = document.querySelectorAll("article[data-wb-acc]");
+      for (var i = 0; i < cards.length; i++) {
+        var other = cards[i];
+        if (other === card) continue;
+        if (other.querySelector(".wb-relogin-disabled")) continue;
+        var oam = other.querySelector(".wb-am-box");
+        if (oam && oam.getBoundingClientRect().height > 0) { donor = oam; break; }
+      }
+      if (donor) {
+        var h = Math.round(donor.getBoundingClientRect().height);
+        if (h > 0) {
+          amBox.style.minHeight = h + "px";
+          amBox.dataset.wbAmH = String(h);
+        }
+      }
+    }
   }
 
   function wbApplyReloginEnabled(card) {
@@ -5073,6 +5136,13 @@ COLLAPSE_SCRIPT = r"""
       el.classList.remove("wb-relogin-disabled");
       el.removeAttribute("aria-disabled");
     });
+    // 一并撤掉灰化时给模型区设的对齐高度，否则账号恢复后卡片仍钉着
+    // 一个不属于它的高度（正常卡的内容会变，那个快照值是过期的）。
+    var am = sec.querySelector(".wb-am-box");
+    if (am && am.dataset.wbAmH) {
+      delete am.dataset.wbAmH;
+      am.style.minHeight = "";
+    }
   }
 
   function wbReplaceReloginErrorBlocks() {
