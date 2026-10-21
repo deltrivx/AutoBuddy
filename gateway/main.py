@@ -93,13 +93,14 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 的版本段在同一次提交里一起改，`_test_version_sync.py` 在 CI 里把关，对不上
 # 直接构建失败。
 #
-# 版本号规范（哥哥 2026-10-21 定）：`vYYYY.MM.DD.NN` 四段，末段是「当天第几版」，
-# 固定两位补零 —— 今天第 3 版就是 03，第 10 版是 10。
-# 不许再出现 `2026.10.21.3` 这种单位数末段（`_test_version_sync.py` 有护栏）。
-# 存量三段式（v1.0.10 及更早）是上一代形态，仍然有效，只是新版本不再使用。
+# 版本号规范（2026-10-21 复确认）：走**语义化版本** `vX.Y.Z` 三位制。
+#   feature 进 minor，bugfix 进 patch，breaking 进 major。
+# 曾短暂试过四段日期制（v2026.10.21.03），已废弃 —— 它与本仓 GHCR 标签体系
+# （x.y.z / x.y 由 metadata-action 的 semver 规则产出）合不来，且与 CarLink
+# 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2026.10.21.03"
+VERSION_DEFAULT = "1.0.11"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 

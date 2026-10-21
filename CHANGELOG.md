@@ -31,20 +31,20 @@
 
 ---
 
-## [v2026.10.21.03] - 2026-10-21
+## [v1.0.11] - 2026-10-21
 
-<!-- summary: 版本号切换为四段日期制（末段两位补零、按当天第几版累进），全套链路同步适配 -->
+<!-- summary: 版本号规范回归语义化三位制，撤销四段日期制试验；顺带修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 -->
 
 ### 变更
 
-- **版本号规范切换**：末段固定两位补零、按「当天第几版」全局累进 —— 今天第 1 版是 `v2026.10.21.01`，第 10 版是 `v2026.10.21.10`，**不再出现 `2026.10.21.1` 这种单位数写法**。本版是今天第 3 版，故为 `v2026.10.21.03`。存量三段式（v1.0.10 及更早）仍有效，新版本不再使用该形态。
-  - `gateway/main.py`：`VERSION_DEFAULT` 改为 `2026.10.21.03`（版本号仍是全仓唯一一处定义，`AB_VERSION` 仍可覆盖）。
-  - `.github/workflows/docker-build-ghcr.yml`：镜像标签改为以 `type=match,pattern=v(.*),group=1` 产出（`enable=${{ startsWith(github.ref, 'refs/tags/v') }}`）。原因有两层：
-    1. 四段日期号**不是标准 semver**，`type=semver` 对它一条都不产（源码里 `semver.valid()` 返回 null 后该规则静默跳过、不报错），tag 推送后 GHCR 会没有新标签。
-    2. `type=ref,event=tag` 虽不挑版本形态，但**不剥 `v` 前缀**（源码 `procRefTag()` 只做 `replace(/^refs\/tags\//)`，v 原样留下）。2026-10-21 实测踩过：v2026.10.21.03 推成了 `v2026.10.21.03`，与存量三段式 `1.0.10` / `1.0` 的形态不一致。`type=match` 抓组剥 v 后，两代版本形态归一到无 v 前缀。
-    存量三段式的 `x.y.z` / `x.y` 标签仍由 semver 规则产出，不受影响。
-  - `scripts/gen_releases.py`：`version_key()` 排序键兼容两代形态（补零对齐段长后按数值比），否则三段与四段混排会因长度不同直接比出错乱。
-  - `_test_version_sync.py`：版本号正则与断言放开到「三段或四段末段两位」，并新增两条护栏 —— 末段是单位数即失败、CHANGELOG 里出现单位数末段版本即失败。
+- **版本号规范回归语义化三位制**：`vX.Y.Z`（feature 进 minor，bugfix 进 patch，breaking 进 major）。曾短暂试过四段日期制（`v2026.10.21.03`），已废弃 —— 它不是标准 semver，与本仓 GHCR 标签体系合不来。存量 `v1.0.10` 及更早全部沿用三位制，版本号形态自此统一。
+  - `gateway/main.py`：`VERSION_DEFAULT` 改为 `1.0.11`（版本号仍是全仓唯一一处定义，`AB_VERSION` 仍可覆盖）。
+  - `_test_version_sync.py`：版本号断言回归三位制；保留四段形态的正则兼容，避免历史版本段被误判。
+  - `scripts/gen_releases.py`：`version_key()` 排序键补零对齐段长的逻辑保留 —— 这是通用稳健性，对三位制同样有益（避免 `[0,4,5]` 与 `[2026,10,21,3]` 这类不等长列表直接比较出错）。
+
+### 修复
+
+- **GHCR 镜像标签带 `v` 前缀**：`.github/workflows/docker-build-ghcr.yml` 的标签产出由 `type=ref,event=tag` 改为 `type=match,pattern=v(.*),group=1`。`type=ref,event=tag` 实际**不剥 v**（源码 `procRefTag()` 只做 `replace(/^refs\/tags\//)`，官方文档表格也是 `refs/tags/v1.2.3` → `v1.2.3`），导致 `v2026.10.21.03` 被推成 `v2026.10.21.03`，与存量三段式 `1.0.10` / `1.0` 的形态不一致，也和 `RELEASES.md` 里 `gen_releases.py` 生成的 `lstrip('v')` 拉取命令不符。改为捕获组剥 v 后，`v1.0.11` → `1.0.11`。
 
 ---
 
@@ -5202,8 +5202,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2026.10.21.03...HEAD
-[v2026.10.21.03]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...v2026.10.21.03
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.11...HEAD
+[v1.0.11]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...v1.0.11
 [v1.0.10]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...v1.0.10
 [v1.0.9]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...v1.0.9
 [v1.0.8]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.7...v1.0.8

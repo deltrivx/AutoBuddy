@@ -92,20 +92,17 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # 版本号规范（2026-10-21 起）：末段固定两位补零，按「当天第几版」累进，
-          # 形如 v2026.10.21.03 —— 这是**四段**号。
-          # ⚠️ type=semver 只认标准 semver（x.y.z 三段），四段号它一条都不产
-          # （semver.valid() 返回 null 后该规则静默跳过、不报错），
-          # 于是 tag 推送时镜像会只剩 latest 或干脆没标签。
-          # ⚠️ type=ref,event=tag 虽然不挑版本形态，但**不剥 v 前缀**
-          # （源码 procRefTag() 只做 replace(/^refs\/tags\//)，v 原样留下）。
-          # 2026-10-21 实测踩过：v2026.10.21.03 推成了 v2026.10.21.03，
-          # 与存量三段式的 1.0.10 / 1.0 形态不一致。
-          # 故用 type=match + 捕获组剥 v —— 它对几段号都一视同仁：
-          #   v2026.10.21.03 → 2026.10.21.03
-          #   v1.0.10        → 1.0.10
-          # 存量三段式的 x.y.z / x.y 标签仍由下面两条 semver 规则产出（已验证）。
-          # 若哪天整轮没有版本标签，去 CI warning 里找 "is not a valid semver"。
+          # 版本号规范：语义化 `vX.Y.Z` 三位制（feature 进 minor，bugfix 进 patch）。
+          # 曾短暂试过四段日期制（v2026.10.21.03），已废弃 —— 它不是标准 semver，
+          # `type=semver` 对它一条标签都产不出（源码里 semver.valid() 返回 null 后
+          # 该规则静默跳过、不报错），tag 推送后 GHCR 会只剩 latest。
+          # 剥 v 前缀用 type=match 的捕获组，不用 type=ref,event=tag ——
+          # 后者**不剥 v**（源码 procRefTag() 只做 replace(/^refs\/tags\//)，
+          # 官方文档表格也是 refs/tags/v1.2.3 → v1.2.3）。
+          # 2026-10-21 实测踩过：v2026.10.21.03 被推成了 v2026.10.21.03。
+          # type=match 抓组后，v1.0.11 → 1.0.11，再由 semver 规则补 1.0。
+          # 注：type=match / type=semver 在 latest=auto 下各产一条 latest，
+          # 与上面那条 raw latest 会重复，buildx 自动去重，无实际影响。
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
             type=match,pattern=v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
