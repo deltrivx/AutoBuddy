@@ -130,6 +130,7 @@ CHANNELS: List[Dict[str, Any]] = [
 #   health_done    —— 巡检结束后推送结果与当前可用模型
 #   model_change   —— 上游模型目录变化时推送变化与当前可用模型
 #   account_risk_alert —— 单账号连续失败达阈值时推送风控预警（只通知）
+#   account_risk_flagged —— 上游确诊账号被拦（11140）时推送（只通知）
 SCENES: List[Dict[str, str]] = [
     {"key": "daily_report", "name": "每日凌晨报告",
      "desc": "每天 00:05 推送昨日消耗、可用模型、通知链路状态、各 API 当天与累计调用次数"},
@@ -152,6 +153,16 @@ SCENES: List[Dict[str, str]] = [
     # ⚠️ 纯通知场景，网关不会因此停用任何账号。
     {"key": "account_risk_alert", "name": "账号风控预警",
      "desc": "单账号 10 分钟内连续失败达 3 次时推送预警（仅通知，不自动停用）"},
+    # 上游**确诊**的风控标记（2026-10-21）：与上面那条 account_risk_alert
+    # 刻意分开，不合并 ——
+    #   account_risk_alert  = 推测：调用侧连续失败 3 次，可能是限流，
+    #                          网关已自动施加冷却，结论不确定；
+    #   account_risk_flagged = 确诊：上游亲手返回 11140 说这个账号被拦，
+    #                          凭据有效、不是过期、不是限流、不是没钱。
+    # 合成一个场景，用户就分不清「可能被限流」和「确实被风控了」，
+    # 而这两件事的处置完全不同（限流等一会儿，风控要人工介入）。
+    {"key": "account_risk_flagged", "name": "账号被风控标记",
+     "desc": "上游明确返回 11140 判定账号被拦时推送（仅通知，不自动停用）"},
     # 保留的通用场景
     {"key": "account_low", "name": "账号余额不足",
      "desc": "账号余额低于阈值时提醒"},

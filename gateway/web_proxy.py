@@ -518,6 +518,107 @@ COLLAPSE_SCRIPT = r"""
     background: rgba(217, 119, 6, 0.14);
     color: #b45309;
   }
+  /* ---------------- 账号卡片「风控标记」徽章（2026-10-21）----------------
+     位置：账号卡片右上角，插在原有旅行 / 签到两个图标的**前方**。
+
+     ⚠️ 刻意与「已停用」做足区分，不许看混：
+       停用（.wb-pool-btn-auto）= 琥珀色、细边框、淡底、文字「已停用」
+       风控标记（本类）        = 实心红、白字、盾牌感叹号图标、无边框
+     上一次的教训就是把「被上游风控」和「本地停用」混为一谈，一眼看混
+     就等于这个功能白做。所以形状（盾牌 vs 圆角矩形）、填充方式
+     （实心 vs 淡底）、配色（红 vs 琥珀）三者全都不同。
+
+     语义：标记 ≠ 停用。一个号可以「被标记但仍在跑」，也可以「本地停用
+     但没被标记」—— 徽章只回答「上游有没有判过它被拦」，不回答别的。 */
+  .wb-risk-badge {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    flex: 0 0 auto;
+    height: 18px;
+    min-width: 18px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #dc2626;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    /* 与官方那排图标对齐 */
+    vertical-align: middle;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .wb-risk-badge:hover { background: #b91c1c; }
+  .wb-risk-badge svg {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+    /* 图标用 currentColor 跟着文字色（白）走，不单独上色 */
+    stroke: currentColor;
+  }
+  /* 深色主题下实心红会发闷，提一档亮度保证对比度 */
+  @media (prefers-color-scheme: dark) {
+    .wb-risk-badge { background: #ef4444; }
+    .wb-risk-badge:hover { background: #dc2626; }
+  }
+  /* 点击后的详情浮层。挂在徽章下方，绝对定位避免推开同行图标。
+     max-width 用 calc 而非固定 px：移动端竖屏很窄，写死会溢出屏幕。 */
+  .wb-risk-pop {
+    position: absolute;
+    z-index: 60;
+    top: calc(100% + 6px);
+    right: 0;
+    width: max-content;
+    max-width: min(280px, calc(100vw - 32px));
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(220, 38, 38, 0.45);
+    background: color-mix(in oklab, var(--popover, var(--card, #ffffff)) 96%, transparent);
+    color: var(--foreground, #111827);
+    font-size: 12px;
+    line-height: 1.6;
+    text-align: left;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    cursor: default;
+  }
+  .wb-risk-pop-title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 700;
+    color: #dc2626;
+    margin-bottom: 4px;
+  }
+  .wb-risk-pop-row { display: flex; gap: 6px; }
+  .wb-risk-pop-k { color: var(--muted-foreground, #6b7280); flex: 0 0 auto; }
+  .wb-risk-pop-v { min-width: 0; word-break: break-all; }
+  .wb-risk-pop-note {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border, rgba(120, 120, 120, 0.25));
+    color: var(--muted-foreground, #6b7280);
+    font-size: 11px;
+  }
+  /* 浮层里的「解除标记」按钮。刻意做成**低调的描边按钮**而不是实心红 ——
+     浮层本身已经是红边框，按钮再实心红会让人以为点了会发生什么大事，
+     而它其实只是从界面上撤掉一条记录，账号本身毫发无损。 */
+  .wb-risk-pop-btn {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(220, 38, 38, 0.4);
+    background: transparent;
+    color: #dc2626;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .wb-risk-pop-btn:hover { background: rgba(220, 38, 38, 0.08); }
+  .wb-risk-pop-btn:disabled { opacity: 0.55; cursor: default; }
   /* 一致性自检的结果块。每行 = 一个账号的「凭据状态 + 姓名 + 一致性结论 + 建议」。
      窄屏时靠 flex-wrap 自然折行，不写死列宽 —— 写死会让长建议被裁掉。 */
   .wb-audit-box { gap: 8px; }
@@ -5220,6 +5321,241 @@ COLLAPSE_SCRIPT = r"""
   // 就地重绘一张卡片的控制条：用最新账号池状态只换被点的那根 bar。
   // 这是 v1.0.5 修「抖动 / 按钮跑位」的关键 —— 旧实现 refreshPool() 拆全部
   // bar 再整体重建，触发的批量 DOM 变更还会惊动 MutationObserver 引发
+  // -------------------------------------------------------------------------
+  // 账号卡片「风控标记」徽章（2026-10-21）
+  //
+  // 需求（哥哥原话）：「每个账号卡片右上角两个图标前方出现风控标记，
+  // 并推送通知」。
+  //
+  // DOM 定位（实测）：卡片 article > header > div.relative.z-10.flex...pr-10
+  //   （标题行），该行子节点 [0] = h3 昵称，[1] = div...gap-1.min-[420px]:flex
+  //   —— 后者就是「右上角两个图标」的容器，里面是旅行徽章与签到徽章两个 span。
+  // 「前方」= 插到这个容器的最前面（insertBefore 到 children[0] 之前）。
+  //
+  // ⚠️ 与「已停用」必须一眼可辨：见 CSS 里 .wb-risk-badge 的注释。
+  // 徽章只表达「上游判过它被拦」，不表达任何本地处置状态。
+  // -------------------------------------------------------------------------
+  var WB_RISK_SHIELD_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>';
+
+  // 徽章 hover/点击的说明文案。措辞与后端 SEMANTIC_LABELS["restricted"]
+  // 保持同一口径：说「被上游拦截」，不说「风控」——那个词会把人引向
+  // 内容或频率问题，实测证明两者都不是（换凭据无效、发「hi」也被拦）。
+  function wbRiskReasonText(code) {
+    var c = parseInt(code, 10);
+    if (c === 11140) return "上游返回 11140：账号存在异常行为，请求被拦截";
+    if (c === 14018) return "上游返回 14018：账号额度已用尽";
+    return "上游返回 " + (isNaN(c) ? "未知" : code) + "：账号被拦截";
+  }
+
+  function wbRiskTimeText(ms) {
+    var t = parseInt(ms, 10);
+    if (!t) return "未知";
+    var d = new Date(t);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+      + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  // 关掉已打开的浮层。点别处 / 点同一枚徽章都要收。
+  function wbRiskClosePops() {
+    Array.prototype.slice.call(document.querySelectorAll(".wb-risk-pop")).forEach(function (el) {
+      el.remove();
+    });
+  }
+
+  // 解除风控标记（人工）。成功后同步本地缓存与徽章，不整页重建 ——
+  // 与账号池控制条的就地重绘同一个路子，避免页面抖动。
+  // 请求写法与 wbToggleAccount 保持一致（裸 fetch + wbToast）。
+  function wbUnflagAccount(accountId, done) {
+    if (!accountId) { if (done) done(false); return; }
+    fetch("/api/account-pool/risk-flag/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: String(accountId) })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, body: body || {} };
+        });
+      })
+      .then(function (res) {
+        if (!res.ok || res.body.ok === false) {
+          wbToast("解除标记失败，请重试", true);
+          if (done) done(false);
+          return;
+        }
+        wbToast("已解除风控标记");
+        // 缓存里同步摘掉，否则下次 refreshPool 又把它画回来
+        if (wbPoolCache && wbPoolCache.accountRiskFlags) {
+          delete wbPoolCache.accountRiskFlags[String(accountId)];
+        }
+        if (wbPoolCache && wbPoolCache.accounts) {
+          wbPoolCache.accounts.forEach(function (a) {
+            if (a && String(a.id) === String(accountId)) { a.riskFlagged = false; }
+          });
+        }
+        wbInjectRiskBadges();
+        if (done) done(true);
+      })
+      .catch(function () {
+        wbToast("请求失败，请刷新页面后重试", true);
+        if (done) done(false);
+      });
+  }
+
+  function wbRiskOpenPop(badge, flag) {
+    wbRiskClosePops();
+    var pop = document.createElement("div");
+    pop.className = "wb-risk-pop";
+    pop.setAttribute("data-wb-risk-pop", String(flag.accountId || ""));
+
+    var title = document.createElement("div");
+    title.className = "wb-risk-pop-title";
+    title.innerHTML = WB_RISK_SHIELD_SVG + "<span>账号被上游拦截</span>";
+    pop.appendChild(title);
+
+    function row(k, v) {
+      var r = document.createElement("div");
+      r.className = "wb-risk-pop-row";
+      var ke = document.createElement("span");
+      ke.className = "wb-risk-pop-k";
+      ke.textContent = k;
+      var ve = document.createElement("span");
+      ve.className = "wb-risk-pop-v";
+      ve.textContent = v;
+      r.appendChild(ke);
+      r.appendChild(ve);
+      pop.appendChild(r);
+    }
+    row("原因", wbRiskReasonText(flag.lastCode));
+    row("最近触发", wbRiskTimeText(flag.lastAt));
+    row("历史次数", String(parseInt(flag.count, 10) || 0) + " 次");
+
+    var note = document.createElement("div");
+    note.className = "wb-risk-pop-note";
+    // 这句是本次改动的核心信息，必须写进浮层：标记不是停用，
+    // 网关没有因此停用它，也不允许任何人据此加自动停用。
+    note.textContent = "这只是上游的风控记录，不是本地停用 —— 账号仍在正常参与调用，"
+      + "系统不会自动停用它。是否停用由你决定。";
+    pop.appendChild(note);
+
+    // 解除标记按钮。**只人工可点** —— 后端同样没有任何自动清除逻辑，
+    // 上游没说这个账号好了，我们就不该擅自说好了。
+    var unflag = document.createElement("button");
+    unflag.type = "button";   // v1.0.5 教训：官方卡片在 <form> 里，不写 type 会整页刷新
+    unflag.className = "wb-risk-pop-btn";
+    unflag.textContent = "解除这个标记";
+    unflag.title = "确认这个账号已恢复正常，从界面上撤掉风控标记。账号本身不受影响。";
+    unflag.onclick = function (ev) {
+      ev.stopPropagation();
+      if (unflag.dataset.wbBusy === "1") return;
+      unflag.dataset.wbBusy = "1";
+      unflag.disabled = true;
+      wbUnflagAccount(flag.accountId, function (ok) {
+        delete unflag.dataset.wbBusy;
+        if (ok) { wbRiskClosePops(); return; }
+        unflag.disabled = false;
+        unflag.textContent = "解除失败，重试";
+      });
+    };
+    pop.appendChild(unflag);
+
+    // 徽章自身 position: relative，让浮层以它为定位基准
+    badge.style.position = "relative";
+    badge.appendChild(pop);
+  }
+
+  // 给单张卡片注入/更新风控徽章。acc 是账号池数据里的账号对象。
+  function wbInjectRiskBadge(card, acc) {
+    if (!card || !acc) return;
+    // 标记明细在顶层 accountRiskFlags 里（按账号 id 索引），
+    // 每条账号只带一个 riskFlagged 布尔。别把两份搞混：
+    // 布尔用于快速判断，明细（次数/时间/错误码）只在点开浮层时用。
+    var flag = null;
+    if (wbPoolCache && wbPoolCache.accountRiskFlags) {
+      flag = wbPoolCache.accountRiskFlags[String(acc.id)] || null;
+    }
+    var existing = card.querySelector(".wb-risk-badge");
+    if (!flag) {
+      // 没有标记：清掉可能残留的徽章（标记被解除后要立刻消失）
+      if (existing) { existing.remove(); }
+      return;
+    }
+    // 标题行：h3 的父节点。拿不到就说明卡片还没渲染完，跳过等下一轮。
+    var h3 = card.querySelector("h3");
+    if (!h3 || !h3.parentElement) return;
+    var titleRow = h3.parentElement;
+    var iconBox = titleRow.children[1];
+    // 官方结构里 [1] 就是两个图标的容器；万一它不在（改版），
+    // 兜底按 class 特征找，再找不到就放弃 —— 不往 h3 里塞，那会毁掉标题。
+    if (!iconBox || iconBox.tagName !== "DIV") {
+      iconBox = titleRow.querySelector('div[class*="gap-1"]');
+    }
+    if (!iconBox) return;
+
+    var badge = existing;
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "wb-risk-badge";
+      badge.innerHTML = WB_RISK_SHIELD_SVG;
+      badge.setAttribute("role", "button");
+      badge.setAttribute("tabindex", "0");
+      badge.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        // 再点同一枚 = 收起（已打开的浮层就挂在它身上）
+        if (badge.querySelector(".wb-risk-pop")) { wbRiskClosePops(); return; }
+        wbRiskOpenPop(badge, flag);
+      });
+      // 键盘可达性：Enter / 空格同样打开，与点击等价
+      badge.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (badge.querySelector(".wb-risk-pop")) { wbRiskClosePops(); return; }
+        wbRiskOpenPop(badge, flag);
+      });
+    }
+    // 内容可能变（次数涨了、时间更新了），每次重刷 title 与 dataset
+    badge.title = "账号被上游风控标记（" + (parseInt(flag.count, 10) || 0) + " 次）—— 点击查看详情。"
+      + "注意：标记不等于停用，系统不会自动停用它。";
+    badge.setAttribute("data-wb-risk-code", String(flag.lastCode || ""));
+    badge.setAttribute("data-wb-risk-count", String(parseInt(flag.count, 10) || 0));
+    badge.setAttribute("aria-label", badge.title);
+
+    // 「两个图标前方」：插到图标容器的最前面
+    if (iconBox.children[0] !== badge) {
+      iconBox.insertBefore(badge, iconBox.children[0] || null);
+    }
+  }
+
+  // 全量刷新：遍历所有已打标记的卡片。账号池数据刷新后调用。
+  function wbInjectRiskBadges() {
+    if (!wbPoolCache || !wbPoolCache.accounts) return;
+    Array.prototype.slice.call(document.querySelectorAll("article[data-wb-acc]")).forEach(function (card) {
+      var id = card.getAttribute("data-wb-acc");
+      var acc = null;
+      wbPoolCache.accounts.forEach(function (a) {
+        if (a && String(a.id) === String(id)) acc = a;
+      });
+      if (acc) { wbInjectRiskBadge(card, acc); }
+    });
+  }
+
+  // 点空白处收起浮层（document 级，只绑一次）
+  if (!window.__wbRiskDocBound) {
+    window.__wbRiskDocBound = true;
+    document.addEventListener("click", function (ev) {
+      var t = ev.target;
+      // 点在徽章或其浮层内部 → 交给徽章自己的 handler，不插手
+      if (t && t.closest && t.closest(".wb-risk-badge")) return;
+      wbRiskClosePops();
+    });
+    // ESC 收起（浮层是模态-ish 的，键盘用户要有退出方式）
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { wbRiskClosePops(); }
+    });
+  }
+
   // 全页 run()，用户看到的就是页面抖一下、按钮位置乱掉。
   // cardEl 可选；不给时按 accountId 找（卡片上有 data-wb-acc 标记）。
   function wbReplacePoolBar(accountId, status, cardEl) {
@@ -5301,6 +5637,10 @@ COLLAPSE_SCRIPT = r"""
 
         // 卡片标记自己的 accountId：就地重绘时按 id 直接找回，不再靠标题反查。
         if (acc.id) { card.setAttribute("data-wb-acc", String(acc.id)); }
+
+        // 风控标记徽章（2026-10-21）：插在卡片右上角两个原有图标的前方。
+        // 放在控制条注入之前，保证徽章先就位，不被后面的 appendChild 挤走。
+        wbInjectRiskBadge(card, acc);
 
         var bar = wbBuildPoolBar(acc, data, card);
         (card.querySelector("section") || card).appendChild(bar);
@@ -5405,6 +5745,9 @@ COLLAPSE_SCRIPT = r"""
       el.remove();
     });
     injectAccountPool();
+    // 风控徽章跟着账号池数据一起刷：控制条重建后卡片上可能还有旧徽章，
+    // 这里按最新数据补/更新/清除。
+    wbInjectRiskBadges();
   }
 
   function wbPinAccountBlocks() {

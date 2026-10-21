@@ -49,6 +49,11 @@ except ImportError:  # pragma: no cover - 取决于运行方式
     import reqlog  # type: ignore[no-redef]
 
 try:
+    from gateway import risk_flag
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import risk_flag  # type: ignore[no-redef]
+
+try:
     from gateway import session_sticky
 except ImportError:  # pragma: no cover - 取决于运行方式
     import session_sticky  # type: ignore[no-redef]
@@ -100,7 +105,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.13"
+VERSION_DEFAULT = "1.0.14"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1754,6 +1759,48 @@ def _note_upstream_result(account_id: str, status_code: int, body_text: str,
     except Exception:
         # 冷却记账失败绝不能连累转发主流程
         pass
+    # 风控标记（2026-10-21 优化，独立于冷却与停用）：
+    # 上游明确返回「账号被拦」的错误码时记一笔。只记录、不处置 ——
+    # 与 cooldown（限流退避）和 account_policy（本地停用）三者互不写入。
+    # 放在这里是因为两条转发路径都经过本函数，一处覆盖全部上游错误。
+    try:
+        if status_code != 200:
+            _risk_code = _extract_upstream_code(body_text)
+            if _risk_code:
+                risk_flag.record(str(account_id), _risk_code, body_text or "",
+                                 source="forward")
+    except Exception:
+        # 标记记账失败同样绝不能连累转发主流程
+        pass
+
+
+def _extract_upstream_code(body_text: str) -> Optional[int]:
+    """从上游响应体里抠出错误码（抠不出来返回 None）。
+
+    上游形状有两种，都见过：
+      {"code": 11140, "msg": "..."}
+      {"data": {"code": 11140, "msg": "..."}}
+    只认**数字** code —— 字符串形式的码在不同接口里含义不一致
+    （10001 在签到接口是「今天已签到」），不猜。
+    """
+    raw = (body_text or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for holder in (payload, payload.get("data")):
+        if not isinstance(holder, dict):
+            continue
+        code = holder.get("code")
+        if isinstance(code, bool):
+            continue
+        if isinstance(code, int):
+            return code
+    return None
 
 
 def _log_upstream_error(status_code: int, body_text: str) -> None:
@@ -1862,6 +1909,61 @@ def _risk_alert(account_id: str, fails: int, window_sec: int,
 
 
 cooldown.set_risk_alert_callback(_risk_alert)
+
+
+def _risk_flag_alert(account_id: str, flag: Dict[str, Any]) -> None:
+    """风控标记预警：上游明确判定账号被拦（11140）→ 推送通知（只通知）。
+
+    挂在 risk_flag.set_alert_callback，由 risk_flag.record() 首次发现
+    或超过推送冷却时调用。
+
+    与 ``_risk_alert``（v1.0.13 的 account_risk_alert）的分工：
+       account_risk_alert —— **推测**。调用侧连续失败 3 次，可能是限流，
+                            网关已自动施加冷却，但结论不确定。
+       account_risk_flagged —— **确诊**。上游亲手返回 11140 说这个账号被拦，
+                            凭据是好的、不是限流、也不是没钱。
+    两者的处置与语义完全不同，所以必须是两个 scene —— 合成一个，
+    用户就分不清「可能被限流」和「确实被风控了」。
+
+    ⚠️ 只通知，不自动停用。账号是否停用只由人在界面决定。
+    """
+    try:
+        global _RISK_LABEL_CACHE
+        label = str(account_id)
+        try:
+            if _RISK_LABEL_CACHE is None or \
+                    time.time() - _RISK_LABEL_CACHE_AT > 60:
+                _RISK_LABEL_CACHE = {str(_account_id(a)): _account_label(a)
+                                     for a in _load_accounts() if _account_id(a)}
+                _RISK_LABEL_CACHE_AT = time.time()
+            label = _RISK_LABEL_CACHE.get(str(account_id)) or label
+        except Exception:
+            pass  # 取不到昵称就用 id，不影响预警本身
+        _t = "AutoBuddy 账号被风控标记"
+        _lines = [
+            f"账号「{label}」被上游明确标记：{flag.get('reason') or '账号被上游拦截'}",
+            f"上游错误码 {int(flag.get('code') or 0)}；累计触发 {int(flag.get('hits') or 0)} 次"
+            f"（首次 {_fmt_ts(flag.get('firstSeenAt'))}，最近 {_fmt_ts(flag.get('lastSeenAt'))}）。",
+            "凭据仍然有效 —— 这不是登录过期，也不是限流或余额不足。",
+            "该账号**未被自动停用**，仍在参与调用；是否停用请到账号管理界面人工决定。",
+        ]
+        _notify_mod.send_scene("account_risk_flagged", _t, _lines)
+        lprint("risk-flag", f"账号「{label}」被上游标记 11140，已推送预警")
+    except Exception as _e:
+        lprint("risk-flag", f"alert notice failed: {_e}")
+
+
+def _fmt_ts(ms: Optional[int]) -> str:
+    """毫秒时间戳 → 本地时间字符串（展示用，失败退回空串）。"""
+    if not ms:
+        return "未知时间"
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(int(ms) / 1000))
+    except Exception:
+        return "未知时间"
+
+
+risk_flag.set_alert_callback(_risk_flag_alert)
 
 
 def _looks_like_model_unavailable(status_code: int, body_text: str) -> bool:
@@ -2119,6 +2221,12 @@ def delete_account_api(payload: Dict[str, Any]):
             cleanup_notes.append("账号停用记录")
     except Exception as e:
         print(f"[delete] 清停用记录失败: {e}")
+    # 风控标记一并清掉：与上面同理，留着孤立条目会在 ID 复用时意外生效。
+    try:
+        if risk_flag.clear(str(acc_id)):
+            cleanup_notes.append("风控标记")
+    except Exception as e:
+        print(f"[delete] 清风控标记失败: {e}")
 
     return {"ok": True, "accountId": str(acc_id),
             "removed": 1, "remaining": len(kept),
@@ -2193,6 +2301,14 @@ def account_pool_status():
     # 账号级停用来源表。界面据此区分「谁停的」——人点的与巡检写的文案不同，
     # 否则「已停用」会被读成用户自己误操作过。
     account_disabled = account_policy.as_source_map()
+    # 风控标记表（2026-10-21）。与上面的停用表**完全独立**：
+    #   停用 = 本地决定不让它参与调用（manual 人点的 / auto 巡检写的）
+    #   标记 = 上游明确说这个账号被拦了（凭据有效，不是过期/限流/没钱）
+    # 一个号可以只占其一，也可以两者都有，还可以两者都没有。
+    # 刻意不复用停用表：那份是扁平 {id: source}，物理上承载不了这个维度，
+    # 而复用正是 2026-10-17 把两者混为一谈的根因。
+    risk_flags = risk_flag.all_flags()
+    risk_view = _risk_flag_view()
     return {
         "mode": config.get("mode"),
         "manualAccountId": config.get("manualAccountId"),
@@ -2203,6 +2319,7 @@ def account_pool_status():
         "selectionCounts": stats["counts"],
         "modelPolicy": model_policy.as_model_lists(_load_model_policy()),
         "accountDisabled": account_disabled,
+        "accountRiskFlags": risk_view,
         "accounts": [
             {
                 "id": _account_id(a),
@@ -2211,6 +2328,9 @@ def account_pool_status():
                 # 账号级停用（独立于账号池白名单），来源单独给出。
                 "disabled": str(_account_id(a)) in account_disabled,
                 "disabledSource": account_disabled.get(str(_account_id(a))),
+                # 风控标记（独立于停用）。riskFlagged 只是布尔便利字段，
+                # 明细在顶层 accountRiskFlags 里，避免每条账号重复一份。
+                "riskFlagged": str(_account_id(a)) in risk_flags,
                 "enabled": not enabled_ids or str(_account_id(a)) in enabled_ids,
                 "usable": _account_is_usable(a, now_ms),
                 "active": _account_id(a) == (_rotate_state_snapshot().get("active_account_id") or ""),
@@ -2218,6 +2338,41 @@ def account_pool_status():
             for a in accounts
         ],
     }
+
+
+def _risk_flag_view() -> Dict[str, Dict[str, Any]]:
+    """风控标记的界面视图（存储字段 → 语义化字段）。
+
+    存储用 code / hits / lastSeenAt 这类内部名，界面不直接吃它 ——
+    这里映射一次，UI 与存储解耦：以后改存储形状不必动前端。
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, v in risk_flag.all_flags().items():
+        out[str(k)] = {
+            "accountId": str(k),
+            "lastCode": int(v.get("code") or 0),
+            "count": int(v.get("hits") or 0),
+            "lastAt": int(v.get("lastSeenAt") or 0),
+            "firstAt": int(v.get("firstSeenAt") or 0),
+            "source": str(v.get("source") or "forward"),
+            "reason": str(v.get("reason") or ""),
+        }
+    return out
+
+
+@app.post("/account-pool/risk-flag/clear")
+def account_risk_flag_clear(payload: Dict[str, Any]):
+    """解除某账号的风控标记（账号卡片浮层里的「解除标记」按钮）。
+
+    **只应由人工触发。** 上游没说这个账号好了，我们就不该擅自说好了 ——
+    本模块没有任何自动清除逻辑，自动解除正是「标记」失去意义的方式。
+    """
+    acc_id = payload.get("accountId") or payload.get("id")
+    if not acc_id:
+        raise HTTPException(status_code=400, detail="accountId is required")
+    risk_flag.clear(str(acc_id))
+    return {"ok": True, "accountId": str(acc_id),
+            "accountRiskFlags": _risk_flag_view()}
 
 
 @app.get("/account-pool/selections")

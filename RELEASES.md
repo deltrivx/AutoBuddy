@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.13](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.13)
+**当前稳定版：** [v1.0.14](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.14)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.14](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.14) | 2026-10-21 | 账号卡片新增「被上游风控标记」徽章与推送通知，标记落在独立存储里、与本地停用彻底分开；只通知不自动停用，也不碰账号数据文件 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.14.md) |
 | [v1.0.13](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.13) | 2026-10-21 | 补齐单账号风控预警推送（只通知不自动停用）与打卡事件时间戳抖动两项真缺口，均不改账号数据、不新增自动处置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.13.md) |
 | [v1.0.11](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.11) | 2026-10-21 | 版本号规范回归语义化三位制，撤销四段日期制试验；顺带修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.11.md) |
 | [v1.0.10](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.10) | 2026-10-22 | 账号搜索框挪到档位切换行右端并对齐官方尺寸，每日任务签到/执行两个开关彻底拆分独立持久化，账号签到与凭据板块补背景框，设备指纹与 UA 改为动态池化隔离并覆盖新账号，关于页「说明」项移除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.10.md) |
@@ -205,7 +206,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.13    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.14    # 锁定版本
 ```
 
 ## 部署产物

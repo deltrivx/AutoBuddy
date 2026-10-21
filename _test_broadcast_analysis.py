@@ -128,16 +128,25 @@ check("零时长不显示时长行", "已运行" not in "\n".join(
 
 print("\n[6] 场景总数与既有场景不冲突")
 
-# 2026-10-21 加 account_risk_alert（风控预警）后为 9。这里断言的是
-# 「数量与登记表一致」而不是某个魔法数——若以后再登记场景，
-# 改这一处即可，别让 CI 因为数错场景挂掉。
-check("场景数 = 9", len(N.SCENES) == 9, f"got {len(N.SCENES)}")
+# 2026-10-21 加 account_risk_alert（推测性风控预警）后为 9，
+# 同日又加 account_risk_flagged（上游确诊风控标记）后为 10。
+# 这里断言的是「数量与登记表一致」，再登记场景就改这一处。
+check("场景数 = 10", len(N.SCENES) == 10, f"got {len(N.SCENES)}")
 keys = [s["key"] for s in N.SCENES]
 check("场景键唯一", len(keys) == len(set(keys)))
-for must in ("task_done", "task_failed_analysis", "account_risk_alert"):
+for must in ("task_done", "task_failed_analysis", "account_risk_alert",
+             "account_risk_flagged"):
     check(f"既有场景 {must} 仍在", must in keys)
+# 两个风控场景都是纯通知，且**刻意分开**：一个是「可能被限流」的推测，
+# 一个是「上游确诊被拦」的事实。合成一个，用户就分不清该等一会儿
+# 还是该人工介入。
 check("account_risk_alert 是纯通知场景（不触碰账号池）",
       "account_risk_alert" in keys)
+check("account_risk_flagged 是纯通知场景（不触碰账号池）",
+      "account_risk_flagged" in keys)
+check("两个风控场景是不同场景（推测 vs 确诊，不合并）",
+      "account_risk_alert" in keys and "account_risk_flagged" in keys
+      and "account_risk_alert" != "account_risk_flagged")
 check("task_done 与 task_failed_analysis 是不同场景（分工不重叠）",
       "task_done" in keys and "task_failed_analysis" in keys)
 

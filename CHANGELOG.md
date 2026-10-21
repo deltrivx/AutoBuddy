@@ -31,6 +31,26 @@
 
 ---
 
+## [v1.0.14] - 2026-10-21
+
+<!-- summary: 账号卡片新增「被上游风控标记」徽章与推送通知，标记落在独立存储里、与本地停用彻底分开；只通知不自动停用，也不碰账号数据文件 -->
+
+### 新增
+
+- **账号卡片风控标记 + 推送通知**：上游明确判定「账号被拦」（错误码 11140）时，账号卡片右上角两个图标前方出现一枚实心红色盾牌徽章，同时推送一条通知。点徽章弹出浮层，展示原因、最近触发时间、历史次数，并可人工解除标记。
+
+  背景：此前 16 个账号集体停用事件，根因是本地把两件事混为一谈 —— 「被上游风控标记」和「本地手动停用」。`account_policy.json` 是扁平的 `{account_id: source}`（manual / auto），物理上无法区分「上游说这个号被拦」和「人主动停用它」。本版把前者拆出来单独立账。
+
+  - `gateway/risk_flag.py`（新模块，独立存储）：风控标记写到**自己的**状态文件 `account_risk_flags.json`，不写入 `account_policy.json`、不写 `accounts.json`。字段含 `code` / `reason` / `firstSeenAt` / `lastSeenAt` / `hits` / `source` / `alertedAt`。接口：`record()` / `get()` / `all_flags()` / `flagged_ids()` / `clear()` / `remove_account()` / `set_alert_callback()`。推送冷却 1 小时（`ALERT_COOLDOWN`），与 v1.0.13 的限流预警冷却各自独立。`RISK_CODES=(11140,)` —— 刻意不含 14018，那是额度用尽，有专属处置路径。
+  - `gateway/main.py`：在 `_note_upstream_result()`（两条转发路径的共同入口）记录标记，一处覆盖全部上游错误；新增 `_extract_upstream_code()`，兼容 `{"code": …}` 与 `{"data": {"code": …}}` 两种上游形状，**只认数字 code**（字符串形式的码在不同接口含义不一致）；`account_pool_status` 新增顶层 `accountRiskFlags` 明细与每条账号的 `riskFlagged` 布尔；新增 `POST /account-pool/risk-flag/clear`（只人工触发，**后端无任何自动清除逻辑**）；删除账号时同步清理其标记。
+  - `gateway/notify.py`：登记新场景 `account_risk_flagged`（账号被风控标记）。与 v1.0.13 的 `account_risk_alert` **不合并** —— 后者是推测（连续失败、可能限流、已自动冷却），本场景是确诊（上游亲手判定，凭据有效、非过期/限流/没钱）。合成一个用户就分不清轻重。
+  - `gateway/web_proxy.py`：徽章 + 浮层。徽章为实心红底白字盾牌感叹号，与琥珀色「已停用」徽章在**形状、填充、配色**三个维度刻意区分，不让人误读成停用状态。浮层固定写一句「这只是上游的风控记录，不是本地停用」。移动端（≤640px）限制浮层宽度不溢出屏幕。
+  - `_test_risk_flag.py`（新，40 项）：含红线断言 —— 不 import `account_policy` / `notify`、无 `set_disabled` / 自动停用调用、不写 `accounts.json` / `account_pool_config`、只写自己的状态文件、无自动清除路径。
+
+  **红线：只通知，不自动停用。** `autoDisableAccounts` 维持关闭，本版没有任何触碰账号停用表的代码路径，账号是否停用只由人在界面决定。账号数据文件（`accounts.json` 两份）全程未被读写。
+
+---
+
 ## [v1.0.13] - 2026-10-21
 
 <!-- summary: 补齐单账号风控预警推送（只通知不自动停用）与打卡事件时间戳抖动两项真缺口，均不改账号数据、不新增自动处置 -->
@@ -5228,7 +5248,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.13...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.14...HEAD
+[v1.0.14]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.13...v1.0.14
 [v1.0.13]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.11...v1.0.13
 [v1.0.11]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...v1.0.11
 [v1.0.10]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...v1.0.10
