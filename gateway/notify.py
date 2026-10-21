@@ -129,6 +129,7 @@ CHANNELS: List[Dict[str, Any]] = [
 #   task_done      —— 每日任务成功后推送任务积分与当前总积分
 #   health_done    —— 巡检结束后推送结果与当前可用模型
 #   model_change   —— 上游模型目录变化时推送变化与当前可用模型
+#   account_risk_alert —— 单账号连续失败达阈值时推送风控预警（只通知）
 SCENES: List[Dict[str, str]] = [
     {"key": "daily_report", "name": "每日凌晨报告",
      "desc": "每天 00:05 推送昨日消耗、可用模型、通知链路状态、各 API 当天与累计调用次数"},
@@ -145,6 +146,12 @@ SCENES: List[Dict[str, str]] = [
      "desc": "每日任务失败时推送智能归因（失败原因 + 处理建议）"},
     {"key": "model_change", "name": "模型目录变化",
      "desc": "上游模型目录新增或下线时推送变化明细与当前可用模型"},
+    # 单账号风控预警（2026-10-21 优化方案 ④）：某账号在滑动窗口内连续被
+    # 限流/拒绝达阈值时推送。与 refresh_guard_alert 的分工：那个管 refresh
+    # token 批量失败（上游 session 被重置），这个管单账号调用侧的风控迹象。
+    # ⚠️ 纯通知场景，网关不会因此停用任何账号。
+    {"key": "account_risk_alert", "name": "账号风控预警",
+     "desc": "单账号 10 分钟内连续失败达 3 次时推送预警（仅通知，不自动停用）"},
     # 保留的通用场景
     {"key": "account_low", "name": "账号余额不足",
      "desc": "账号余额低于阈值时提醒"},

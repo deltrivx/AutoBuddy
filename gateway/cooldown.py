@@ -49,7 +49,26 @@ BREAKER_THRESHOLD = int(os.getenv("AB_CD_BREAKER_THRESHOLD", "3") or 3)   # 连�
 BREAKER_BASE = int(os.getenv("AB_CD_BREAKER_BASE", "1800") or 1800)       # 熔断基数 30m
 BREAKER_MAX = int(os.getenv("AB_CD_BREAKER_MAX", "21600") or 21600)       # 熔断封顶 6h
 
+# ---- 风控预警（2026-10-21，优化方案第 ④ 条）----
+# 与上面 BREAKER_* 的区别：熔断是**已经在做**的自动治理（拉长冷却时间），
+# 预警是**把正在发生的事告诉人**——此前只有 refresh token 批量失败会推送
+# （refresh_guard），单账号连续被限流/拒绝是静默的，用户只能从客户端
+# 随机失败里猜。现在补这一层。
+#
+# ⚠️ 只通知，绝不自动停用账号。`autoDisableAccounts` 已关，
+# 且它正是上次误封 16 个号的元凶——本模块没有任何触碰账号池的代码，
+# 也不许以后加。
+RISK_ALERT_WINDOW = int(os.getenv("AB_CD_RISK_WINDOW", "600") or 600)      # 滑动窗口 10 分钟
+RISK_ALERT_THRESHOLD = int(os.getenv("AB_CD_RISK_THRESHOLD", "3") or 3)    # 窗口内失败达 3 次即预警
+RISK_ALERT_COOLDOWN = int(os.getenv("AB_CD_RISK_COOLDOWN", "3600") or 3600)  # 同一账号 1h 内不重复推
+
 _LOCK = threading.Lock()
+
+# 风控预警回调（由 gateway/main.py 注入，默认 None = 不推送）。
+# 签名：callback(account_id, fails, window_sec, last_status)
+# 不 import notify：cooldown 是底层状态模块，notify 依赖上层账号/配置，
+# 反过来 import 会成环，且单测也更好 stub。
+_RISK_ALERT_CALLBACK = None
 
 
 def _now() -> float:
@@ -266,8 +285,52 @@ def record_failure(account_id: str, status_code: int, body_text: str,
             acc["fails"] = 0  # 触发一次后重新计数
             applied = applied or "breaker"
 
+        # 风控预警：滑动窗口内失败次数（2026-10-21，优化方案 ④）
+        # 与熔断的差别：熔断看的是**连续**失败（record_success 即清零），
+        # 这里看的是窗口内**累计**——一个号「成功-失败-成功-失败」反复横跳
+        # 时连续数永远上不去，但风控其实已经在盯它了，这种情况必须能报。
+        risk_alert = False
+        last_window_hits = 0
+        if RISK_ALERT_THRESHOLD > 0:
+            hist = acc.setdefault("riskHits", [])
+            if not isinstance(hist, list):
+                hist = []
+                acc["riskHits"] = hist
+            hist.append(now)
+            # 只留窗口内的，旧值顺手清掉，避免状态文件无限膨胀
+            cutoff = now - RISK_ALERT_WINDOW
+            hist = [t for t in hist if isinstance(t, (int, float)) and t > cutoff]
+            acc["riskHits"] = hist
+            last_window_hits = len(hist)
+            if len(hist) >= RISK_ALERT_THRESHOLD:
+                # 冷却期内不重复推（同一账号 1h 一次），防刷屏
+                if now - float(acc.get("riskAlertedAt") or 0) >= RISK_ALERT_COOLDOWN:
+                    acc["riskAlertedAt"] = now
+                    risk_alert = True
+
         _save(state)
+
+    # 推送放在锁外：通知要发网络请求，长时间持锁会阻塞所有账号的冷却判定
+    if risk_alert:
+        _fire_risk_alert(str(account_id), last_window_hits, status_code)
     return applied
+
+
+def _fire_risk_alert(account_id: str, fails: int, status_code: int) -> None:
+    """触发风控预警推送（通知是附属能力，任何异常都不影响冷却主流程）。"""
+    cb = _RISK_ALERT_CALLBACK
+    if cb is None:
+        return
+    try:
+        cb(account_id, fails, RISK_ALERT_WINDOW, status_code)
+    except Exception:
+        pass
+
+
+def set_risk_alert_callback(cb) -> None:
+    """注册风控预警回调（gateway/main.py 用它接 notify）。"""
+    global _RISK_ALERT_CALLBACK
+    _RISK_ALERT_CALLBACK = cb
 
 
 def record_success(account_id: str) -> None:
@@ -287,6 +350,9 @@ def record_success(account_id: str) -> None:
         acc["softStreak"] = 0
         acc["breakerCount"] = 0
         acc["breakerUntil"] = 0
+        # 风控窗口命中一并清零：成功即证明风控没有真在盯它，
+        # 留着旧 hit 会让下一次偶发失败凑够阈值误报。
+        acc["riskHits"] = []
         _save(state)
 
 
@@ -340,6 +406,9 @@ def snapshot() -> Dict[str, Any]:
         until = float(v.get("until") or 0)
         breaker = float(v.get("breakerUntil") or 0)
         latest = max(until, breaker)
+        # 窗口内有效命中数（只数还没过期的，与 record_failure 同口径）
+        hits = [t for t in (v.get("riskHits") or [])
+                if isinstance(t, (int, float)) and t > now - RISK_ALERT_WINDOW]
         out[k] = {
             "cooling": latest > now,
             "reason": v.get("reason"),
@@ -347,6 +416,7 @@ def snapshot() -> Dict[str, Any]:
             "fails": int(v.get("fails") or 0),
             "softStreak": int(v.get("softStreak") or 0),
             "breakerCount": int(v.get("breakerCount") or 0),
+            "riskHits": len(hits),
         }
     return out
 
@@ -363,4 +433,5 @@ def clear(account_id: str) -> None:
             acc["fails"] = 0
             acc["softStreak"] = 0
             acc["breakerCount"] = 0
+            acc["riskHits"] = []
             _save(state)

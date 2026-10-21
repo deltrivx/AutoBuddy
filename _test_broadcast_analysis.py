@@ -128,11 +128,16 @@ check("零时长不显示时长行", "已运行" not in "\n".join(
 
 print("\n[6] 场景总数与既有场景不冲突")
 
-check("场景数 = 8", len(N.SCENES) == 8, f"got {len(N.SCENES)}")
+# 2026-10-21 加 account_risk_alert（风控预警）后为 9。这里断言的是
+# 「数量与登记表一致」而不是某个魔法数——若以后再登记场景，
+# 改这一处即可，别让 CI 因为数错场景挂掉。
+check("场景数 = 9", len(N.SCENES) == 9, f"got {len(N.SCENES)}")
 keys = [s["key"] for s in N.SCENES]
 check("场景键唯一", len(keys) == len(set(keys)))
-for must in ("task_done", "task_failed_analysis"):
+for must in ("task_done", "task_failed_analysis", "account_risk_alert"):
     check(f"既有场景 {must} 仍在", must in keys)
+check("account_risk_alert 是纯通知场景（不触碰账号池）",
+      "account_risk_alert" in keys)
 check("task_done 与 task_failed_analysis 是不同场景（分工不重叠）",
       "task_done" in keys and "task_failed_analysis" in keys)
 

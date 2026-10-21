@@ -31,6 +31,32 @@
 
 ---
 
+## [v1.0.13] - 2026-10-21
+
+<!-- summary: 补齐单账号风控预警推送（只通知不自动停用）与打卡事件时间戳抖动两项真缺口，均不改账号数据、不新增自动处置 -->
+
+### 新增
+
+- **单账号风控预警推送**（优化方案第 ④ 条）：上游连续拒绝某账号时，从「静默冷却」变成「冷却 + 叫人」。
+  - `gateway/cooldown.py`：新增滑动窗口计数（`RISK_ALERT_WINDOW=600` / `RISK_ALERT_THRESHOLD=3`，均可用环境变量覆盖）与预警回调注册 `set_risk_alert_callback()`。窗口内的失败命中按账号记录在 `riskHits`，达阈值即触发，且同一账号 1 小时内不重复推送（`RISK_ALERT_COOLDOWN`）。
+  - `gateway/main.py`：新增 `_risk_alert()` 回调并注册。推送内容含账号昵称、窗口内失败次数、最后上游状态码。
+  - `gateway/notify.py`：登记新场景 `account_risk_alert`（账号风控预警），渠道可按场景订阅。
+  - **红线：只通知，不自动停用。** 本次改动没有任何触碰账号池的代码路径，`autoDisableAccounts` 维持关闭状态。账号是否停用只由用户在界面决定。
+  - 与既有 `refresh_guard_alert` 分工：那个管 refresh token 批量失败（上游 session 被重置），这个管单账号调用侧的限流/拒绝迹象。
+
+### 变更
+
+- **打卡事件时间戳抖动**（优化方案第 ⑥ 条）：批量上报的事件不再共用同一个毫秒。
+  - `gateway/vendor/workbuddy_daily.py`：新增 `EVENT_DRIFT_MIN_MS=80` / `EVENT_DRIFT_MAX_MS=400` / `REPORT_DELAY_MAX_MS=300` 三个常量。
+  - `chat_request_events()`：三个事件（`chat_request_send` / `chat_message_send` / `chat_request_response`）的时间戳由固定的 `now` / `now+50` / `now+100` 改为**随机递增**，相邻间隔在 80~400ms 内随机取，整批跨度控制在 1s 量级内（签到链有超时限制，不放大）。
+  - `report()`：`reportDelay` 由硬编码 `0` 改为 `[0, 300)` 随机整数；事件**自带** `timestamp` 时尊重原值不覆盖（`chat_request_events` 已排好序，覆盖会毁掉序列），只有调用方没给时才由本函数补抖动。
+  - `mp_report()`：同口径兜底（mp 链本身有 45s 大间隔，此处仅防一批事件共用同一个 `now`）。
+  - v1.0.9 的 Jitter 只覆盖重试退避与选号防抖，未覆盖事件时间戳 —— 本版补上这一层。
+
+### 安全
+
+- 两项改动均**不触碰账号数据文件**：④ 只读账号池取昵称（带 60s 短缓存，只读不写回）；⑥ 只改上报事件的客户端侧时间戳。账号池权威源 `accounts.json` 全程未被读写。
+
 ## [v1.0.11] - 2026-10-21
 
 <!-- summary: 版本号规范回归语义化三位制，撤销四段日期制试验；顺带修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 -->
@@ -5202,7 +5228,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.11...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.13...HEAD
+[v1.0.13]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.11...v1.0.13
 [v1.0.11]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...v1.0.11
 [v1.0.10]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.9...v1.0.10
 [v1.0.9]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.8...v1.0.9

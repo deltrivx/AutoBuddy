@@ -32,10 +32,16 @@ sys.path.insert(0, str(Path(__file__).parent / "gateway"))
 src = (Path(__file__).parent / "gateway" / "main.py").read_text(encoding="utf-8")
 
 # 抽取 DATA_DIR 常量区 + 策略函数 + 池配置函数 + select_account
+#
+# ⚠️ 切片终点为什么用 `def _refresh_guard_alert(` 而不是 `_REFRESH_URLS = {`：
+# 后者是「下一个顶层字面量」，位置会随 main.py 中部插入任意代码而漂移
+# （2026-10-21 加风控预警就把它从 1898 推到 1944，害这个测试报
+# NameError: cooldown —— 因为被卷进切片的新代码引用了未注入的 cooldown）。
+# 函数定义锚点稳定得多：select_account 之后、刷新相关代码之前。
 seg1 = src[src.index("DATA_DIR = Path("):src.index("def infer_owner(")]
 seg_policy = src[src.index("def _load_model_policy("):src.index("def _account_id(")]
 seg_pool = src[src.index("def _load_pool_config("):src.index("def select_account(")]
-seg_select = src[src.index("def select_account("):src.index('_REFRESH_URLS = {')]
+seg_select = src[src.index("def select_account("):src.index("def _refresh_guard_alert(")]
 
 ns = {
     "json": json, "os": os, "Path": Path, "print": print,

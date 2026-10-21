@@ -687,6 +687,14 @@ if ONLY is not None:
     ACCOUNTS = [ACCOUNTS[ONLY]]
 WRITE_GAP = 1.5  # 写动作间隔秒数（--gap 可覆盖，最低 1.0）
 MP_CHAT_GAP = 45.0  # mp 对话事件“真人节奏”间隔秒数（上游实测 45s；--mp-gap / WORKBUDDY_MP_GAP 可覆盖）
+# 事件时间戳抖动（2026-10-21 优化方案 ⑥）：一次批量上报的多个事件，
+# 相邻两个事件的时间戳间隔在这个区间内随机取，让整批事件在服务端
+# 铺开成人类操作节奏，而不是同一毫秒齐落。
+# 为什么是 80~400ms：抖动总量随事件数累加，控制在 1s 量级内 ——
+# 签到链有超时限制，抖太大会把事件推到窗口外；太小则仍像机器。
+EVENT_DRIFT_MIN_MS = 80.0
+EVENT_DRIFT_MAX_MS = 400.0
+REPORT_DELAY_MAX_MS = 300  # reportDelay 上限（ms），实际值在 [0, 上限) 随机
 QUERY_ONLY = "--query" in sys.argv
 NO_DESKTOP = "--no-desktop" in sys.argv
 if "--gap" in sys.argv:
@@ -867,12 +875,32 @@ def claim(s, code, log):
 
 
 def report(s, uid, nick, events, base=None, headers=None):
-    """events: list of dict；自动补全信封"""
+    """events: list of dict；自动补全信封
+
+    时间戳抖动（2026-10-21，优化方案 ⑥）：此前每个事件都拿
+    ``int(time.time() * 1000)`` 现取、``reportDelay`` 恒为 0，于是一次
+    批量上报的 N 个事件在服务端眼里是**同一毫秒**落下的——真人不可能
+    这样操作。现在按事件在批次中的序号给一个随机递增偏移，并给
+    reportDelay 一个 0~300ms 的随机值，让整批事件铺开成一个
+    符合人类操作节奏的时间序列。
+
+    单调性由构造保证（偏移是累加的随机正值），不会出现后一个事件的
+    时间戳早于前一个。抖动幅度刻意压在 1s 量级内：签到链有超时限制，
+    抖太大会把事件推到窗口外。
+    """
     UA_SHORT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WorkBuddy/5.5.4"
     mid = derive_id(uid, "machine")   # 稳定指纹：同账号每次相同
     out = []
+    drift = 0.0
     for e in events:
-        env = {"timestamp": int(time.time() * 1000), "reportDelay": 0,
+        # 事件自带 timestamp 时**尊重它**（chat_request_events 已按递增随机
+        # 排好序，覆盖会毁掉那个序列）；只有调用方没给时才由本函数补抖动。
+        drift += random.uniform(EVENT_DRIFT_MIN_MS, EVENT_DRIFT_MAX_MS)
+        ts = e.get("timestamp")
+        if not isinstance(ts, (int, float)):
+            ts = int(time.time() * 1000 + drift)
+        env = {"timestamp": int(ts),
+               "reportDelay": int(random.uniform(0, REPORT_DELAY_MAX_MS)),
                "userId": uid, "userNickname": nick,
                "ideName": "WorkBuddy", "ideType": "WorkBuddy", "ideVersion": "5.5.6",
                "machineId": mid, "sessionId": derive_id(uid, "session"),
@@ -937,25 +965,37 @@ def webchat(s, conv_name, prompt, meta=None, model="glm-5.2"):
 
 
 def chat_request_events(uid, nick, conv_id, prompt, txt, mode="craft"):
+    # 时间戳抖动（2026-10-21，优化方案 ⑥）：此前三个事件是 now / now+100 /
+    # now+50 的固定编排（且 chat_message_send 反而早于 response），
+    # 每次签到都一样。真人敲一次对话，发送/响应/消息的间隔是随机且
+    # 递增的。这里给每个事件单独抽一个递增随机偏移，并把顺序理顺为
+    # send → message → response（符合真实交互：先发出、消息落地、再有响应）。
+    # 注意：顺序调整只影响上报的时序语义，不影响积分结算。
     now = int(time.time() * 1000)
     rid = "cmb-" + str(uuid.uuid4())
+    t_send = now
+    t_msg = now + random.uniform(EVENT_DRIFT_MIN_MS, EVENT_DRIFT_MAX_MS)
+    t_resp = t_msg + random.uniform(EVENT_DRIFT_MIN_MS, EVENT_DRIFT_MAX_MS)
     common = {"userId": uid, "userNickname": nick, "ideName": "web-Agents", "ideType": "web-Agents",
               "machineId": derive_id(uid, "machine"), "mode": "CLOUD", "userAgent": UA, "os": "Win32",
               "timezone": "Asia/Shanghai"}
     return [
-        {"eventCode": "chat_request_send", "timestamp": now, "reportDelay": 0, **common,
+        {"eventCode": "chat_request_send", "timestamp": t_send,
+         "reportDelay": int(random.uniform(0, REPORT_DELAY_MAX_MS)), **common,
          "mode": mode,
          "conversationId": conv_id, "requestId": rid, "requestModelId": "glm-5.2",
          "requestModelName": "GLM-5.2", "inputLength": len(prompt), "customAgentName": ""},
-        {"eventCode": "chat_request_response", "timestamp": now + 100, "reportDelay": 0, **common,
-         "conversationId": conv_id, "requestId": rid, "requestModelId": "glm-5.2",
-         "requestModelName": "GLM-5.2", "toolCallCount": 0, "inputToken": max(1, len(prompt) // 4),
-         "outputToken": max(1, len(txt) // 4), "totalToken": max(2, (len(prompt) + len(txt)) // 4)},
-        {"eventCode": "chat_message_send", "timestamp": now + 50, "reportDelay": 0, **common,
+        {"eventCode": "chat_message_send", "timestamp": t_msg,
+         "reportDelay": int(random.uniform(0, REPORT_DELAY_MAX_MS)), **common,
          "conversationId": conv_id, "requestId": rid, "messageId": "cmb-" + str(uuid.uuid4()),
          "requestModelId": "glm-5.2", "requestModelName": "GLM-5.2", "historyCount": 1,
          "isContextTruncated": False, "currentStepCount": 1, "traceId": rid, "rootRequestId": rid,
-         "parentConversationId": conv_id, "agentName": "cli", "agentType": "main"}], rid
+         "parentConversationId": conv_id, "agentName": "cli", "agentType": "main"},
+        {"eventCode": "chat_request_response", "timestamp": t_resp,
+         "reportDelay": int(random.uniform(0, REPORT_DELAY_MAX_MS)), **common,
+         "conversationId": conv_id, "requestId": rid, "requestModelId": "glm-5.2",
+         "requestModelName": "GLM-5.2", "toolCallCount": 0, "inputToken": max(1, len(prompt) // 4),
+         "outputToken": max(1, len(txt) // 4), "totalToken": max(2, (len(prompt) + len(txt)) // 4)}], rid
 
 
 # ---------- 查询 ----------
@@ -2593,9 +2633,17 @@ def mp_report(s, uid, nick, events):
     """以小程序指纹向 www.codebuddy.cn/v2/report 批量上报（上游 ReportMPEvent 同款）。"""
     base = mp_base(uid, nick)
     arr = []
+    drift = 0.0
     for e in events:
         m = dict(base)
         m.update(e)
+        # 时间戳抖动（2026-10-21 优化方案 ⑥）：与 report() 同口径 ——
+        # 事件自带 timestamp 则尊重，否则给一个递增随机偏移，避免一批
+        # 事件共用同一个 now。mp 链本身有 45s 大间隔，这里只是兜底。
+        drift += random.uniform(EVENT_DRIFT_MIN_MS, EVENT_DRIFT_MAX_MS)
+        ts = m.get("timestamp")
+        if not isinstance(ts, (int, float)):
+            m["timestamp"] = int(base.get("timestamp") or time.time() * 1000) + int(drift)
         arr.append(m)
     s2 = requests.Session(); s2.trust_env = False
     hdr = dict(MP_REPORT_HEADERS)

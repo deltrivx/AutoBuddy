@@ -100,7 +100,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.11"
+VERSION_DEFAULT = "1.0.13"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -1816,6 +1816,52 @@ def _refresh_guard_alert(failed_count: int) -> None:
 
 
 refresh_guard.set_alert_callback(_refresh_guard_alert)
+
+
+# 风控预警里查账号昵称用的短缓存（60s），只读不写。
+_RISK_LABEL_CACHE: Optional[Dict[str, str]] = None
+_RISK_LABEL_CACHE_AT: float = 0.0
+
+
+def _risk_alert(account_id: str, fails: int, window_sec: int,
+                last_status: int) -> None:
+    """单账号风控预警：窗口内连续被限流/拒绝达阈值 → 推送通知（只通知）。
+
+    挂在 cooldown.set_risk_alert_callback，由 cooldown.record_failure 命中
+    ``RISK_ALERT_THRESHOLD``（3 次 / 10 分钟）时调用。
+
+    ⚠️ 本函数**只发通知**，不做任何账号处置：不停用、不禁用、不改账号池。
+    自动停用正是上次误封 16 个号的元凶，账号要不要停只由用户在界面决定，
+    网关只负责把人叫醒。
+    """
+    try:
+        # 账号昵称只读账号池，绝不写回。带一个短缓存：失败风暴时这个回调
+        # 会被反复触发，每次都全量读账号池没意义。
+        global _RISK_LABEL_CACHE
+        label = str(account_id)
+        try:
+            if _RISK_LABEL_CACHE is None or \
+                    time.time() - _RISK_LABEL_CACHE_AT > 60:
+                _RISK_LABEL_CACHE = {str(_account_id(a)): _account_label(a)
+                                     for a in _load_accounts() if _account_id(a)}
+                _RISK_LABEL_CACHE_AT = time.time()
+            label = _RISK_LABEL_CACHE.get(str(account_id)) or label
+        except Exception:
+            pass  # 取不到昵称就用 id，不影响预警本身
+        _t = "AutoBuddy 账号风控预警"
+        _lines = [
+            f"账号「{label}」最近 {int(window_sec) // 60} 分钟内失败 {int(fails)} 次。",
+            f"最后一次上游状态码：{int(last_status)}。",
+            "该账号可能正被限流或风控关注，已自动施加冷却，但**未做任何自动停用**。",
+            "如需处理，请到账号管理界面人工确认。",
+        ]
+        _notify_mod.send_scene("account_risk_alert", _t, _lines)
+        lprint("risk-alert", f"账号「{label}」{window_sec}s 内失败 {fails} 次，已推送预警")
+    except Exception as _e:
+        lprint("risk-alert", f"alert notice failed: {_e}")
+
+
+cooldown.set_risk_alert_callback(_risk_alert)
 
 
 def _looks_like_model_unavailable(status_code: int, body_text: str) -> bool:
