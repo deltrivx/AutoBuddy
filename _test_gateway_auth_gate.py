@@ -181,13 +181,21 @@ print("\n== 6. _save_accounts 落盘前留底 ==")
 # ---------------------------------------------------------------------------
 check("_save_accounts 调用 _backup_accounts", "_backup_accounts(" in MAIN)
 check("_backup_accounts 在写入之前调用（留底先于 payload 落盘）",
-      MAIN.find("_backup_accounts(primary)") < MAIN.find("os.replace(tmp, target)"))
+      MAIN.find("_backup_accounts(") < MAIN.find("os.replace(tmp, target)"))
+check("★ 留底对象是实际写入目标（targets[0]），不是硬编码路径",
+      "_backup_accounts(targets[0])" in MAIN,
+      "硬编码 primary 会在权威源缺席时静默失败：『留底了但一个文件都没有』")
 check("备份名带时间戳（可追溯是哪一次变更）",
       re.search(r'bak-\{stamp\}', MAIN) is not None or "bak-" in MAIN)
 check("备份份数有上限（不无限堆积）", "_ACCOUNTS_BAK_KEEP" in MAIN)
 check("有清理旧备份的实现", "def _prune_accounts_backups(" in MAIN)
+check("★ 清理按 mtime 排序（同一秒的后缀会让文件名字典序错乱）",
+      "st_mtime" in MAIN)
+check("★ 同一秒内多次留底用递增后缀，不是 pid",
+      "os.getpid()" not in MAIN.split("def _backup_accounts")[1].split("def _prune_accounts_backups")[0],
+      "pid 在同进程内是定值，会让同秒第 2/3/4 次全覆盖同一个文件")
 check("留底失败不打断写入（try/except 吞掉）",
-      re.search(r"def _backup_accounts[\s\S]{0,900}except Exception", MAIN) is not None)
+      re.search(r"def _backup_accounts[\s\S]{0,1400}except Exception", MAIN) is not None)
 
 # ---------------------------------------------------------------------------
 print("\n== 7. 会话门不削弱 /v1 既有鉴权 ==")

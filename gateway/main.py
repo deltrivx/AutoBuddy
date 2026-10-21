@@ -937,15 +937,22 @@ def _backup_accounts(primary: Path) -> Optional[Path]:
     只对**权威源**（``/data/.wb-switch/accounts.json``）留底：容器副本
     （``DATA_DIR/accounts.json``）是从同一份 payload 同步出来的，内容必然一致，
     各留一份只是重复占空间。
+
+    **同一秒内的多次留底用递增后缀区分**（``-1`` / ``-2`` / …），
+    不是 pid —— pid 在同一进程里是定值，用它会让同一秒内的第 2、3、4 次
+    全部覆盖同一个文件（实测：5 次连续变更只留下 2 份，中间 3 份内容全丢）。
+    真实场景会命中：批量刷新令牌、导入整包账号都在同一秒内连续落盘。
     """
     try:
         if not primary.exists():
             return None
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-        target = primary.with_name(f"{primary.name}.bak-{stamp}")
-        # 同一秒内多次写入（批量刷新令牌时会）不要互相覆盖。
-        if target.exists():
-            target = primary.with_name(f"{primary.name}.bak-{stamp}-{os.getpid()}")
+        base = primary.with_name(f"{primary.name}.bak-{stamp}")
+        target = base
+        seq = 0
+        while target.exists():
+            seq += 1
+            target = primary.with_name(f"{primary.name}.bak-{stamp}-{seq}")
         shutil.copyfile(primary, target)
         _prune_accounts_backups(primary)
         return target
@@ -955,9 +962,16 @@ def _backup_accounts(primary: Path) -> Optional[Path]:
 
 
 def _prune_accounts_backups(primary: Path) -> None:
-    """只留最近 ``_ACCOUNTS_BAK_KEEP`` 份备份，超出的删最旧（按文件名时间戳排序）。"""
+    """只留最近 ``_ACCOUNTS_BAK_KEEP`` 份备份，超出的删最旧。
+
+    排序用 **mtime** 而不是文件名：同一秒内的备份带 ``-1`` / ``-2`` 后缀，
+    与不带后缀的那个混在一起时字典序不稳定（``...053050`` < ``...053050-1``
+    在 ASCII 上成立，但跨秒比较时后缀会让顺序错乱），按 mtime 删才不会
+    误删更新鲜的那份。
+    """
     try:
-        baks = sorted(primary.parent.glob(f"{primary.name}.bak-*"))
+        baks = [p for p in primary.parent.glob(f"{primary.name}.bak-*") if p.is_file()]
+        baks.sort(key=lambda p: p.stat().st_mtime)
         for stale in baks[:-_ACCOUNTS_BAK_KEEP] if _ACCOUNTS_BAK_KEEP > 0 else baks:
             try:
                 stale.unlink()
@@ -996,7 +1010,12 @@ def _save_accounts(accounts: List[Dict[str, Any]]) -> None:
 
     payload = json.dumps(accounts, ensure_ascii=False, indent=2)
     # 留底在任何写入之前：写坏了还能拿回写前那一份。
-    _backup_accounts(primary)
+    # 对**实际参与写入的第一个目标**留底（权威源存在时就是权威源；
+    # 自建 / 测试环境没有 /data/.wb-switch 时退到本地副本），
+    # 而不是对硬编码的 primary 留底 —— 后者在权威源缺席时会静默失败，
+    # 表现为「留底了但一个文件都没有」。
+    if targets:
+        _backup_accounts(targets[0])
     for target in targets:
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
