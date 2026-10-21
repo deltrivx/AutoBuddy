@@ -26,6 +26,14 @@ try:
 except ImportError:
     import notify as _notify  # type: ignore[no-redef]
 
+# 风控标记的清除走转发到网关本体（gateway/main.py 的
+# /account-pool/risk-flag/clear），不在这里另写一份实现 ——
+# 状态文件读写逻辑只有一处，避免两份实现漂移。
+try:
+    from gateway import risk_flag as _risk_flag
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import risk_flag as _risk_flag  # type: ignore[no-redef]
+
 try:
     from gateway.token_tracker import (get_aggregated_token_stats,
                                        load_tracker_records)
@@ -11450,6 +11458,29 @@ async def account_pool_toggle(request: Request, user: "str" = Depends(require_us
     try:
         async with _internal_client(timeout=5.0) as client:
             r = await client.post(GATEWAY_BASE_URL + "/account-pool/toggle",
+                                  content=body,
+                                  headers={"Content-Type": "application/json"})
+            return Response(content=r.content, status_code=r.status_code,
+                            media_type="application/json")
+    except Exception as e:
+        return Response(content=json.dumps({"error": str(e)}), status_code=502,
+                        media_type="application/json")
+
+
+@app.post("/api/account-pool/risk-flag/clear")
+async def account_pool_risk_flag_clear(request: Request, user: "str" = Depends(require_user)):
+    """转发「解除风控标记」（账号卡片浮层里的按钮）到网关本体。
+
+    必须显式注册：文件末尾有一条 catch-all `/{path:path}`，不注册的话这个
+    POST 会被它转给官方后端，官方不认识该路径却仍返回 200，前端看到成功、
+    标记实际没被清除（2026-10-21 实测踩到）。
+
+    实现只此一处（gateway/main.py），这里纯转发，避免两份逻辑漂移。
+    """
+    body = await request.body()
+    try:
+        async with _internal_client(timeout=5.0) as client:
+            r = await client.post(GATEWAY_BASE_URL + "/account-pool/risk-flag/clear",
                                   content=body,
                                   headers={"Content-Type": "application/json"})
             return Response(content=r.content, status_code=r.status_code,

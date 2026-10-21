@@ -193,6 +193,25 @@ check("只写自己的 account_risk_flags.json",
 check("没有任何自动清除标记的调用面（解除只能人工）",
       "auto_clear" not in code and "auto_resolve" not in code)
 
+# —— web_proxy 侧的转发端点 ——
+# 2026-10-21 实测踩到的坑：web_proxy.py 末尾有一条 catch-all
+# `@app.api_route("/{path:path}")`，/api/account-pool/risk-flag/clear 没有
+# 显式注册时会被它转给官方后端，官方不认识该路径却仍返回 200 ——
+# 前端看到成功 toast、标记实际没被清除。所以这里锁住「端点必须显式存在」。
+wp_src = (ROOT / "gateway" / "web_proxy.py").read_text(encoding="utf-8")
+wp_code = code_only(wp_src)
+check("web_proxy 显式注册了 /api/account-pool/risk-flag/clear",
+      '"/api/account-pool/risk-flag/clear"' in wp_src,
+      "漏注册会被 catch-all 静默吞掉，界面显示成功但标记不清")
+check("web_proxy 里该端点转发到网关本体而不是自己实现",
+      "GATEWAY_BASE_URL + \"/account-pool/risk-flag/clear\"" in wp_src,
+      "实现只此一处，转发避免两份逻辑漂移")
+check("web_proxy 自己不在本地落盘风控标记（纯转发）",
+      "account_risk_flags" not in wp_code,
+      "落盘逻辑只在 gateway/risk_flag.py 一处")
+check("web_proxy 里无 set_disabled / auto_disable 调用",
+      not re.search(r"\b(set_disabled|auto_disable)\b", wp_code))
+
 import shutil  # noqa: E402
 shutil.rmtree(tmp, ignore_errors=True)
 

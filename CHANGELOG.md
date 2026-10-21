@@ -31,6 +31,23 @@
 
 ---
 
+## [v1.0.15] - 2026-10-21
+
+<!-- summary: 修复 v1.0.14 解除风控标记按钮假成功的缺陷——请求被 catch-all 路由转给官方后端返回 200，标记实际未被清除 -->
+
+### 修复
+
+- **解除风控标记按钮假成功**：v1.0.14 的徽章浮层里点「解除这个标记」，界面弹出「已解除风控标记」、接口返回 200，但 `account_risk_flags.json` 内容丝毫未变，刷新页面徽章又回来。
+
+  根因：`gateway/web_proxy.py`（18090 端口的服务进程）文件末尾有一条 catch-all 路由 `@app.api_route("/{path:path}", ...)`，任何未显式注册的请求都会被它转给官方后端。`/api/account-pool/risk-flag/clear` 只注册在了 `gateway/main.py`（18091），而 UI 的 fetch 打的是 18090 —— 请求被 catch-all 接手转给官方后端，官方不认识该路径却仍返回 200，于是前端拿到「成功」、实际没人执行清除。
+
+  - `gateway/web_proxy.py`：显式注册 `POST /api/account-pool/risk-flag/clear`，转发到网关本体的同名端点。**不在 web_proxy 里另写一份落盘逻辑** —— 状态文件读写只保留 `gateway/risk_flag.py` 一处，避免两份实现漂移。同时新增 `import risk_flag` 的兜底导入（与仓内既有 `account_policy` / `notify` 的导入方式一致）。
+  - `_test_risk_flag.py`：新增 4 项断言锁住这个坑 —— 端点字符串必须显式存在于 web_proxy 源码、必须是转发而非本地实现、web_proxy 不得自行落盘风控标记、可执行代码里无停用调用面。
+
+  这也是给本仓后续加 UI 端点的一条教训：**18090 的 UI 接口要在 web_proxy.py 注册，不能只写在 main.py**，否则会被 catch-all 静默吞掉并伪装成成功。
+
+---
+
 ## [v1.0.14] - 2026-10-21
 
 <!-- summary: 账号卡片新增「被上游风控标记」徽章与推送通知，标记落在独立存储里、与本地停用彻底分开；只通知不自动停用，也不碰账号数据文件 -->
@@ -5248,7 +5265,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.14...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.15...HEAD
+[v1.0.15]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.14...v1.0.15
 [v1.0.14]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.13...v1.0.14
 [v1.0.13]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.11...v1.0.13
 [v1.0.11]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.10...v1.0.11
