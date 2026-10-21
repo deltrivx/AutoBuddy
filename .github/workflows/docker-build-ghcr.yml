@@ -94,15 +94,21 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # 版本号规范（2026-10-21 起）：末段固定两位补零，按「当天第几版」累进，
           # 形如 v2026.10.21.03 —— 这是**四段**号。
-          # ⚠️ type=semver 只认标准 semver（x.y.z 三段），四段号它一条都不产，
+          # ⚠️ type=semver 只认标准 semver（x.y.z 三段），四段号它一条都不产
+          # （semver.valid() 返回 null 后该规则静默跳过、不报错），
           # 于是 tag 推送时镜像会只剩 latest 或干脆没标签。
-          # 好在 type=ref,event=tag 不挑版本形态：它把 git tag 原样变成镜像标签
-          # （自动剥掉 v 前缀）→ v2026.10.21.03 推成 2026.10.21.03。
-          # 存量三段式（v1.0.x）则仍由下面两条 semver 规则产出 1.0.10 / 1.0 标签，
-          # 两代版本形态互不干扰。
+          # ⚠️ type=ref,event=tag 虽然不挑版本形态，但**不剥 v 前缀**
+          # （源码 procRefTag() 只做 replace(/^refs\/tags\//)，v 原样留下）。
+          # 2026-10-21 实测踩过：v2026.10.21.03 推成了 v2026.10.21.03，
+          # 与存量三段式的 1.0.10 / 1.0 形态不一致。
+          # 故用 type=match + 捕获组剥 v —— 它对几段号都一视同仁：
+          #   v2026.10.21.03 → 2026.10.21.03
+          #   v1.0.10        → 1.0.10
+          # 存量三段式的 x.y.z / x.y 标签仍由下面两条 semver 规则产出（已验证）。
+          # 若哪天整轮没有版本标签，去 CI warning 里找 "is not a valid semver"。
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
-            type=ref,event=tag
+            type=match,pattern=v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 

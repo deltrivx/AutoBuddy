@@ -19,15 +19,21 @@
 | 位置 | 改动 |
 | :--- | :--- |
 | `gateway/main.py` | `VERSION_DEFAULT` 改为 `2026.10.21.03`。版本号仍是全仓唯一一处定义，`AB_VERSION` 环境变量仍可覆盖 |
-| `.github/workflows/docker-build-ghcr.yml` | 镜像标签以 `type=ref,event=tag` 为主产出 |
+| `.github/workflows/docker-build-ghcr.yml` | 镜像标签改为 `type=match,pattern=v(.*),group=1`（剥 v 前缀） |
 | `scripts/gen_releases.py` | `version_key()` 排序键兼容两代版本形态 |
 | `_test_version_sync.py` | 正则与断言放开到「三段或四段末段两位」，新增两条单位数护栏 |
 
-## 一个只有切号才会踩到的坑
+## 两个只有切号才会踩到的坑
 
-四段日期号**不是标准 semver**，`docker/metadata-action` 的 `type=semver` 对它一条标签都产不出来（官方文档确认：非 semver tag 下该规则静默跳过、不报错）。若镜像标签只靠 semver，tag 推送后 GHCR 上会出现「没有新标签」或只剩 `latest`，容器拉版本标签直接落空。
+**坑一：四段号不是标准 semver，`type=semver` 一条标签都产不出。**
 
-因此标签策略改为以 `type=ref,event=tag` 为主 —— 它不挑版本形态，把 git tag 原样变成镜像标签并自动剥掉 `v` 前缀，`v2026.10.21.03` 推成 `2026.10.21.03`。存量三段式仍由 semver 规则产出 `x.y.z` / `x.y` 标签，两代形态互不干扰。
+`semver.valid()` 对 `2026.10.21.03` 返回 null，该规则静默跳过、不报错。若镜像标签只靠 semver，tag 推送后 GHCR 上会出现「没有新标签」或只剩 `latest`，容器拉版本标签直接落空。
+
+**坑二：`type=ref,event=tag` 不剥 `v` 前缀。**
+
+官方文档表格写 `refs/tags/v1.2.3` → `v1.2.3`，源码 `procRefTag()` 也确实只做 `replace(/^refs\/tags\//)`。2026-10-21 实测：tag 推完后 GHCR 上是 `v2026.10.21.03` 而不是 `2026.10.21.03` —— 与存量三段式的 `1.0.10` / `1.0` 形态不一致，也和 `RELEASES.md` 里 `gen_releases.py` 生成的 `lstrip('v')` 拉取命令不符。
+
+**修法**：改用 `type=match,pattern=v(.*),group=1`，抓组剥掉 v。它对几段号一视同仁 —— `v2026.10.21.03` → `2026.10.21.03`，`v1.0.10` → `1.0.10`。存量三段式的 `x.y.z` / `x.y` 标签仍由 semver 规则产出，两代形态从此统一为无 v 前缀。
 
 同样的坑也存在于 `scripts/gen_releases.py` 的排序：原来的 `version_key()` 直接按段数比，三段 `[0,4,5]` 和四段 `[2026,10,21,3]` 混排会因为列表长度不同而错乱。现已补零对齐段长后按数值比较。
 

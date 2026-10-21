@@ -39,7 +39,10 @@
 
 - **版本号规范切换**：末段固定两位补零、按「当天第几版」全局累进 —— 今天第 1 版是 `v2026.10.21.01`，第 10 版是 `v2026.10.21.10`，**不再出现 `2026.10.21.1` 这种单位数写法**。本版是今天第 3 版，故为 `v2026.10.21.03`。存量三段式（v1.0.10 及更早）仍有效，新版本不再使用该形态。
   - `gateway/main.py`：`VERSION_DEFAULT` 改为 `2026.10.21.03`（版本号仍是全仓唯一一处定义，`AB_VERSION` 仍可覆盖）。
-  - `.github/workflows/docker-build-ghcr.yml`：镜像标签改为以 `type=ref,event=tag` 为主产出 —— 四段日期号不是标准 semver，`type=semver` 对它一条都不产（文档确认：非 semver tag 下 semver 规则静默跳过，不报错），`type=ref` 则把 git tag 原样变成镜像标签并自动剥掉 `v` 前缀，故 `v2026.10.21.03` 推成 `2026.10.21.03`。存量三段式仍由 semver 规则产出 `x.y.z` / `x.y` 标签，两代形态互不干扰。
+  - `.github/workflows/docker-build-ghcr.yml`：镜像标签改为以 `type=match,pattern=v(.*),group=1` 产出（`enable=${{ startsWith(github.ref, 'refs/tags/v') }}`）。原因有两层：
+    1. 四段日期号**不是标准 semver**，`type=semver` 对它一条都不产（源码里 `semver.valid()` 返回 null 后该规则静默跳过、不报错），tag 推送后 GHCR 会没有新标签。
+    2. `type=ref,event=tag` 虽不挑版本形态，但**不剥 `v` 前缀**（源码 `procRefTag()` 只做 `replace(/^refs\/tags\//)`，v 原样留下）。2026-10-21 实测踩过：v2026.10.21.03 推成了 `v2026.10.21.03`，与存量三段式 `1.0.10` / `1.0` 的形态不一致。`type=match` 抓组剥 v 后，两代版本形态归一到无 v 前缀。
+    存量三段式的 `x.y.z` / `x.y` 标签仍由 semver 规则产出，不受影响。
   - `scripts/gen_releases.py`：`version_key()` 排序键兼容两代形态（补零对齐段长后按数值比），否则三段与四段混排会因长度不同直接比出错乱。
   - `_test_version_sync.py`：版本号正则与断言放开到「三段或四段末段两位」，并新增两条护栏 —— 末段是单位数即失败、CHANGELOG 里出现单位数末段版本即失败。
 
