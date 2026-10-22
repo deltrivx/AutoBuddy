@@ -31,6 +31,32 @@
 
 ---
 
+## [v1.0.23] - 2026-10-23
+
+<!-- summary: 修积分统计页「官方用量暂不可用」—— 重建 officialUsage 时漏改 status，前端准入校验把整份实时数据丢弃 -->
+
+### 修复
+
+- **积分统计页报错「官方用量暂不可用」**：
+  - 陈旧缓存里 `status` 是官方引擎留下的 `"unavailable"`，而网关的
+    `_reconcile_official_usage()` 重建了 accounts / daily / summary /
+    collectedAt / errors 之后**唯独漏改 `status`**。
+  - 官方前端用 status 做整份数据的准入校验（bundle 内
+    `function py(e){return e?.status==="complete"||e?.status==="partial"}`），
+    status 仍是 unavailable 时 `py()` 返回 false，前端把这份**已由网关实时
+    重建的 officialUsage 整份丢弃**，页面回退到本地观察口径并弹出提示。
+  - 修法：重建收尾处同步 `status="partial"` 与 `source="gateway-realtime"`。
+  - 取 `partial` 而非 `complete`：账号明细与按日明细是实时重建的，但官方
+    请求级原始用量（requests）仍来自已停更的采集，partial 如实表达
+    「部分实时」，与 `errors=[]` 不矛盾。
+  - 实测（2026-10-23 07:31，Unraid 线上）：修后
+    `status=partial`、`accounts 数=10`、`daily 天数=31`、`ageDays=0.0`、
+    官方 JS 准入通过。
+  - 顺带核实：用户怀疑的 `.workbuddy-switch` 数据目录名**不存在**于引擎
+    二进制与 JS bundle（两处均只引用 `.wb-switch`），与本次故障无关。
+
+---
+
 ## [v1.0.22] - 2026-10-23
 
 <!-- summary: 修 11128 渠道拦截不换号致客户端全 400、补官方桌面端完整请求特征、网关自检 NameError、搜索栏昼夜适配与右端对齐且只在账号页出现、修账号卡片被误灰化的前端时序 -->
@@ -5470,7 +5496,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.22...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.23...HEAD
+[v1.0.23]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.22...v1.0.23
 [v1.0.22]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.21...v1.0.22
 [v1.0.21]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.20...v1.0.21
 [v1.0.20]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.19...v1.0.20

@@ -10868,6 +10868,24 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
                         ou["requests"] = _g_reqs
                     ou["collectedAt"] = int(time.time() * 1000)
                     ou["errors"] = []
+                    # 2026-10-23：status 必须与「已重建」的事实一起更新。
+                    #
+                    # 根因（用户实测「积分统计页面报错 · 官方用量暂不可用」）：
+                    # 陈旧缓存里 status 是官方引擎留下的 "unavailable"，而上面
+                    # 只重建了 accounts/daily/summary/collectedAt/errors，
+                    # **漏了 status** —— 官方前端用它做整份数据的准入校验：
+                    #     function py(e){return e?.status==="complete"||e?.status==="partial"}
+                    # status 仍是 unavailable 时，py() 返回 false，前端把这份
+                    # 已由网关实时重建的 officialUsage **整份丢弃**，页面回退
+                    # 到本地观察口径并弹出「官方用量暂不可用」提示。
+                    # 数据明明是实时的（source 已标 gateway-realtime），
+                    # 只因一个字段没同步就被判为不可用 —— 必须一起改。
+                    #
+                    # 取 partial 而非 complete：账号明细与按日明细是实时重建的，
+                    # 但「官方请求级原始用量（requests）」仍来自已停更的采集，
+                    # 用 partial 如实表达「部分实时」，与 errors=[] 不矛盾。
+                    ou["status"] = "partial"
+                    ou["source"] = "gateway-realtime"
                 except Exception:
                     pass
     except Exception:
