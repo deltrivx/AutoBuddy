@@ -31,6 +31,78 @@
 
 ---
 
+## [v1.0.22] - 2026-10-23
+
+<!-- summary: 修 11128 渠道拦截不换号致客户端全 400、补官方桌面端完整请求特征、网关自检 NameError、搜索栏昼夜适配与右端对齐且只在账号页出现、修账号卡片被误灰化的前端时序 -->
+
+### 修复
+
+- **上游 400 code=11128（渠道拦截）不再 100% 透传给客户端**：
+  - 新增 `_looks_like_channel_blocked()`，把 400 + code=11128（"Illegal API invocation
+    from an unapproved channel"）纳入换号重试集合，判定口径与
+    `cooldown.py::_classify` 的 `channel` 分支完全一致（同看 400 + 11128 +
+    unapproved 字样），消除「账本认为该冷却换号、转发却当不可重试」的自相矛盾。
+  - 渠道拦截走换号路径但**不写模型黑名单**：`_learn_model_unavailable()` 只服务
+    「账号 × 模型」不支持的情形，渠道封锁是账号级问题，误写会让该账号名下所有模型
+    被一并拉黑。
+  - 实测背景：Mac-mini 上 DeepSeek Harness 经网关调 WorkBuddy，窗口内 4 次请求
+    全 400、0 次成功；同池其他账号同样形态全部 200，上游错误码即 11128。
+- **会话粘性不再把冷却中的账号登记为粘性目标**：
+  - `select_account()` 收尾的 `session_sticky.bind()` 前增加
+    `cooldown.is_cooling()` 判断，正在冷却（渠道封锁 / 限流 / 熔断）的账号不进粘性表。
+  - 修掉一个自锁循环：请求 → 选中被封账号 → 400 → unbind → 同 session_key 下个
+    请求又选回它 → 再 400。池小时该循环让客户端窗口内 100% 失败，而池里其他账号
+    明明是好的。
+- **网关一致性自检第三项必错**：`/api/gateway-selftest` 的函数签名漏了 `request`
+  参数，却在第三项（密钥配置自洽性）里把它传给 `_gw_headers(request)` 透传登录态
+  Cookie，导致该步恒抛 `NameError: name 'request' is not defined`。表现为前两步绿、
+  第三步红的固定故障。补上参数即修复（FastAPI 按类型注解注入 `Request`）。
+- **账号卡片被误灰化、完全无法操作**：
+  - `wbReplaceReloginErrorBlocks()` 在账号池缓存未就绪时也往下走，并对每张卡执行
+    else 分支的 `wbApplyReloginEnabled(card)`，语义上把「没有数据」当成「一切正常」，
+    会主动解除可能正确的灰化、抹掉 header badge 隐藏状态。现在缓存为空时整轮跳过。
+  - `injectAccountPool()` 的 `render()` 在账号池数据到达后补跑一次
+    `wbReplaceReloginErrorBlocks()`。此前只有 `run()` 首次同步调用它，而那一刻
+    `wbPoolCache` 可能还是上一个页面遗留的旧数据（SPA 切页不重建 JS 上下文，
+    该闭包变量跨页面存活）——旧缓存里某账号 `needsRelogin=true` 就会让卡片当场
+    灰化且永不解除。
+  - 线上实况佐证：`refresh_state.json` 不存在、`accounts.json` 里 0 个账号带
+    `needs_relogin`，没有任何账号真需要重登，灰化纯属前端时序误判。
+
+### 变更
+
+- **出站请求模拟官方桌面端完整特征（不只是 UA）**：
+  - 新增 `_desktop_headers()` / `_desktop_ua()` / `_upstream_body()` /
+    `_account_fingerprint()`，在原有四头（Authorization / Content-Type / Accept /
+    UA）之外补齐官方桌面端头族：`X-Domain` / `X-Product` / `X-User-Id` /
+    `X-Request-ID` / `Origin` / `Referer`。
+  - 特征来源全部是仓库内已有的一手样本：
+    `vendor/workbuddy_daily.py::report_desktop_events`（官方桌面域 `/v2/report`
+    真实头族）、`t_daily_activity`（CLI 域 chat 真实头族）、
+    `gateway/fingerprint.py`（每账号独立持久化的硬件画像）。
+  - 请求体补 `conversationId`（官方桌面端真实对话固有字段，缺失时按
+    machineId + 会话内容稳定派生，保证同账号同会话稳定、跨账号不同）。
+  - 三条设计红线：画像按账号隔离（不共用 machineId/osVersion，那正是上游并案
+    标记的典型特征）；`AB_DESKTOP_FIDELITY=0` 可一键回退到原四头形态；
+    `X-User-Id` / `machineId` 全部取自该账号自己的真实画像，不借用不编造。
+- **账号管理页搜索框三处调整**：
+  - 昼夜适配：`.wb-acc-search-box` 的底色由硬编码 `#ffffff` 改为
+    `var(--card, #ffffff)`，并补 `.dark` 兜底（`--popover`）。此前深色主题下
+    是一坨白补丁贴在暗色页面上。
+  - PC 端右端对齐：`.wb-acc-search-wrap` 的 `margin-left` 由 `8px` 改为 `auto`。
+    档位容器本身是 `w-fit`（不占满整行），写死 8px 时搜索框只是紧跟档位组右侧、
+    仍留在页面中部。
+  - 只在账号管理页出现：新增 `wbIsAccountsPage()` 守卫（hash `#/accounts` 或
+    官方根页 `/`），积分统计页 `/credit-stats`、词元统计页 `/token-stats`
+    同样渲染 article 卡片，此前会把搜索框也插上去。
+  - 新增 `wbRemoveAccountSearch()`：SPA 切到非账号页时撤掉上次注入的节点，
+    并把被过滤隐藏的卡片全部放出来、清掉档位容器的 `data-wb-search-row` 标记
+    与内联样式（不清的话下次回来新节点不会获得横向布局，搜索框掉行）。
+- `injectAccountPool()` 在没有账号卡片时（非账号管理页）顺手清掉上一页遗留的
+  `wbPoolCache`，避免旧账号状态在错误的页面上参与判定。
+
+---
+
 ## [v1.0.21] - 2026-10-22
 
 <!-- summary: 异常卡片登录提醒区域占满原积分区对齐尺寸、账号卡片三原则精细化排序、清理仓库残留文件 -->
@@ -5398,7 +5470,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.21...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.22...HEAD
+[v1.0.22]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.21...v1.0.22
 [v1.0.21]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.20...v1.0.21
 [v1.0.20]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.19...v1.0.20
 [v1.0.19]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.18...v1.0.19

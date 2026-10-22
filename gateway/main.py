@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import hashlib
 import logging
 import re
 import shutil
@@ -114,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.21"
+VERSION_DEFAULT = "1.0.22"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -261,8 +262,68 @@ def _resolve_base_url(variant: str, model: Optional[str] = None) -> str:
 UPSTREAM_UA = os.getenv(
     "AB_UPSTREAM_UA", "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1")
 
+# ---------------------------------------------------------------------------
+# 官方桌面端完整请求特征（2026-10-23，用户明确要求「不只是 UA」）
+#
+# 背景：上游 400 code=11128 的 displayTips 直说「这次调用没通过渠道校验，
+# 可能不是官方客户端发出的」。只对齐 UA 是**削去冰山一角** —— 官方桌面端
+# 的请求特征是「头族 + 请求体」一整套餐，缺任何一块都仍是脚本客户端形状。
+#
+# 特征来源（全部是仓库内已有的一手样本，非推测）：
+#   · vendor/workbuddy_daily.py::report_desktop_events（3122 行起）
+#     —— 官方桌面域 /v2/report 的真实头族；
+#   · vendor/workbuddy_daily.py::t_daily_activity（1207 行起）
+#     —— CLI 域 chat 的真实头族（X-Domain / X-User-Id / CLI UA）；
+#   · gateway/fingerprint.py —— 每账号独立持久化的硬件画像
+#     （machineId / sessionId / os / arch / cpuCores / memorySize / ideVersion）。
+#
+# 三条设计红线：
+#   1. 画像**按账号隔离**：绝不所有账号共用一套 machineId/osVersion ——
+#      上游并案标记的典型特征就是多账号同一设备指纹（fingerprint.py 的
+#      _allocate_profile 正是为这件事存在的，这里只消费它，不重新造）。
+#   2. 可一键回退：AB_DESKTOP_FIDELITY=0 时整套降级为原来的四头形态，
+#      上游改判据时不必改代码即可回滚。
+#   3. 不伪造身份：X-User-Id / machineId 等全部取自该账号自己的真实画像，
+#      不借用了别的账号的，也不编造不存在的设备。
+# ---------------------------------------------------------------------------
+DESKTOP_FIDELITY = (os.getenv("AB_DESKTOP_FIDELITY", "1") or "1").strip() not in ("0", "false", "no")
+DESKTOP_IDE_VERSION = os.getenv("AB_DESKTOP_IDE_VERSION", "5.5.6")
+DESKTOP_CLI_VERSION = os.getenv("AB_DESKTOP_CLI_VERSION", "2.137.1")
 
-def _upstream_headers(token: str) -> Dict[str, str]:
+
+def _account_fingerprint(acc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """取该账号的持久化硬件画像；取不到返回空 dict（调用方按缺省形态降级）。
+
+    画像缺失不应让请求失败 —— 只是少几项拟真特征，回退到 UA-only 形态。
+    """
+    if not DESKTOP_FIDELITY or not isinstance(acc, dict):
+        return {}
+    try:
+        # uid 取法与该账号在 fingerprint 库里的键一致（uid 优先，退化 id）。
+        # 直接内联而不调 fingerprint.account_uid：那个函数认的字段更多
+        # （含 user/phone/email），但画像库的键只认 uid/id 两条路，
+        # 两边用不同取法会造出「查不到自己画像」的幽灵条目。
+        uid = str((acc or {}).get("uid") or (acc or {}).get("id") or "").strip()
+        if not uid:
+            return {}
+        fp = _fingerprint.get_or_create_fingerprint(uid, str(acc.get("id") or ""))
+        return fp if isinstance(fp, dict) else {}
+    except Exception:
+        return {}
+
+
+def _desktop_ua(fp: Dict[str, Any]) -> str:
+    """官方桌面端 UA 形态：WorkBuddy/<ide> WorkBuddy/<ide> CLI/<cli>。
+
+    取自 vendor/workbuddy_daily.py:3122 的 DESKTOP_UA —— 那个常量是
+    从官方二进制里提取的真值，不是拼的。
+    """
+    ide = str((fp or {}).get("ideVersion") or DESKTOP_IDE_VERSION)
+    cli = DESKTOP_CLI_VERSION
+    return f"WorkBuddy/{ide} WorkBuddy/{ide} CLI/{cli}"
+
+
+def _upstream_headers(token: str, acc: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """构造转发到上游的请求头。
 
     三条转发路径（流式首试 / 流式换号重试 / 非流式换号重试）共用这一处，
@@ -274,6 +335,76 @@ def _upstream_headers(token: str) -> Dict[str, str]:
         "Accept": "application/json, text/plain, */*",
         "User-Agent": UPSTREAM_UA,
     }
+
+
+def _desktop_headers(token: str, acc: Optional[Dict[str, Any]] = None,
+                     body: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """官方桌面端完整头族（2026-10-23 新增）。
+
+    与 _upstream_headers 的区别：后者只发四头（Authorization / Content-Type /
+    Accept / UA），是「能跑」的形态；前者按官方桌面客户端的真实头族补齐
+    X-Domain / X-Product / X-User-Id / X-Request-ID / Origin / Referer。
+
+    取不到账号画像时自动降级为 _upstream_headers 的四头形态（不因画像缺失失败）。
+    """
+    base = _upstream_headers(token, acc)
+    if not DESKTOP_FIDELITY:
+        return base
+    fp = _account_fingerprint(acc)
+    if not fp:
+        return base
+    try:
+        uid = str(acc.get("uid") or acc.get("id") or "") if isinstance(acc, dict) else ""
+        session_id = str(fp.get("sessionId") or "")
+        # X-Request-ID：官方桌面端是 sessionId + 毫秒时间戳尾段
+        # （见 vendor/workbuddy_daily.py:3142）。
+        rid = (session_id or "wb") + str(int(time.time() * 1000) % 1000000)
+        # X-Domain / X-Product：官方桌面域固定值（vendor:3141-3142）。
+        domain = str(CN_BASE_URL.rsplit("/v2", 1)[0]) if CN_BASE_URL else "https://copilot.tencent.com"
+        headers = dict(base)
+        headers["User-Agent"] = _desktop_ua(fp)
+        headers["X-Domain"] = domain
+        headers["X-Product"] = "SaaS"
+        headers["X-Request-ID"] = rid
+        if uid:
+            headers["X-User-Id"] = uid
+        # Origin / Referer 只在能确定域时才补（AI 域账号的域不同，不硬套国内域）。
+        if CN_BASE_URL and str(CN_BASE_URL) in str(_resolve_base_url("cn", None)):
+            headers["Origin"] = domain
+            headers["Referer"] = domain + "/"
+        return headers
+    except Exception:
+        return base
+
+
+def _upstream_body(body: Dict[str, Any], acc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """官方桌面端请求体特征补齐（2026-10-23 新增）。
+
+    只补桌面端**固有**字段，不动客户端自己的语义字段：
+      · ``conversationId`` —— 官方桌面端每次真实对话都带（vendor:937 的
+        webchat2 真实请求形态）；缺失时用会话键派生一个稳定的，
+        让同一会话在上游眼里是同一台机器上的同一串对话。
+
+    刻意**不做**的事：不注入 _meta 埋点信封（那是 /v2/report 的东西，
+    chat/completions 带它是反效果），不改 temperature / max_tokens
+    （客户端传什么就是什么，改了会改变生成行为）。
+    """
+    if not isinstance(body, dict) or not DESKTOP_FIDELITY:
+        return body
+    try:
+        out = dict(body)
+        if not out.get("conversationId"):
+            # 用 machineId + 会话内容派生，保证同账号同会话稳定、跨账号不同。
+            fp = _account_fingerprint(acc)
+            seed = str((fp or {}).get("machineId") or (acc or {}).get("id") or "wb")
+            conv = hashlib.md5((seed + "|" + json.dumps(
+                out.get("messages") or [], ensure_ascii=False, sort_keys=True)[:512]
+            ).encode("utf-8", "ignore")).hexdigest()
+            out["conversationId"] = "wb-" + conv
+        return out
+    except Exception:
+        return body
+
 
 # 基础模型清单：官方别名与路由模式。这些不一定会出现在 usage 记录里，因此常驻。
 # 注意：真实可用模型由 discover_models() 从官方 usage 数据自动补全，不要在这里逐个手工添加新模型。
@@ -1745,7 +1876,21 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
     # 自动选号后登记粘性：下一次同会话请求会优先复用这个账号
     if session_key:
         try:
-            session_sticky.bind(session_key, str(_account_id(acc)))
+            # 2026-10-23：**不把处于冷却中的账号登记为粘性目标**。
+            #
+            # 此前这里是「选到谁就 bind 谁」，与重试路径的 unbind 组合出一个
+            # 自锁循环：
+            #   请求 → 选中被封账号 → 400/11128 → unbind
+            #        → 下个请求同 session_key 又选回它（池小时概率极高）
+            #        → 再 400 → 再 unbind → ……
+            # 表现为客户端窗口内 100% 失败，而池里其他账号明明是好的。
+            #
+            # 修法：bind 前先问 cooldown。正在冷却（渠道封锁 / 限流 / 熔断）
+            # 的账号不进粘性表 —— 它本来就不该被优先复用，让它继续参与
+            # 「按负载挑最闲」的普通轮询即可（filter_cooling 也会在候选阶段
+            # 优先排除它，只有全池都冷却时才回退选它）。
+            if not cooldown.is_cooling(str(_account_id(acc) or "")):
+                session_sticky.bind(session_key, str(_account_id(acc)))
         except Exception:
             pass
     return _remember_selection(acc, "auto")
@@ -1855,6 +2000,27 @@ def capability_snapshot() -> Dict[str, Any]:
 # 上游表达「这个账号用不了这个模型」的错误码/文案。
 # 11102 = 该模型仅对授权用户开放 / 服务信息不存在；其余为同类文案兜底。
 _MODEL_UNAVAILABLE_CODES = {"11102", "11103"}
+# 渠道拦截：400 + code=11128「Illegal API invocation from an unapproved channel」。
+#
+# 2026-10-23 实测（Mac DSH 全 400 工单）：该错误码此前**不在**可重试集合里，
+# 于是上游一次账号级渠道拦截会 100% 透传给客户端 —— Mac-mini 那一路
+# 4 次请求全 400、0 次成功，而同池其他账号同样形态全部 200。
+#
+# 为什么它可以换号重试（与 429/网络抖动有本质区别）：
+#   · cooldown.py::_classify 已把它归类为 "channel" 并施加 30 分钟账号冷却，
+#     源码注释明确写着「实测 11128 只落在单个账号，同期其他账号同形态全成功
+#     → 账号级拦截，换号即可」；
+#   · 既然账本层面认定「换号即可」，重试层面却把它当不可重试错误，
+#     两者自相矛盾 —— 一次拦截被放大成客户端窗口内 100% 失败。
+#
+# 阈值依据：与 _MODEL_UNAVAILABLE_CODES 共用同一条「模型不可用」重试路径，
+# 换号上限 = 候选账号数 + 1（见下方 max_attempts），全部失败才透传真实错误。
+_CHANNEL_BLOCKED_CODES = {"11128"}
+_CHANNEL_BLOCKED_PATTERNS = (
+    "unapproved channel",
+    "channel verification",
+    "illegal api invocation",
+)
 _MODEL_UNAVAILABLE_PATTERNS = (
     "service info not found",
     "is only available for authorized",
@@ -2117,6 +2283,37 @@ def _fmt_ts(ms: Optional[int]) -> str:
 
 
 risk_flag.set_alert_callback(_risk_flag_alert)
+
+
+def _looks_like_channel_blocked(status_code: int, body_text: str) -> bool:
+    """判断上游响应是否属于「该账号被渠道拦截」（可换号重试）。
+
+    2026-10-23 新增。判定依据与 cooldown.py::_classify 的 "channel" 分支
+    **完全一致**（同样看 400 + code=11128 + unapproved 字样），
+    保证「账本认为该冷却」与「转发认为该换号」不各说各话。
+
+    只匹配渠道语义，不把内容安全审查（11140）之类的 restricted 卷进来 ——
+    那类换号同样解决不了（账号级策略），重试只会放大故障。
+    """
+    if status_code != 400:
+        return False
+    raw = (body_text or "").strip()
+    if not raw:
+        return False
+    code = None
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            code = str(payload.get("code")) if payload.get("code") is not None else None
+            msg = str(payload.get("msg") or payload.get("message") or payload.get("error") or "")
+        else:
+            msg = raw
+    except Exception:
+        msg = raw
+    if code and code in _CHANNEL_BLOCKED_CODES:
+        return True
+    low = msg.lower()
+    return any(p in low for p in _CHANNEL_BLOCKED_PATTERNS)
 
 
 def _looks_like_model_unavailable(status_code: int, body_text: str) -> bool:
@@ -3485,7 +3682,12 @@ async def chat_completions(request: Request):
 
     body["stream"] = True
 
-    headers = _upstream_headers(token)
+    # 官方桌面端请求体特征补齐（conversationId 等，2026-10-23）
+    body = _upstream_body(body, acc)
+
+    # 官方桌面端完整头族（2026-10-23）：UA 之外补齐 X-Domain / X-Product /
+    # X-User-Id / X-Request-ID / Origin / Referer，全部取自该账号自己的持久化画像。
+    headers = _desktop_headers(token, acc, body)
 
     client = httpx.AsyncClient(timeout=180.0)
 
@@ -3547,7 +3749,12 @@ async def chat_completions(request: Request):
                 break
             body_text = (await res.aread()).decode("utf-8", "ignore")
             await res.aclose()
-            if not _looks_like_model_unavailable(res.status_code, body_text):
+            # 渠道拦截（400 code=11128）与「账号不支持该模型」一样可换号重试，
+            # 但两者要分开记账：前者是账号级渠道封锁，不该顺手把
+            # 「账号 × 模型」写进模型黑名单（那是模型维度的错，写错会让
+            # 这个账号名下所有模型都被误拉黑）。
+            _channel_blocked = _looks_like_channel_blocked(res.status_code, body_text)
+            if not (_channel_blocked or _looks_like_model_unavailable(res.status_code, body_text)):
                 # 失败记账：429/402/404 等让该账号进入冷却，后续自动轮询跳过它
                 _note_upstream_result(served_account_id, res.status_code, body_text,
                                       rid=rid, headers=res.headers)
@@ -3561,8 +3768,19 @@ async def chat_completions(request: Request):
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
-            # 学习 + 找下一个候选
-            _learn_model_unavailable(served_account_id, raw_model)
+            if _channel_blocked:
+                # 账号级渠道拦截：冷却账本 + 换号，不碰模型黑名单。
+                # cooldown 会按 "channel" 施加 30 分钟账号冷却（与账本口径一致），
+                # 于是后续自动轮询也会跳过它，不只这一条请求换号。
+                _note_upstream_result(served_account_id, res.status_code, body_text,
+                                      rid=rid, headers=res.headers)
+                try:
+                    session_sticky.unbind(session_key)
+                except Exception:
+                    pass
+            else:
+                # 学习 + 找下一个候选
+                _learn_model_unavailable(served_account_id, raw_model)
             _release_account_slot(served_account_id, input_tokens)
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or attempt >= max_attempts:
@@ -3576,7 +3794,7 @@ async def chat_completions(request: Request):
             tried_account_ids.add(served_account_id)
             variant = acc2.get("variant", "ai")
             base_url = _resolve_base_url(variant, target_model)
-            headers = _upstream_headers(acc2['access_token'])
+            headers = _desktop_headers(acc2['access_token'], acc2, body)
             _acquire_account_slot(served_account_id, input_tokens)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)
@@ -3671,7 +3889,9 @@ async def chat_completions(request: Request):
         while res.status_code != 200:
             body_text = (await res.aread()).decode("utf-8", "ignore")
             await res.aclose()
-            if not _looks_like_model_unavailable(res.status_code, body_text):
+            # 同流式路径：渠道拦截可换号，但不写模型黑名单（见上方注释）
+            _channel_blocked = _looks_like_channel_blocked(res.status_code, body_text)
+            if not (_channel_blocked or _looks_like_model_unavailable(res.status_code, body_text)):
                 # 失败记账（同流式路径）
                 _note_upstream_result(served_account_id, res.status_code, body_text,
                                       rid=rid, headers=res.headers)
@@ -3685,7 +3905,15 @@ async def chat_completions(request: Request):
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
-            _learn_model_unavailable(served_account_id, raw_model)
+            if _channel_blocked:
+                _note_upstream_result(served_account_id, res.status_code, body_text,
+                                      rid=rid, headers=res.headers)
+                try:
+                    session_sticky.unbind(session_key)
+                except Exception:
+                    pass
+            else:
+                _learn_model_unavailable(served_account_id, raw_model)
             _release_account_slot(served_account_id, input_tokens)
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or len(tried_account_ids) >= max_attempts:
@@ -3699,7 +3927,7 @@ async def chat_completions(request: Request):
             tried_account_ids.add(served_account_id)
             variant = acc2.get("variant", "ai")
             base_url = _resolve_base_url(variant, target_model)
-            headers = _upstream_headers(acc2['access_token'])
+            headers = _desktop_headers(acc2['access_token'], acc2, body)
             _acquire_account_slot(served_account_id, input_tokens)
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)

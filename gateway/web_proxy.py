@@ -480,14 +480,25 @@ COLLAPSE_SCRIPT = r"""
      里面的按钮实际落在 y+4。若 wrap 用 align-items:center，搜索框会比档位按钮
      高 4px（实测 delta=-4，一眼能看出不在一个水平线上）。
      这里 wrap 高 36px、padding-top 用 tablist 同样的 4px + align-items:flex-start，
-     搜索框与档位按钮**逐像素对齐**（实测中心线 delta=0px）。 */
+     搜索框与档位按钮**逐像素对齐**（实测中心线 delta=0px）。
+
+     2026-10-23 两处修正：
+       (1) 昼夜适配 —— background / box-shadow 原来是硬编码 #ffffff，
+           深色主题下就是一坨白补丁贴在暗色页面上（用户实测「白天和黑夜
+           搜索框未自动适配」）。改用官方同款 CSS 变量：--card / --border
+           / --popover 由主题切换时 html.dark 上的变量值决定，不写死颜色。
+           同时补一条 .dark 兜底：万一官方变量没覆盖到，也有暗色底可用。
+       (2) PC 端右端对齐 —— margin-left 由 8px 改为 auto。原来写死 8px，
+           搜索框只是「紧跟档位组右侧」，仍留在页面中部；档位容器本身
+           是 w-fit（不占满整行），auto 才会把搜索框推到行的最右端
+           （用户实测「PC 端同一行未自动对齐页面右端，目前在页面中间」）。 */
   .wb-acc-search-wrap {
     display: inline-flex;
     align-items: flex-start;
     height: 36px;                 /* 对齐官方切换组 h-9 */
     padding-top: 4px;             /* 与 tablist 的 padding:4px 完全一致 */
     box-sizing: border-box;
-    margin-left: 8px;
+    margin-left: auto;            /* 2026-10-23：推到档位行最右端 */
     flex: 0 0 auto;
     vertical-align: middle;
   }
@@ -502,17 +513,31 @@ COLLAPSE_SCRIPT = r"""
          tablist  bg=oklch(0.96 0.004 264)（muted） radius=12px padding=4px
          button  bg=oklch(1 0 0)（白）       radius=10px h=28px
                    font-size 12px / weight 500 / padding 0 12px
-       搜索框要做成「第三个档位按钮」的样子，所以用白底而不是 muted 底。 */
-    background: #ffffff;
+       搜索框要做成「第三个档位按钮」的样子，所以用白底而不是 muted 底。
+       ⚠️ 2026-10-23：底色改用 var(--card, …) 而不是硬编码 #ffffff ——
+       html.dark 下官方会把 --card 翻成暗色，硬编码白底在深色主题里
+       就是一块显眼的白补丁。 */
+    background: var(--card, #ffffff);
     border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
     border-radius: 10px;          /* 对齐官方按钮 rounded-md */
     padding: 0 10px;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
     transition: border-color 0.15s ease, background 0.15s ease;
   }
+  /* 深色主题兜底：官方变量缺失时也保证不是白底（不依赖 --card 一定存在）。 */
+  .dark .wb-acc-search-box,
+  html.dark .wb-acc-search-box {
+    background: var(--popover, #1f2430);
+    border-color: rgba(148, 163, 184, 0.28);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
   .wb-acc-search-box:focus-within {
     border-color: rgba(59, 130, 246, 0.65);
-    background: #ffffff;
+    background: var(--card, #ffffff);
+  }
+  .dark .wb-acc-search-box:focus-within,
+  html.dark .wb-acc-search-box:focus-within {
+    background: var(--popover, #1f2430);
   }
   .wb-acc-search-icon {
     width: 14px;
@@ -5208,6 +5233,16 @@ COLLAPSE_SCRIPT = r"""
   }
 
   function wbReplaceReloginErrorBlocks() {
+    // 2026-10-23：账号池缓存还没就绪时整轮跳过。
+    //
+    // 老代码在缓存为空时也会往下走，并对每张卡执行 else 分支的
+    // wbApplyReloginEnabled(card) —— 那会**主动解除**可能正确的灰化
+    // （比如上一轮刚判过 needsRelogin=true），也会让 header badge
+    // 的隐藏状态被抹掉。语义上「没有数据」不该等于「一切正常」。
+    //
+    // 真正的首次判定已移到 injectAccountPool 的 render() 里
+    // （数据到手后立刻跑），所以这里跳过不会漏判。
+    if (!wbPoolCache || !wbPoolCache.accounts) return;
     var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
     cards.forEach(function (card) {
       var sec = card.querySelector("section");
@@ -5266,7 +5301,17 @@ COLLAPSE_SCRIPT = r"""
   function wbCardNeedsRelogin(card) {
     if (!card) return false;
     var id = card.getAttribute("data-wb-acc");
-    if (!id || !wbPoolCache || !wbPoolCache.accounts) return false;
+    // 2026-10-23：缓存未就绪时**不再**直接返回 false 假装正常。
+    //
+    // 老逻辑 `!wbPoolCache → return false` 有个隐蔽后果：run() 首次同步
+    // 调用时缓存必然为空，于是所有卡片都被判为「正常」；等 fetch 回来
+    // render() 又不重跑判定（已修），中间态完全没人管。
+    //
+    // 现在返回 false 的语义收紧为「确实查过、确实不需要重登」——
+    // 缓存没来时由调用方（wbReplaceReloginErrorBlocks）跳过本轮，
+    // 等数据到了再判，不会把「不知道」当成「正常」。
+    if (!id) return false;
+    if (!wbPoolCache || !wbPoolCache.accounts) return false;
     var hit = null;
     wbPoolCache.accounts.forEach(function (a) {
       if (a && String(a.id) === String(id)) hit = a;
@@ -5728,7 +5773,15 @@ COLLAPSE_SCRIPT = r"""
     // 已在二进制里物理移除。这里注入容器自己的账号池控制：
     //   [启用/停用] 决定该账号是否参与 API 调用；[设为首选] 固定只用这一个账号。
     var cards = Array.prototype.slice.call(document.querySelectorAll("article"));
-    if (!cards.length) return;
+    if (!cards.length) {
+      // 2026-10-23：非账号管理页（积分统计 / 词元统计 / 设置…）走到这里。
+      // 顺手把上一页遗留的账号池缓存清掉 —— 它是闭包变量，SPA 切页不重建，
+      // 旧数据会让 wbCardNeedsRelogin / 排序 / 风控徽章在错误的页面上
+      // 拿旧账号状态做判断（灰卡片工单的另一半成因）。
+      wbPoolCache = null;
+      wbRemoveAccountSearch();
+      return;
+    }
 
     var pending = cards.filter(function (c) {
       return !c.querySelector(".wb-pool-bar") && c.querySelector("h3");
@@ -5786,6 +5839,18 @@ COLLAPSE_SCRIPT = r"""
         (card.querySelector("section") || card).appendChild(bar);
       });
       wbSortAccountCards();
+      // 2026-10-23：账号池数据**到达后**必须重跑一次需重登判定。
+      //
+      // 此前 run() 里 wbReplaceReloginErrorBlocks() 是同步跑的，那一刻
+      // wbPoolCache 可能还是上一次页面遗留的旧数据（SPA 切页不重建 JS
+      // 上下文，这个闭包变量跨页面存活）—— 旧缓存里若某账号
+      // needsRelogin=true，卡片当场被灰化；而 fetch 回来后 render()
+      // 只重建控制条，**不会**再跑一次判定，于是卡片永久停在灰态，
+      // 用户看到的就是「账号卡片完全灰色无法操作」（2026-10-23 工单，
+      // 其他设备报告）。线上实况佐证：refresh_state.json 不存在、
+      // accounts.json 里 0 个账号带 needs_relogin —— 没有任何账号
+      // 真需要重登，灰化纯属前端时序误判。
+      wbReplaceReloginErrorBlocks();
       wbInjectAccountSearch();
     }
 
@@ -6052,6 +6117,16 @@ COLLAPSE_SCRIPT = r"""
   // 需求 3：账号管理页面搜索框注入与即时过滤
   // 2026-10-21 位置微调（用户要求）：放到「国内版 / 国际版」档位切换的
   // **后方、同一行、右端对齐**，尺寸与切换按钮（h-7 / rounded-lg / text-xs）对齐。
+  // 2026-10-23 两处修正：
+  //   (1) PC 端右端对齐：wrap 的 margin-left 由 8px 改 auto（见 CSS 注释）；
+  //   (2) 页面守卫：只在**账号管理页**注入。此前只靠「页面上有 article」
+  //       判定，而积分统计页 / 词元统计页同样渲染 article 卡片 ——
+  //       用户实测「积分统计页面也出现搜索栏，我说了只需要在账号统计页面
+  //       出现即可」。
+  //       判据用 hash + path 双条件（与上方 wbResolveView 的路由规则一致）：
+  //         · hash === "#/accounts"        → 账号管理（明确后缀路由）
+  //         · path === "/" 且无 hash       → 官方根页 = 账号管理的背后页面
+  //       其余一律不注入，安静退出（与其它注入函数「坏了也别炸」同风格）。
   // 官方 DOM 实测：
   //   div.flex.items-start.justify-between.gap-4      ← 页头行
   //     └ div.min-w-0
@@ -6061,6 +6136,20 @@ COLLAPSE_SCRIPT = r"""
   // 定位走「文本 + 结构」双判据，不依赖易变的 class 名：
   //   1. 先找 aria-label 含「档位」的 tablist（最稳，官方自己标了语义）；
   //   2. 找不到再退回到「含 国内版/国际版 两个按钮」的容器。
+  function wbIsAccountsPage() {
+    // 与 wbPath() 同样的非浏览器兜底：Node 环境里没有 location。
+    var path = "", hash = "";
+    try {
+      path = (typeof location !== "undefined" && location.pathname) || "";
+      hash = (typeof location !== "undefined" && location.hash) || "";
+    } catch (e) {}
+    if (hash === "#/accounts") return true;
+    // 官方根页（无 hash 后缀）就是账号管理页的背后页面。
+    // 积分统计 / 词元统计的 path 是 /credit-stats / /token-stats，天然被排除。
+    if ((path === "/" || path === "") && (hash === "" || hash === "#/" || hash === "#")) return true;
+    return false;
+  }
+
   function wbFindVariantSwitchGroup() {
     var groups = document.querySelectorAll('[role="tablist"], [role="radiogroup"]');
     for (var i = 0; i < groups.length; i++) {
@@ -6075,12 +6164,66 @@ COLLAPSE_SCRIPT = r"""
     return null;
   }
 
+  /* 撤掉账号管理页搜索栏（2026-10-23 新增）。
+     两个调用场景：
+       1. SPA 切到非账号页时（积分统计 / 词元统计 / 设置…）—— 只靠
+          「不注入」不够，document 不重建，上次插的节点会一直留着；
+       2. 档位容器结构找不到时（官方改版）—— 同样要收干净，不留孤儿节点。
+     顺带做两件收尾：
+       · 把被搜索过滤隐藏的卡片全部放出来（否则带着 display:none 切走
+         再切回来，账号会「少了一批」—— 过滤状态比 DOM 活得久）；
+       · 清掉档位容器的 wbSearchRow 标记与内联样式，让下次进来时重新
+         套上 flex 布局（不清的话新节点不会获得横向布局，搜索框掉行）。 */
+  function wbRemoveAccountSearch() {
+    var bar = document.getElementById("wb-account-search-bar");
+    if (bar) {
+      if (bar.parentNode) bar.parentNode.removeChild(bar);
+    }
+    // 复位被过滤隐藏的账号卡片
+    try {
+      var cards = document.querySelectorAll("article");
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i].style.display === "none") cards[i].style.display = "";
+      }
+    } catch (e) {}
+    // 清掉档位容器上为搜索栏加的横向布局标记与内联样式
+    try {
+      var rows = document.querySelectorAll('[data-wb-search-row="1"]');
+      for (var j = 0; j < rows.length; j++) {
+        var r = rows[j];
+        delete r.dataset.wbSearchRow;
+        r.style.display = "";
+        r.style.flexDirection = "";
+        r.style.alignItems = "";
+        r.style.justifyContent = "";
+        r.style.flexWrap = "";
+        r.style.gap = "";
+        r.style.width = "";
+      }
+    } catch (e2) {}
+  }
+
   function wbInjectAccountSearch() {
     // 避免重复注入
     if (document.getElementById("wb-account-search-bar")) return;
 
+    // 2026-10-23：只在账号管理页注入。
+    // 积分统计 / 词元统计页同样有 article 卡片，此前会把搜索框也插上去
+    // （用户明确「只需要在账号统计页面出现即可」）。
+    if (!wbIsAccountsPage()) {
+      // 非账号页：把上一次注入留下的搜索栏撤掉再退出。
+      // SPA 切页不重建 document，只靠 return 会让搜索栏残留在别的页上
+      // （表现为「积分统计页也有搜索栏」的另一半成因）。
+      wbRemoveAccountSearch();
+      return;
+    }
+
     var group = wbFindVariantSwitchGroup();
-    if (!group || !group.parentElement) return;   // 不在这页 / 结构变了 → 安静退出
+    if (!group || !group.parentElement) {
+      // 不在这页 / 结构变了 → 安静退出（同样清一次，防残留）
+      wbRemoveAccountSearch();
+      return;
+    }
 
     // 档位容器（官方 flex flex-col mt-4 gap-0）：改成横向 + 两端对齐，
     // 切换组在左、搜索框在右 —— 同一行右端对齐。
@@ -6097,6 +6240,9 @@ COLLAPSE_SCRIPT = r"""
       // ⚠️ 官方容器是 flex-col（mt-4 gap-0），直接改横向后里面的
       // 「标题 h2 + tablist」会被 space-between 甩到两端。
       // 所以只把**切换组所在的那一层**改横向，标题保持独立一行。
+      // 同时把该层的 dataset 标记一起清掉由 wbRemoveAccountSearch 负责
+      // （否则下次回来时 row.dataset.wbSearchRow 仍是 "1"，
+      //  新节点不会重新套 flex 样式，搜索框会掉到下一行）。
     }
 
     var searchWrap = document.createElement("div");
@@ -12243,11 +12389,21 @@ async def api_keys_config(request: Request, user: "str" = Depends(require_user))
 
 
 @app.post("/api/gateway-selftest")
-async def gateway_selftest(user: "str" = Depends(require_user)):
+async def gateway_selftest(request: Request, user: "str" = Depends(require_user)):
     """从容器内实测一次网关连通性。
 
     浏览器无法直接访问 18091（跨源且网关无 CORS），所以自检必须由代理侧发起：
     loopback 请求免密钥校验，正好验证「网关活着 + 模型清单可用 + 密钥配置自洽」。
+
+    2026-10-23 修复：签名此前漏了 ``request`` 参数，却在第三项
+    （密钥配置自洽性）里把它传给 ``_gw_headers(request)`` 去透传登录态
+    Cookie —— 于是自检第三步必抛 ``NameError: name 'request' is not defined``，
+    被下面的 except 捕获后渲染成一行红字。前两步不依赖 request，所以
+    ​一直显示绿，故障长这样：
+       ✓ 网关健康检查 /health — HTTP 200 · 39 个模型 · 密钥校验已开启
+       ✓ 模型清单 /v1/models — HTTP 200 · 39 个模型
+       ✗ 密钥配置自洽性 — name 'request' is not defined
+    加上参数即修复（FastAPI 按类型注解注入 Request，与同文件其它代理端点一致）。
     """
     steps = []
     out = {"steps": steps}
