@@ -3753,11 +3753,20 @@ async def chat_completions(request: Request):
             # 但两者要分开记账：前者是账号级渠道封锁，不该顺手把
             # 「账号 × 模型」写进模型黑名单（那是模型维度的错，写错会让
             # 这个账号名下所有模型都被误拉黑）。
+            #
+            # ⚠️ 记账（_note_upstream_result）刻意只走**一处**：
+            # 契约测试把「转发路径带响应头」的调用点在 main.py 里锁死为 2 次
+            # （流式 + 非流式各一）。渠道拦截若另起一处记账，计数变多会让它直接红。
+            # 所以这里合并成单次调用，渠道语义由账本内部按 code=11128
+            # 自行归类（cooldown._classify 的 channel 分支）。
             _channel_blocked = _looks_like_channel_blocked(res.status_code, body_text)
-            if not (_channel_blocked or _looks_like_model_unavailable(res.status_code, body_text)):
-                # 失败记账：429/402/404 等让该账号进入冷却，后续自动轮询跳过它
+            _model_unavailable = _looks_like_model_unavailable(res.status_code, body_text)
+            # 失败记账：429/402/404 让该账号进冷却；渠道拦截按 "channel" 冷却 30m。
+            # 只有「模型不支持」不进账本（那是模型维度，由下方学习拉黑处理）。
+            if not _model_unavailable:
                 _note_upstream_result(served_account_id, res.status_code, body_text,
                                       rid=rid, headers=res.headers)
+            if not (_channel_blocked or _model_unavailable):
                 # 失败即解绑：这个号已经证明不可用，下次换号，别把会话继续钉在它身上
                 try:
                     session_sticky.unbind(session_key)
@@ -3768,19 +3777,15 @@ async def chat_completions(request: Request):
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
-            if _channel_blocked:
-                # 账号级渠道拦截：冷却账本 + 换号，不碰模型黑名单。
-                # cooldown 会按 "channel" 施加 30 分钟账号冷却（与账本口径一致），
-                # 于是后续自动轮询也会跳过它，不只这一条请求换号。
-                _note_upstream_result(served_account_id, res.status_code, body_text,
-                                      rid=rid, headers=res.headers)
+            if not _channel_blocked:
+                # 学习 + 找下一个候选（仅模型不支持路径；渠道拦截不碰黑名单）
+                _learn_model_unavailable(served_account_id, raw_model)
+            else:
+                # 渠道拦截同样要解绑：封着的号不该继续粘在会话上
                 try:
                     session_sticky.unbind(session_key)
                 except Exception:
                     pass
-            else:
-                # 学习 + 找下一个候选
-                _learn_model_unavailable(served_account_id, raw_model)
             _release_account_slot(served_account_id, input_tokens)
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or attempt >= max_attempts:
@@ -3889,12 +3894,15 @@ async def chat_completions(request: Request):
         while res.status_code != 200:
             body_text = (await res.aread()).decode("utf-8", "ignore")
             await res.aclose()
-            # 同流式路径：渠道拦截可换号，但不写模型黑名单（见上方注释）
+            # 同流式路径：渠道拦截可换号，但不写模型黑名单（见上方注释）。
+            # 记账同样只走一处（守住响应头透传的调用点计数契约）。
             _channel_blocked = _looks_like_channel_blocked(res.status_code, body_text)
-            if not (_channel_blocked or _looks_like_model_unavailable(res.status_code, body_text)):
+            _model_unavailable = _looks_like_model_unavailable(res.status_code, body_text)
+            if not _model_unavailable:
                 # 失败记账（同流式路径）
                 _note_upstream_result(served_account_id, res.status_code, body_text,
                                       rid=rid, headers=res.headers)
+            if not (_channel_blocked or _model_unavailable):
                 # 失败即解绑（同流式路径）
                 try:
                     session_sticky.unbind(session_key)
@@ -3905,15 +3913,13 @@ async def chat_completions(request: Request):
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
-            if _channel_blocked:
-                _note_upstream_result(served_account_id, res.status_code, body_text,
-                                      rid=rid, headers=res.headers)
+            if not _channel_blocked:
+                _learn_model_unavailable(served_account_id, raw_model)
+            else:
                 try:
                     session_sticky.unbind(session_key)
                 except Exception:
                     pass
-            else:
-                _learn_model_unavailable(served_account_id, raw_model)
             _release_account_slot(served_account_id, input_tokens)
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or len(tried_account_ids) >= max_attempts:

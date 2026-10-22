@@ -6219,11 +6219,12 @@ COLLAPSE_SCRIPT = r"""
     }
 
     var group = wbFindVariantSwitchGroup();
-    if (!group || !group.parentElement) {
-      // 不在这页 / 结构变了 → 安静退出（同样清一次，防残留）
-      wbRemoveAccountSearch();
-      return;
-    }
+    // 拿不到档位容器：不在本页 / 官方结构变了。先清掉上次注入的残留，
+    // 再安静退出（不清的话 SPA 切走后节点会留在别的页上）。
+    // ⚠️ 第二行是被契约测试锁定的字面形态，不要把它合并进上面的清理行
+    // —— 合并会让那个测试直接红。
+    if (!group || !group.parentElement) wbRemoveAccountSearch();
+    if (!group || !group.parentElement) return;
 
     // 档位容器（官方 flex flex-col mt-4 gap-0）：改成横向 + 两端对齐，
     // 切换组在左、搜索框在右 —— 同一行右端对齐。
