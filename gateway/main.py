@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.23"
+VERSION_DEFAULT = "1.0.24"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -3619,6 +3619,9 @@ async def chat_completions(request: Request):
         api_keys.mark_used(gate["keyId"])
 
     body = await request.json()
+
+
+
 
     # 请求级账号选择：显式 header/body 优先，其次按 account-pool 配置自动分配。
     # 这让多个并发请求可以并行落到多个账号，而不再全部使用 activeAccountId。

@@ -6136,18 +6136,29 @@ COLLAPSE_SCRIPT = r"""
   // 定位走「文本 + 结构」双判据，不依赖易变的 class 名：
   //   1. 先找 aria-label 含「档位」的 tablist（最稳，官方自己标了语义）；
   //   2. 找不到再退回到「含 国内版/国际版 两个按钮」的容器。
+  /* 2026-10-23 CDP 实测修正：只在**账号管理页**注入。
+
+     原实现的错误（用户实测「积分统计页面也出现搜索栏」的同类回归）：
+        if ((path === "/" || path === "") && (hash === "" || hash === "#/" || hash === "#")) return true;
+     把「根路径 + 无 hash」当成账号管理页。但官方路由规则（见本文件
+     wbResolveView）写得很清楚：
+       · path === "/" 且 hash === "" → **数据总览**（mode = "overview"）
+       · hash === "#/accounts"        → 账号管理（mode = "accounts"）
+     而账号管理的背后页面正是官方 "/"，SPA 切到总览时它**仍挂在 DOM 里**
+     （只是被总览浮层盖住），档位 tablist 也一并存在 —— 于是那条判定
+     让搜索栏被插到总览页上。CDP 实测：访问 http://…:18090/（无 hash）
+     #wb-account-search-bar count=1、输入框 visible=false（被浮层盖住）；
+     而 #/accounts 下 count=1、visible=true。
+
+     修正：**只认 #/accounts 这一条判据**。根路径无 hash 一律不注入，
+     积分统计 / 词元统计 / 数据总览天然全部排除。 */
   function wbIsAccountsPage() {
     // 与 wbPath() 同样的非浏览器兜底：Node 环境里没有 location。
-    var path = "", hash = "";
+    var hash = "";
     try {
-      path = (typeof location !== "undefined" && location.pathname) || "";
       hash = (typeof location !== "undefined" && location.hash) || "";
     } catch (e) {}
-    if (hash === "#/accounts") return true;
-    // 官方根页（无 hash 后缀）就是账号管理页的背后页面。
-    // 积分统计 / 词元统计的 path 是 /credit-stats / /token-stats，天然被排除。
-    if ((path === "/" || path === "") && (hash === "" || hash === "#/" || hash === "#")) return true;
-    return false;
+    return hash === "#/accounts";
   }
 
   function wbFindVariantSwitchGroup() {

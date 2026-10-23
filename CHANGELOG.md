@@ -31,6 +31,39 @@
 
 ---
 
+## [v1.0.24] - 2026-10-23
+
+<!-- summary: 修搜索栏误注入数据总览页 —— 页面守卫误判「根路径无 hash」为账号页，官方路由里那是总览；CDP 实证修复 -->
+
+### 修复
+
+- **搜索栏误出现在数据总览页**：
+  - `wbIsAccountsPage()` 原先把「`path === "/"` 且无 hash」判为账号管理页，
+    但官方路由规则（同文件 `wbResolveView`）明确写着那种情形是
+    **数据总览**（`mode = "overview"`），账号管理只在 `#/accounts`。
+  - 账号管理的背后页面正是官方 `/`，SPA 切到总览时它**仍挂在 DOM 里**
+    （只被总览浮层盖住），档位 tablist 也一并存在 —— 于是旧判定把搜索栏
+    插到了总览页上。
+  - **CDP 实测（修复前）**：访问 `http://192.168.31.2:18090/`（无 hash），
+    `#wb-account-search-bar` count=1、输入框 `visible=false`（被浮层盖住）；
+    `#/accounts` 下 count=1、`visible=true`。
+  - **修复**：守卫只认 `#/accounts` 一条判据，根路径无 hash 一律不注入。
+  - **CDP 实测（修复后）**：总览页 count=**0**；账号页 count=1、
+    `visible=**true**`。
+
+### 变更
+
+- 搜索栏昼夜适配与 PC 右端对齐经 CDP + playwright 实证（`computed style`
+  与 `getBoundingClientRect` 双重验证）：
+  - 浅色底 `oklch(1 0 0)` → 深色底 `oklch(0.279 0.041 260.031)`，
+    **底色随主题变化**（`var(--card)` + `.dark` 兜底生效）；
+  - 档位行 `display:flex` + `justify-content:space-between` + `width:100%`，
+    搜索栏右端 470.3 与档位行右端 470.3 **重合（gap=0）**，已贴右端。
+- 移除排查期间临时注入 `chat_completions` 的诊断日志（承诺「定位后删除」），
+  计时复验新产生 diag 行数为 0。
+
+---
+
 ## [v1.0.23] - 2026-10-23
 
 <!-- summary: 修积分统计页「官方用量暂不可用」—— 重建 officialUsage 时漏改 status，前端准入校验把整份实时数据丢弃 -->
@@ -5496,7 +5529,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.23...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.24...HEAD
+[v1.0.24]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.23...v1.0.24
 [v1.0.23]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.22...v1.0.23
 [v1.0.22]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.21...v1.0.22
 [v1.0.21]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.20...v1.0.21
