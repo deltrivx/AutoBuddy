@@ -773,15 +773,84 @@ _WEBUI_BASE = "http://127.0.0.1:18090"
 _GW_BASE = "http://127.0.0.1:18091"
 
 
+# ── 内部服务会话（v1.0.27 修复企微交互 401）──────────────────────────────
+# 背景：/api/wb-daily/*、/api/account-pool、/api/gateway-info、/api/credits/stats
+# 等接口挂在会话门后，而 notify.py 跑在企微回调上下文里没有会话，
+# 导致交互命令全部回「数据获取失败」（实测每条回调后紧跟一串 401）。
+# 解法：用容器内 AUTH_USERNAME/AUTH_PASSWORD 登录取 Cookie 缓存复用，
+# 仅本容器 loopback 使用，不对外暴露；遇 401/403 自动重登重试一次。
+import os as _os
+import urllib.error as _urlerr
+import http.cookiejar as _cookiejar
+
+_SVC_COOKIE: list = []          # 缓存的会话 Cookie 列表
+_SVC_LAST_TRY: list = [0.0]     # 上次尝试登录的时间，避免每次失败都重登
+
+
+def _svc_login() -> bool:
+    """登录取 Cookie；成功返回 True。"""
+    import time as _t
+    import urllib.request as _uq
+    user = _os.environ.get("AUTH_USERNAME", "")
+    pw = _os.environ.get("AUTH_PASSWORD", "")
+    if not (user and pw):
+        return False
+    # 5 秒内不重复尝试，避免失败风暴
+    if _t.time() - _SVC_LAST_TRY[0] < 5.0:
+        return False
+    _SVC_LAST_TRY[0] = _t.time()
+    try:
+        jar = _cookiejar.CookieJar()
+        opener = _uq.build_opener(_uq.HTTPCookieProcessor(jar))
+        payload = json.dumps({"username": user, "password": pw}).encode()
+        req = _uq.Request(_WEBUI_BASE + "/api/auth/login", data=payload,
+                          headers={"Content-Type": "application/json"},
+                          method="POST")
+        with opener.open(req, timeout=10) as r:
+            json.loads(r.read().decode("utf-8", "replace"))
+        cookies = [c.name + "=" + c.value for c in jar]
+        if cookies:
+            _SVC_COOKIE[:] = cookies
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _http_json(url: str, timeout: float = 8.0, method: str = "GET",
                body: Optional[bytes] = None) -> Any:
-    """同步取本地 JSON（本模块跑在容器内，127.0.0.1 直连即可）。"""
-    import urllib.request
-    req = urllib.request.Request(url, data=body, method=method)
-    if body:
-        req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
+    """同步取本地 JSON（本模块跑在容器内，127.0.0.1 直连即可）。
+
+    带内部服务会话：首次或遇 401/403 时自动登录取 Cookie 后重试。
+    """
+    import urllib.request as _uq
+
+    def _once(with_cookie: bool):
+        req = _uq.Request(url, data=body, method=method)
+        if body:
+            req.add_header("Content-Type", "application/json")
+        if with_cookie and _SVC_COOKIE:
+            req.add_header("Cookie", "; ".join(_SVC_COOKIE))
+        with _uq.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+
+    # 第一次：有缓存 Cookie 就带，没有就先登录
+    if not _SVC_COOKIE:
+        _svc_login()
+    try:
+        return _once(bool(_SVC_COOKIE))
+    except _urlerr.HTTPError as e:
+        if e.code in (401, 403):
+            # 会话失效：重新登录再试一次
+            _SVC_COOKIE[:] = []
+            if _svc_login():
+                try:
+                    return _once(True)
+                except Exception:
+                    pass
+        raise
+    except Exception:
+        raise
 
 
 def _cmd_help() -> str:

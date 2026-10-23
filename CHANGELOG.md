@@ -31,6 +31,17 @@
 
 ---
 
+## [v1.0.27] - 2026-10-24
+
+### 修复
+
+- **企微交互命令全部回「数据获取失败」**：`gateway/notify.py` 的 `_http_json` 调
+  `/api/wb-daily/*`、`/api/account-pool`、`/api/gateway-info`、`/api/credits/stats`
+  等接口时不带任何凭据，而这些接口挂在会话门后，恒返回 401，交互命令因此全部落空。
+  现在首次调用或遇 401/403 时，用容器内 `AUTH_USERNAME`/`AUTH_PASSWORD` 登录取
+  Cookie 缓存复用，仅本容器 loopback 使用，不对外暴露；5 秒内不重复尝试，避免失败风暴。
+
+
 ## [v1.0.26] - 2026-10-26
 
 <!-- summary: 修整轮任务状态判定误用国际版账号条件，导致账号池全为国内版时每一轮都被误判 failed -->
