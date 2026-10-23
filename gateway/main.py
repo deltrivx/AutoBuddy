@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.24"
+VERSION_DEFAULT = "1.0.25"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -289,6 +289,13 @@ UPSTREAM_UA = os.getenv(
 DESKTOP_FIDELITY = (os.getenv("AB_DESKTOP_FIDELITY", "1") or "1").strip() not in ("0", "false", "no")
 DESKTOP_IDE_VERSION = os.getenv("AB_DESKTOP_IDE_VERSION", "5.5.6")
 DESKTOP_CLI_VERSION = os.getenv("AB_DESKTOP_CLI_VERSION", "2.137.1")
+# X-Client-Platform 取值。官方桌面端二进制里确有 X-Client-Platform 这个头
+# （strings 命中），但**未露出取值**；vendor 的小程序口径给出同族头范式
+#   X-Client-Platform: miniprogram / mp-weixin
+#   X-Client-Product:  workbuddy-mp
+#   X-Client-Version:  2.4.0
+# 桌面端按同范式取 desktop。属推导值，故开放环境变量覆盖。
+DESKTOP_CLIENT_PLATFORM = os.getenv("AB_DESKTOP_CLIENT_PLATFORM", "desktop")
 
 
 def _account_fingerprint(acc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -310,6 +317,36 @@ def _account_fingerprint(acc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         return fp if isinstance(fp, dict) else {}
     except Exception:
         return {}
+
+
+def _domain_host(base_url: Optional[str]) -> str:
+    """从 base_url 里抠出**纯域名**（无 scheme、无路径、无端口）。
+
+    为什么需要它：官方桌面端 chat 域的 X-Domain 是纯域名
+    （vendor/workbuddy_daily.py:1212 "X-Domain": "copilot.tencent.com"），
+    而 CN_BASE_URL 是 "https://copilot.tencent.com/v2" 这种带 scheme+路径的
+    形态。二者不能混用 —— X-Domain 是渠道标识，Origin 才是完整源。
+
+    抠不出来（空串 / 纯 IP / 异常形态）时返回空串，由调用方回退默认值。
+    """
+    if not base_url:
+        return ""
+    try:
+        s = str(base_url).strip()
+        if "://" in s:
+            s = s.split("://", 1)[1]
+        # 去掉路径与查询串
+        s = s.split("/", 1)[0]
+        s = s.split("?", 1)[0]
+        # 去掉端口
+        if ":" in s:
+            host, _, port = s.rpartition(":")
+            # 只在端口确实是数字时才剥，避免误伤 IPv6
+            if host and port.isdigit():
+                s = host
+        return s.strip()
+    except Exception:
+        return ""
 
 
 def _desktop_ua(fp: Dict[str, Any]) -> str:
@@ -357,21 +394,59 @@ def _desktop_headers(token: str, acc: Optional[Dict[str, Any]] = None,
         uid = str(acc.get("uid") or acc.get("id") or "") if isinstance(acc, dict) else ""
         session_id = str(fp.get("sessionId") or "")
         # X-Request-ID：官方桌面端是 sessionId + 毫秒时间戳尾段
-        # （见 vendor/workbuddy_daily.py:3142）。
+        # （见 vendor/workbuddy_daily.py:3144）。
         rid = (session_id or "wb") + str(int(time.time() * 1000) % 1000000)
-        # X-Domain / X-Product：官方桌面域固定值（vendor:3141-3142）。
-        domain = str(CN_BASE_URL.rsplit("/v2", 1)[0]) if CN_BASE_URL else "https://copilot.tencent.com"
+        # 2026-10-23 v1.0.25：区分「域」与「Origin」两种取值。
+        #
+        # 旧代码把 X-Domain 直接写成 https://copilot.tencent.com（完整 URL），
+        # 而官方桌面端的 X-Domain 是**纯域名**：
+        #   vendor/workbuddy_daily.py:1212  "X-Domain": "copilot.tencent.com"
+        #   vendor/workbuddy_daily.py:3143  "X-Domain": DESKTOP_BASE  ← 那行是
+        #     report_desktop_events 的写法，但它的 DESKTOP_BASE 也确实是完整 URL，
+        #     属于桌面域上报口径；chat 域（t_daily_activity）用纯域名，
+        #     与 Origin/Referer 分工明确：
+        #       X-Domain      = 纯域名（渠道标识，无 scheme、无路径）
+        #       Origin        = https://copilot.tencent.com
+        #       Referer       = https://copilot.tencent.com/
+        # 网关转发的是 /v2/chat/completions，属 chat 域，故按纯域名口径发。
+        #
+        # _domain_host() 从 CN_BASE_URL 里抠纯域名，环境变量改域时自动跟随，
+        # 不写死。
+        host = _domain_host(CN_BASE_URL) or "copilot.tencent.com"
+        origin = "https://" + host
+        ide_version = str(fp.get("ideVersion") or DESKTOP_IDE_VERSION)
         headers = dict(base)
         headers["User-Agent"] = _desktop_ua(fp)
-        headers["X-Domain"] = domain
+        headers["X-Domain"] = host
         headers["X-Product"] = "SaaS"
         headers["X-Request-ID"] = rid
+        # 2026-10-23 v1.0.25：Content-Type 补 charset 参数。
+        # 官方桌面端发的是 application/json;charset=UTF-8
+        # （vendor/workbuddy_daily.py:3142）。httpx 对 body 用 json= 序列化时
+        # 默认只写 application/json；这里显式覆盖，与官方字节级一致。
+        headers["Content-Type"] = "application/json;charset=UTF-8"
+        # 2026-10-23 v1.0.25：补 X-Client-* 三件套。
+        # 依据：引擎二进制里有 X-Client-Platform 字串（strings 命中 1 次）；
+        # vendor 的小程序口径给出同族头的取值范式
+        #   X-Client-Platform: miniprogram / mp-weixin
+        #   X-Client-Product:  workbuddy-mp
+        #   X-Client-Version:  2.4.0
+        # 桌面端按同范式推导：platform=desktop、product=workbuddy-desktop
+        # （workbuddy-desktop 不是猜的 —— 桌面指纹 envelope 的 extName 正是它，
+        #  见 vendor/workbuddy_daily.py::desktop_fingerprint）、
+        # version=该账号画像的 ideVersion。
+        # ⚠️ 平台名 desktop 属**范式推导**（二进制只证明头存在、未露出取值），
+        # 已用环境变量 AB_DESKTOP_CLIENT_PLATFORM 开放覆盖。
+        headers["X-Client-Platform"] = DESKTOP_CLIENT_PLATFORM
+        headers["X-Client-Product"] = str(fp.get("extName") or "workbuddy-desktop")
+        headers["X-Client-Version"] = ide_version
         if uid:
             headers["X-User-Id"] = uid
         # Origin / Referer 只在能确定域时才补（AI 域账号的域不同，不硬套国内域）。
+        # 二者用带 scheme 的完整源，与 X-Domain 的纯域名分工不混。
         if CN_BASE_URL and str(CN_BASE_URL) in str(_resolve_base_url("cn", None)):
-            headers["Origin"] = domain
-            headers["Referer"] = domain + "/"
+            headers["Origin"] = origin
+            headers["Referer"] = origin + "/"
         return headers
     except Exception:
         return base

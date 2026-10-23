@@ -31,6 +31,31 @@
 
 ---
 
+## [v1.0.25] - 2026-10-23
+
+<!-- summary: 补全官方桌面端请求特征 —— X-Domain 改纯域名、Content-Type 补 charset、新增 X-Client-* 三件套，并加 _domain_host 辅助函数 -->
+
+### 变更
+
+- **官方桌面端请求特征补全**（v1.0.22 引入后的偏差修正）：
+  - `X-Domain` 由完整 URL 改为**纯域名**（`copilot.tencent.com`）。
+    依据 `vendor/workbuddy_daily.py:1212`（chat 域口径）；`Origin` /
+    `Referer` 仍用带 scheme 的完整源，二者分工不混。
+  - `Content-Type` 补 `charset=UTF-8` 参数，对齐官方桌面端
+    （`vendor/workbuddy_daily.py:3142` 的 `application/json;charset=UTF-8`）。
+  - 新增 `X-Client-Platform` / `X-Client-Product` / `X-Client-Version`
+    三件套：引擎二进制中确有 `X-Client-Platform` 字串（strings 命中），
+    vendor 小程序口径给出同族头取值范式（`miniprogram` / `workbuddy-mp` /
+    `2.4.0`），桌面端按同范式取 `desktop` / `workbuddy-desktop` /
+    账号画像的 `ideVersion`。
+  - 新增 `_domain_host()` 辅助函数：从 `CN_BASE_URL` 抠纯域名（自动剥
+    scheme / 路径 / 查询串 / 端口），环境变量改域时自动跟随，不写死。
+    单元测试 9/9 通过（含 IPv6 误伤防护、空值、异常形态）。
+  - 平台名 `desktop` 属**范式推导**（二进制只证明头存在、未露出取值），
+    已开放环境变量 `AB_DESKTOP_CLIENT_PLATFORM` 覆盖。
+
+---
+
 ## [v1.0.24] - 2026-10-23
 
 <!-- summary: 修搜索栏误注入数据总览页 —— 页面守卫误判「根路径无 hash」为账号页，官方路由里那是总览；CDP 实证修复 -->
@@ -5529,7 +5554,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.24...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.25...HEAD
+[v1.0.25]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.24...v1.0.25
 [v1.0.24]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.23...v1.0.24
 [v1.0.23]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.22...v1.0.23
 [v1.0.22]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.21...v1.0.22
