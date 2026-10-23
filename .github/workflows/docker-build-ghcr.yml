@@ -100,7 +100,12 @@ jobs:
           # 后者**不剥 v**（源码 procRefTag() 只做 replace(/^refs\/tags\//)，
           # 官方文档表格也是 refs/tags/v1.2.3 → v1.2.3）。
           # 2026-10-21 实测踩过：v2026.10.21.03 被推成了 v2026.10.21.03。
-          # type=match 抓组后，v1.0.11 → 1.0.11，再由 semver 规则补 1.0。
+          # type=match 抓组后，v1.0.11 → 1.0.11，再由 semver 规则补 1.0.11。
+          # 注意：只保留 {{version}}，不保留 {{major}}.{{minor}} 浮动 tag。
+          # 2026-10-23 陛下指出：同一个 digest 同时挂 1.0 和 1.0.27 两个 tag，
+          # 看起来像两个版本，实际是同一个镜像 —— 浮动 tag 让版本号指代不清。
+          # 需要锁定版本就用 :1.0.27，想跟进最新就用 :latest，二者语义明确。
+          # 已存在的 7 个浮动 tag（0.1~0.9 与 1.0）已单独删除。
           # flavor latest=false：关掉 metadata-action 的 latest=auto。
           #
           # latest=auto（默认）的语义是「只要产出了 semver 形态的标签，就额外再推
@@ -120,7 +125,6 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
             type=match,pattern=v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
