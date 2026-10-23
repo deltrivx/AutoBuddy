@@ -1,0 +1,90 @@
+name: Release
+
+# 发版自动化：tag 推送时自动建 GitHub Release 页面。
+#
+# 背景（2026-10-23 教训）：历史上 v0.9.83/84/85/87/89 与 v1.0.26 共 7 个版本
+# 有 tag、有 CHANGELOG 段、有 RELEASE_NOTES 文件，却漏建 Release 页面对象，
+# 导致 Releases 历史断裂、CHANGELOG 里的 compare 链接指向空白。靠人工跑
+# gen_releases.py / 打 tag / 建 Release 三步，漏一步就出问题。
+#
+# 本 workflow 把「建 Release」这一步自动化：tag 推送即建，body 直接取
+# docs/release-notes/RELEASE_NOTES_<tag>.md，与 _test_version_sync.py 校验的
+# 「Release body 与 NOTES 逐字一致」口径相同。
+#
+# 与 docker-build-ghcr.yml 的分工：
+#   那个负责构建镜像（push tag / release published 都触发）
+#   这个只负责建 Release 页面（只在 push tag 时触发）
+# 两者都监听 tag，但职责不重叠，不会互相干扰。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补建 Release 的 tag（形如 v1.0.26）'
+        required: true
+        type: string
+
+permissions:
+  contents: write   # 建 Release 需要
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # 解析目标 tag：push tag 时取 GITHUB_REF，手动触发时取 inputs.tag
+      - name: Resolve tag
+        id: t
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "目标 tag: $TAG"
+
+      - name: Check RELEASE_NOTES exists
+        id: notes
+        run: |
+          set -euo pipefail
+          F="docs/release-notes/RELEASE_NOTES_${{ steps.t.outputs.tag }}.md"
+          if [ ! -f "$F" ]; then
+            echo "::error::找不到 $F —— 发版前必须先写 RELEASE_NOTES（_test_version_sync.py 也会校验它存在）"
+            exit 1
+          fi
+          echo "found=$F" >> "$GITHUB_OUTPUT"
+          echo "notes: $F ($(wc -c < "$F") bytes)"
+
+      # 幂等：Release 已存在则跳过，避免重复建
+      - name: Skip if release exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${{ steps.t.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release ${{ steps.t.outputs.tag }} 已存在，跳过创建"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.t.outputs.tag }}" \
+            --title "${{ steps.t.outputs.tag }}" \
+            --notes-file "docs/release-notes/RELEASE_NOTES_${{ steps.t.outputs.tag }}.md"
+          echo "✅ 已创建 Release ${{ steps.t.outputs.tag }}"
