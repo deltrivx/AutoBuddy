@@ -101,8 +101,21 @@ jobs:
           # 官方文档表格也是 refs/tags/v1.2.3 → v1.2.3）。
           # 2026-10-21 实测踩过：v2026.10.21.03 被推成了 v2026.10.21.03。
           # type=match 抓组后，v1.0.11 → 1.0.11，再由 semver 规则补 1.0。
-          # 注：type=match / type=semver 在 latest=auto 下各产一条 latest，
-          # 与上面那条 raw latest 会重复，buildx 自动去重，无实际影响。
+          # flavor latest=false：关掉 metadata-action 的 latest=auto。
+          #
+          # latest=auto（默认）的语义是「只要产出了 semver 形态的标签，就额外再推
+          # 一条 latest」——它**不受下面 raw 规则的 enable 条件约束**。2026-10-23
+          # 实测踩过：workflow_dispatch 到 refs/tags/v1.0.25（目的只是补一个版本号
+          # 镜像，让 Unraid 的 :1.0.25 能拉回来），raw 规则已 enable=false，日志里
+          # 也确实打印了 `type=raw,value=latest,enable=false`，但 latest=auto 仍然
+          # 自主产出了一条 latest，把 latest 从上游 main 的构建悄悄改指到这个 tag
+          # 构建上。补历史版本号这种操作不该有移动 latest 的副作用。
+          #
+          # 关掉 auto 之后，latest 的唯一决策点就是下面那条 raw 规则：
+          #   push main        → enable=true  → 推 latest（并在 build 后更新指向）
+          #   release published → enable=true  → 推 latest
+          #   push tag / dispatch 到 tag → enable=false 且 auto 已关 → 不推 latest
+          flavor: latest=false
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
             type=match,pattern=v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/v') }}

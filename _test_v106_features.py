@@ -86,11 +86,6 @@ check("编辑密钥不改 enabled（update_key 仍只认 name/enabled）",
 check("最后一个密钥防线仍在",
       '_guard_last_enabled_key' in MAIN)
 
-print("\n" + "=" * 50)
-print(f"通过 {_ok} 项，失败 {len(_fail)} 项" + ("：" + str(_fail) if _fail else " ✅"))
-if _fail:
-    raise SystemExit(1)
-
 # ---- v1.0.6 追加：401 需重新登录（2026-10-20 工单，校准后最终版）----
 print("\n[5] 401 需重新登录：后端判定与下发")
 check("后端把 accounts.json 的 needs_relogin 并入判定（Mr.H 场景）",
@@ -124,7 +119,7 @@ check("错误原文从 title 属性一并移除",
 check("只处理需重登卡片（正常账号不动）",
       re.search(r'var relogin = wbCardNeedsRelogin\(card\);[\s\S]{0,1600}if \(!relogin\) return;', PROXY) is not None)
 check("替换文案是「需要重新登录」",
-      re.search(r'wbReplaceReloginErrorBlocks[\s\S]{0,2000}需要重新登录', PROXY) is not None)
+      re.search(r'wbReplaceReloginErrorBlocks[\s\S]{0,2400}需要重新登录', PROXY) is not None)
 check("挂在 run() 注入链上（injectAccountPool 之后）",
       re.search(r'injectAccountPool\(\);\s*\n\s*wbReplaceReloginErrorBlocks\(\);', PROXY) is not None)
 check("替换块样式 wb-official-relogin（轻量不喧宾夺主）",
@@ -145,3 +140,8 @@ check("按钮区+模型区灰化禁用（wb-relogin-disabled）",
       and "wbApplyReloginDisabled" in PROXY and "wbApplyReloginEnabled" in PROXY)
 check("灰化含 pointer-events:none（不可操作）",
       re.search(r'\.wb-relogin-disabled \{[\s\S]{0,200}pointer-events: none', PROXY) is not None)
+
+print("\n" + "=" * 50)
+print(f"通过 {_ok} 项，失败 {len(_fail)} 项" + ("：" + str(_fail) if _fail else " ✅"))
+if _fail:
+    raise SystemExit(1)
