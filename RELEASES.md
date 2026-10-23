@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.25](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.25)
+**当前稳定版：** [v1.0.26](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.26)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.26](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.26) | 2026-10-26 | 修整轮任务状态判定误用国际版账号条件，导致账号池全为国内版时每一轮都被误判 failed | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.26.md) |
 | [v1.0.25](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.25) | 2026-10-23 | 补全官方桌面端请求特征 —— X-Domain 改纯域名、Content-Type 补 charset、新增 X-Client-* 三件套，并加 _domain_host 辅助函数 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.25.md) |
 | [v1.0.24](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.24) | 2026-10-23 | 修搜索栏误注入数据总览页 —— 页面守卫误判「根路径无 hash」为账号页，官方路由里那是总览；CDP 实证修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.24.md) |
 | [v1.0.23](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.23) | 2026-10-23 | 修积分统计页「官方用量暂不可用」—— 重建 officialUsage 时漏改 status，前端准入校验把整份实时数据丢弃 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.23.md) |
@@ -208,9 +209,8 @@
 | [v0.3.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.3.1) | 2026-09-18 | 请求明细从弹窗改为页面内平铺 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.3.1.md) |
 | [v0.3.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.3.0) | 2026-09-18 | 界面源码级精简 + Token 统计引擎上线 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.3.0.md) |
 | [v0.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.2.0) | 2026-09-18 | 容器化体验升级与全量模型网关支持 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.2.0.md) |
-| [v0.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.2) | 2026-09-18 | 图标全链路对齐与 Sub2API 对接 | — |
-| [v0.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0) | 2026-09-18 | 初始版本发布 | — |
-| [vX.Y.Z](https://github.com/deltrivx/autobuddy/releases/tag/vX.Y.Z) | YYYY-MM-DD | 一句话说清这个版本做了什么 | — |
+| [v0.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.2) | 2026-09-18 | 图标全链路对齐与 Sub2API 对接 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.1.2.md) |
+| [v0.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0) | 2026-09-18 | 初始版本发布 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.1.0.md) |
 
 ## 镜像标签
 
@@ -218,7 +218,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.25    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.26    # 锁定版本
 ```
 
 ## 部署产物

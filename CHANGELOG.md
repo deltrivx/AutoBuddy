@@ -31,6 +31,35 @@
 
 ---
 
+## [v1.0.26] - 2026-10-26
+
+<!-- summary: 修整轮任务状态判定误用国际版账号条件，导致账号池全为国内版时每一轮都被误判 failed -->
+
+### 修复
+
+- **整轮任务状态恒定 `failed`**（`gateway/wb_daily.py`）：
+
+  `_execute()` 里 `if intl_accounts and not job.single_task:` 这个本应只决定
+  「跑不跑国际版脚本」的分支，被误用来决定整轮 `status` —— 条件成立走
+  `finish("done")`，不成立走 `finish("failed")`。账号池全为国内版
+  （`variant == "cn"`）时 `intl_accounts` 恒为空、条件恒为 False，于是
+  **每一轮必然走 else、必然记 `failed`**，与任务实际成败和进程退出码都无关。
+
+  实测 59 次运行：`failed` 58 / `aborted` 1 / `done` **0**。其中多轮 `rc=0`
+  且整轮 80 条任务全是 `already`/`info`（零失败任务）仍记 `failed`，面板上的
+  「任务失败」告警因此全部为假；`summary` 里如实记录的 `rc: 0` 与
+  `status: failed` 自相矛盾，日志还会打印「脚本退出码 0，请查看日志定位失败账号」。
+
+  现改为：国际版条件只决定执行路径，`status` 统一按 `rc` 判定
+  （`rc == 0` 记 `done`，`rc != 0` 记 `failed`），与第 1118 行「补登记/补领
+  仅在 `rc == 0` 时做」的既有语义对齐。`rc < 0`（被信号杀死）仍记
+  `aborted`，行为不变。
+
+  影响：此前「任务失败但有积分入账」的现象随之消失——积分统计本就正确，
+  是整轮状态标记错了。
+
+---
+
 ## [v1.0.25] - 2026-10-23
 
 <!-- summary: 补全官方桌面端请求特征 —— X-Domain 改纯域名、Content-Type 补 charset、新增 X-Client-* 三件套，并加 _domain_host 辅助函数 -->
@@ -5554,7 +5583,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.25...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.26...HEAD
+[v1.0.26]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.25...v1.0.26
 [v1.0.25]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.24...v1.0.25
 [v1.0.24]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.23...v1.0.24
 [v1.0.23]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.22...v1.0.23

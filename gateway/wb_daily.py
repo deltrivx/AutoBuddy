@@ -1135,6 +1135,17 @@ async def _execute(job: DailyJob):
             job.log_line(f"补领异常（不影响主流程）: {str(e)[:80]}")
         
     # ── 国际版每日活跃（按 variant == "ai" 分流调度）──
+    #
+    # 【2026-10-26 修复】这个 if 只决定「要不要跑国际版脚本」，不再决定整轮 status。
+    #
+    # 原实现把 status 写在了这个分支里：条件成立就 finish("done")，
+    # 不成立就 finish("failed")。账号池全为国内版时 intl_accounts 恒为空，
+    # 条件恒为 False，于是每一轮都走 else、每一轮都被判 failed，
+    # 与任务实际成败、与 rc 都无关。实测 59 次运行
+    # failed 58 / aborted 1 / done 0，其中多轮 rc=0 且零失败任务仍记 failed。
+    #
+    # 现在 status 统一在下方按 rc 判定，与第 1118 行「补登记/补领
+    # 仅在 rc == 0 时做」的既有语义对齐。
     if intl_accounts and not job.single_task:
         job.log_line(f"🚀 开始执行国际版每日活跃（共 {len(intl_accounts)} 个账号）...")
         intl_script = WORK_DIR / "workbuddy_intl_daily.py"
@@ -1181,6 +1192,11 @@ async def _execute(job: DailyJob):
         else:
             job.log_line(f"⚠️ 国际版脚本缺失: {INTL_VENDOR_SCRIPT}")
 
+    # ── 整轮 status 判定（只看 rc，与是否跑国际版无关）──
+    #
+    # 两条执行路径（跑 / 不跑国际版）都会走到这里，所以「无国际版账号」的
+    # 国内版场景也能被正确判为 done —— 这正是原实现缺失的那条。
+    if rc == 0:
         job.finish("done", {"rc": 0, "summary": _tail_summary(all_lines)})
         # ③ 场景通知：每日任务完成（用户 2026-10-13 需求）。
         #    失败只记日志，绝不影响任务主流程。
