@@ -127,8 +127,13 @@ check("已下线补偿接口被安全跳过（需求6：claim-compensation 报 4
       "claim-compensation 接口已彻底下线" in VENDOR and
       "url = BASE + \"/billing/meter/claim-compensation\"" not in VENDOR and
       "s.post(CBDOMAIN + \"/billing/meter/claim-compensation\"" not in VENDOR)
-check("旧 v3.7 备份保留", (ROOT / "gateway/vendor").glob and
-      any("bak-v3.7" in p.name for p in (ROOT / "gateway" / "vendor").iterdir()))
+# 旧 v3.7 备份（workbuddy_daily.py.bak-v3.7-*）原为「升级后先留一手」的临时保险。
+# v3.14 已稳定运行数日，备份成了会被 `COPY gateway/` 打进生产镜像的死重量，
+# 2026-10-23 已移除（历史里仍可取回）。这里改为锁住「新版在位且唯一」——
+# 既防止备份文件被谁悄悄加回来，也防止 vendor 脚本被误删。
+_vendor_files = sorted(p.name for p in (ROOT / "gateway" / "vendor").glob("workbuddy_daily.py*"))
+check("vendor 主脚本在位且无遗留 .bak 备份",
+      _vendor_files == ["workbuddy_daily.py"], f"实际 {_vendor_files}")
 
 print("\n" + "=" * 50)
 print(f"通过 {_ok} 项，失败 {len(_fail)} 项" + ("：" + str(_fail) if _fail else " ✅"))
