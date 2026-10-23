@@ -15,7 +15,7 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - '.gitattributes'
-      - '_test_*.py'
+      - 'tests/**'          # 2026-10-24 测试从根目录 _test_*.py 迁至 tests/
       - '.github/ISSUE_TEMPLATE/**'
   release:
     types: [published]
@@ -55,9 +55,16 @@ jobs:
           node-version: '26'
 
       - name: Run unit tests
+        # 2026-10-24：测试从根目录 _test_*.py 迁到 tests/（含 tests/legacy/），
+        # 命名改为 pytest 标准的 test_*.py。显式设 working-directory 与 PYTHONPATH，
+        # 让 `import gateway.*` 与相对仓库根的路径基准都稳定可达。
+        working-directory: ${{ github.workspace }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           set -e
-          for f in _test_*.py; do
+          for f in tests/test_*.py tests/legacy/test_*.py; do
+            [ -f "$f" ] || continue
             echo "::group::$f"
             python3 "$f"
             echo "::endgroup::"
