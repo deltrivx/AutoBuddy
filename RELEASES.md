@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.21](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.21)
+**当前稳定版：** [v1.0.25](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.25)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,10 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.25](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.25) | 2026-10-23 | 补全官方桌面端请求特征 —— X-Domain 改纯域名、Content-Type 补 charset、新增 X-Client-* 三件套，并加 _domain_host 辅助函数 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.25.md) |
+| [v1.0.24](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.24) | 2026-10-23 | 修搜索栏误注入数据总览页 —— 页面守卫误判「根路径无 hash」为账号页，官方路由里那是总览；CDP 实证修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.24.md) |
+| [v1.0.23](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.23) | 2026-10-23 | 修积分统计页「官方用量暂不可用」—— 重建 officialUsage 时漏改 status，前端准入校验把整份实时数据丢弃 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.23.md) |
+| [v1.0.22](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.22) | 2026-10-23 | 修 11128 渠道拦截不换号致客户端全 400、补官方桌面端完整请求特征、网关自检 NameError、搜索栏昼夜适配与右端对齐且只在账号页出现、修账号卡片被误灰化的前端时序 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.22.md) |
 | [v1.0.21](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.21) | 2026-10-22 | 异常卡片登录提醒区域占满原积分区对齐尺寸、账号卡片三原则精细化排序、清理仓库残留文件 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.21.md) |
 | [v1.0.20](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.20) | 2026-10-22 | 修自动留底清理范围的通配符 bug——人工命名的留证（32 条干净源、污染态留证、手工备份）会被当旧垃圾删掉；新增 22 项专项测试锁住清理边界 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.20.md) |
 | [v1.0.19](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.19) | 2026-10-22 | 修 v1.0.18 留底机制自身的两个 bug——同秒多次留底会互相覆盖丢内容、清理排序会误删更新鲜的那份 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.19.md) |
@@ -214,7 +218,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.21    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.25    # 锁定版本
 ```
 
 ## 部署产物
