@@ -1,25 +1,26 @@
 name: Build and Push Docker Image
 
 on:
+  # 2026-10-24 架构修正：**只在打 tag 时构建一次**。
+  #
+  # 旧架构同时监听 push main 与 push tag，导致同一个 commit 被构建两遍：
+  #   push main → 产出 latest（digest A）
+  #   push tag  → 产出 1.0.29（digest B）
+  # 两个 digest 内容相同但哈希不同，每次发版都要人工核对「它们是不是一个东西」——
+  # 这本身就是设计缺陷。而且 main 上任何提交都会重推 latest，让 latest 指向一个
+  # 尚未发版的中间状态。
+  #
+  # 新架构：一次构建，一个 digest，多个 tag 指向它。
+  #   push tag v1.0.30 → 一次 build → 同时打上 1.0.30 与 latest
+  # 于是「最新版」只有一个确定指向，release / latest / 版本号天然一致。
   push:
-    branches:
-      - main
     tags:
-      - v*
-    # 纯文档改动不重建镜像：README / CHANGELOG / 发布说明 / LICENSE 等
-    # 不影响镜像内容，重建只会白白消耗 CI 并推进 latest 的 revision 标签。
-    # 注意：tag（v*）触发不受 paths-ignore 影响，发版照常构建。
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.gitattributes'
-      - 'tests/**'          # 2026-10-24 测试从根目录 _test_*.py 迁至 tests/
-      - '.github/ISSUE_TEMPLATE/**'
-  release:
-    types: [published]
+      - 'v*'
+  # 保留手动补建能力（补历史版本号、或修复某次构建失败）
   workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
 
 env:
   REGISTRY: ghcr.io
@@ -149,10 +150,9 @@ jobs:
           # 自主产出了一条 latest，把 latest 从上游 main 的构建悄悄改指到这个 tag
           # 构建上。补历史版本号这种操作不该有移动 latest 的副作用。
           #
-          # 关掉 auto 之后，latest 的唯一决策点就是下面那条 raw 规则：
-          #   push main        → enable=true  → 推 latest（并在 build 后更新指向）
-          #   release published → enable=true  → 推 latest
-          #   push tag / dispatch 到 tag → enable=false 且 auto 已关 → 不推 latest
+          # 关掉 auto 之后，latest 的唯一决策点就是下面那条 raw 规则。
+          # 2026-10-24 架构修正后，raw 规则的启用条件改成「ref 是 v* tag」——
+          # 因为构建本身现在只在 tag 时发生，latest 与版本号必须同批产出。
           # 显式覆盖 OCI label，避免默认行为把 version 写成 tag 名（如 "latest"）。
           # version 取自上一步从 VERSION_DEFAULT 解析出的真实版本号；
           # revision 用 github.sha（commit 全 SHA），source 指向仓库。
@@ -163,9 +163,13 @@ jobs:
             org.opencontainers.image.title=AutoBuddy
           flavor: latest=false
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
             type=match,pattern=v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=semver,pattern={{version}}
+            # latest 与版本号由**同一次构建**产出，指向同一个 digest。
+            # raw 规则产出的 "latest" 走的是 version.main 通道，不受声明的
+            # flavor.latest 约束，所以下面保留 flavor: latest=false 只用于抑制
+            # semver 规则额外附加的那条 latest（避免重复，虽有去重但语义更清楚）。
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7

@@ -31,6 +31,30 @@
 
 ---
 
+## [v1.0.30] - 2026-10-24
+
+<!-- summary: 镜像构建改为只在打 tag 时执行一次，latest 与版本号同批产出、指向同一 digest -->
+
+### 变更
+
+- **构建架构：一次构建，一个 digest，多个 tag**
+  （`.github/workflows/docker-build-ghcr.yml`）：
+
+  旧架构同时监听 `push main` 与 `push tag`，同一个 commit 被构建两遍：
+  `push main` 产出 `latest`（digest A），`push tag` 产出 `1.0.29`（digest B）。
+  两个 digest 的 layer 逐字节相同，但 index 哈希不同 —— 每次发版都要人工核对
+  「它们是不是一个东西」，这本身就是设计缺陷；而且 main 上任何提交都会重推
+  `latest`，让它指向尚未发版的中间状态。
+
+  现改为**只在打 tag 时构建**，一次 build 同时产出 `1.0.30` 与 `latest`，两者指向
+  同一个 digest。于是「最新版」只有一个确定指向，release / latest / 版本号天然一致，
+  不再需要任何人工核对。`workflow_dispatch` 保留，用于补历史版本号或重跑失败的构建。
+
+  附带变化：`on.push.branches` 与 `paths-ignore` 一并移除 —— 既然不再监听 main 推送，
+  文档改动的过滤规则也就没有意义了；测试由 `test` job 在每次 tag 构建时照常执行。
+
+---
+
 ## [v1.0.29] - 2026-10-24
 
 <!-- summary: 镜像 OCI version label 与 RELEASES 详细说明链接修正后的首个正式版本 -->
@@ -5650,7 +5674,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.29...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.30...HEAD
+[v1.0.30]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.29...v1.0.30
 [v1.0.29]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.28...v1.0.29
 [v1.0.28]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.27...v1.0.28
 [v1.0.27]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.26...v1.0.27
