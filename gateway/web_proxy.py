@@ -10817,17 +10817,36 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
                 # 修法：detailTruncated 只在**真的**没有逐模型明细时为 True；
                 # ok 取决于该账号是否取到了 daily 数据；error 只在真的出错时给文案。
                 # 这样官方前端拿到的是一份自洽的数据，不会误报。
-                _acc_has_detail = bool(_new_daily) and bool(_acc_models)
+                #
+                # ⚠️ 2026-10-24 二次修正（上一版修错了方向，警告依然存在）：
+                #
+                # 上一版写的是 `_acc_has_detail = bool(_new_daily) and bool(_acc_models)`，
+                # 让 ok 同时依赖两个数据源 —— 但这两件事的语义本来就不一样：
+                #
+                #   _new_daily  ← 官方接口返回的 daily（"这个账号的用量数据取到了吗"）
+                #   _acc_models ← 网关 token_stats.db 的 usage_logs（"有逐模型明细吗"）
+                #
+                # usage_logs 只记录**经过网关调用过模型**的请求。一个只签到保活、
+                # 从不走 API 的账号，daily 有数据但 usage_logs 是空的 —— 于是被那个
+                # and 判成 ok=false，进 errors[]，官方前端就报「部分账号未同步」；
+                # 而「已同步 4/4」用的是 daily（都有数据），两个提示自相矛盾。
+                #
+                # 官方语义里 ok 表示"数据取到了吗"，detailTruncated 表示"明细完整吗"，
+                # 是两件独立的事。现在拆开：
+                #   ok              只看 _new_daily（官方数据到手就算同步成功）
+                #   detailTruncated 只看 _acc_models（明细缺失单独表达，不升级为失败）
+                _acc_has_data = bool(_new_daily)
+                _acc_has_detail = bool(_acc_models)
                 rebuilt.append({
                     "accountId": _ta.get("accountId"),
                     "accountName": _ta.get("accountName"),
                     "daily": _new_daily,
                     "detailTruncated": not _acc_has_detail,
-                    "error": None if _acc_has_detail else "该账号无逐模型明细（网关账本未采集到记录）",
+                    "error": None if _acc_has_data else "该账号无官方用量数据（上游未返回）",
                     "fetchedCount": _req_total,
                     "models": sorted(_acc_models.values(),
                                      key=lambda x: -(x.get("credit") or 0.0)),
-                    "ok": _acc_has_detail,
+                    "ok": _acc_has_data,
                     "reportedTotal": _usage_total,
                     "requestCount": _req_total,
                     "usage7Days": _ta.get("usage7Days"),

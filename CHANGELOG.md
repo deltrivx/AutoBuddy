@@ -31,6 +31,59 @@
 
 ---
 
+## [v1.0.32] - 2026-10-24
+
+<!-- summary: 官方用量同步判定改为只看官方数据，不再受网关账本逐模型明细有无影响 -->
+
+### 修复
+
+- **「部分账号官方用量未同步」警告仍然存在**（`gateway/web_proxy.py` 的
+  `_reconcile_official_usage()`）：
+
+  v1.0.28 首次修过这条警告，但判定式写错了方向：
+
+  ```python
+  _acc_has_detail = bool(_new_daily) and bool(_acc_models)
+  ```
+
+  这两个数据源的语义本来就不同：
+
+  | 变量 | 来源 | 语义 |
+  | :--- | :--- | :--- |
+  | `_new_daily` | 官方接口返回的 daily | **数据取到了吗** |
+  | `_acc_models` | 网关 `token_stats.db` 的 `usage_logs` | **明细完整吗** |
+
+  `usage_logs` 只记录**经过网关调用过模型**的请求。一个只签到保活、从不走
+  API 的账号，`daily` 有数据但 `usage_logs` 为空 —— 被那个 `and` 判成
+  `ok=false`，进 `errors[]`，官方前端就报「部分账号未同步」；而「已同步 4/4」
+  用的是 daily（都有数据），两个提示于是自相矛盾。
+
+  现拆成两个独立判据：
+
+  ```python
+  _acc_has_data   = bool(_new_daily)    # ok 只看官方数据
+  _acc_has_detail = bool(_acc_models)   # 明细单独表达
+  ```
+
+  于是：
+
+  | 账号情况 | `ok` | `detailTruncated` | `error` | `errors[]` |
+  | :--- | :--- | :--- | :--- | :--- |
+  | 有 daily、无账本明细（只签到） | **`true`** | `true` | `null` | **不收录** |
+  | 有 daily、有账本明细（正常） | `true` | `false` | `null` | 不收录 |
+  | 无 daily（真取不到） | **`false`** | — | 有文案 | **收录** → 警告照常出现 |
+
+  警告功能**保留**：真的取不到官方数据的账号，提示仍会出现。
+
+- **测试从「源码结构匹配」升级为「行为断言」**：
+
+  v1.0.28 那版 23 项断言全是 `re.search` 查字段写法，一项都没验证真实数据
+  下的行为 —— 所以上面那个 `and` 错了也照样全绿。现补 30 项，其中行为契约
+  部分用**可执行的判定函数副本**跑四种数据组合（有/无 daily × 有/无 models），
+  断言 `ok` 的真实取值；并保留一组「旧逻辑会失败」的反证断言。
+
+---
+
 ## [v1.0.31] - 2026-10-24
 
 <!-- summary: 消除 8 处硬编码路径，统一由 gateway/paths.py 按 AB_DATA_DIR 与 HOME 解析 -->
@@ -5718,7 +5771,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.31...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.32...HEAD
+[v1.0.32]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.31...v1.0.32
 [v1.0.31]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.30...v1.0.31
 [v1.0.30]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.29...v1.0.30
 [v1.0.29]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.28...v1.0.29
