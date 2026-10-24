@@ -10801,16 +10801,29 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
                                              for r in _new_daily), 4)
                 except Exception:
                     pass
+                # 状态字段必须**如实反映**，不能一律硬编码 ok=True / detailTruncated=True。
+                #
+                # 2026-10-24 实测缺陷（用户报「部分账号官方用量未同步」）：
+                # 原先这里无条件写 detailTruncated=True + error=None + ok=True，
+                # 与下面第 10881 行清空的 ou["errors"]=[] 自相矛盾 ——
+                # 「明细被截断」却「没有任何错误」。官方前端据此判「有账号未同步」，
+                # 于是页面同时显示「已同步 4/4 个当前账号」和「部分账号未同步」，
+                # 而失败账号的官方数值一片「—」。实际 4 个当前账号全部同步成功。
+                #
+                # 修法：detailTruncated 只在**真的**没有逐模型明细时为 True；
+                # ok 取决于该账号是否取到了 daily 数据；error 只在真的出错时给文案。
+                # 这样官方前端拿到的是一份自洽的数据，不会误报。
+                _acc_has_detail = bool(_new_daily) and bool(_acc_models)
                 rebuilt.append({
                     "accountId": _ta.get("accountId"),
                     "accountName": _ta.get("accountName"),
                     "daily": _new_daily,
-                    "detailTruncated": True,
-                    "error": None,
+                    "detailTruncated": not _acc_has_detail,
+                    "error": None if _acc_has_detail else "该账号无逐模型明细（网关账本未采集到记录）",
                     "fetchedCount": _req_total,
                     "models": sorted(_acc_models.values(),
                                      key=lambda x: -(x.get("credit") or 0.0)),
-                    "ok": True,
+                    "ok": _acc_has_detail,
                     "reportedTotal": _usage_total,
                     "requestCount": _req_total,
                     "usage7Days": _ta.get("usage7Days"),
@@ -10878,7 +10891,16 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
                     if _g_reqs:
                         ou["requests"] = _g_reqs
                     ou["collectedAt"] = int(time.time() * 1000)
-                    ou["errors"] = []
+                    # errors 必须与 accounts 里的 ok/error 自洽：
+                    # 有账号不同步就如实列出来，而不是一律清空。
+                    # 上一版无条件 errors=[] 与 detailTruncated=True 互相矛盾，
+                    # 正是官方前端误报「部分账号未同步」的直接原因。
+                    ou["errors"] = [
+                        {"accountId": _ra.get("accountId"),
+                         "accountName": _ra.get("accountName"),
+                         "error": _ra.get("error") or "未同步"}
+                        for _ra in rebuilt if not _ra.get("ok")
+                    ]
                     # 2026-10-23：status 必须与「已重建」的事实一起更新。
                     #
                     # 根因（用户实测「积分统计页面报错 · 官方用量暂不可用」）：

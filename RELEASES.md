@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.26](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.26)
+**当前稳定版：** [v1.0.28](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.28)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,31 +13,33 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v1.0.26](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.26) | 2026-10-26 | 修整轮任务状态判定误用国际版账号条件，导致账号池全为国内版时每一轮都被误判 failed | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.26.md) |
-| [v1.0.25](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.25) | 2026-10-23 | 补全官方桌面端请求特征 —— X-Domain 改纯域名、Content-Type 补 charset、新增 X-Client-* 三件套，并加 _domain_host 辅助函数 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.25.md) |
-| [v1.0.24](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.24) | 2026-10-23 | 修搜索栏误注入数据总览页 —— 页面守卫误判「根路径无 hash」为账号页，官方路由里那是总览；CDP 实证修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.24.md) |
-| [v1.0.23](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.23) | 2026-10-23 | 修积分统计页「官方用量暂不可用」—— 重建 officialUsage 时漏改 status，前端准入校验把整份实时数据丢弃 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.23.md) |
-| [v1.0.22](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.22) | 2026-10-23 | 修 11128 渠道拦截不换号致客户端全 400、补官方桌面端完整请求特征、网关自检 NameError、搜索栏昼夜适配与右端对齐且只在账号页出现、修账号卡片被误灰化的前端时序 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.22.md) |
-| [v1.0.21](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.21) | 2026-10-22 | 异常卡片登录提醒区域占满原积分区对齐尺寸、账号卡片三原则精细化排序、清理仓库残留文件 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.21.md) |
-| [v1.0.20](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.20) | 2026-10-22 | 修自动留底清理范围的通配符 bug——人工命名的留证（32 条干净源、污染态留证、手工备份）会被当旧垃圾删掉；新增 22 项专项测试锁住清理边界 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.20.md) |
-| [v1.0.19](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.19) | 2026-10-22 | 修 v1.0.18 留底机制自身的两个 bug——同秒多次留底会互相覆盖丢内容、清理排序会误删更新鲜的那份 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.19.md) |
-| [v1.0.18](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.18) | 2026-10-21 | 安全修复——网关本体（18091）32 个零鉴权路由补齐登录门，与 WebUI 同一套会话判定；账号池落盘前留时间戳备份，注入不再不留痕 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.18.md) |
-| [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17) | 2026-10-21 | — | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.17.md) |
-| [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17) | 2026-10-21 | 修复账号卡片点「启用」时按钮跑到卡片底部（flex 折行点随按钮文案长度漂移），并补齐注入按钮 innerHTML 路径缺失的 type="button"（移动端整页刷新） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.17.md) |
-| [v1.0.16](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.16) | 2026-10-21 | 异常账号卡片登录提醒区域尺寸下调（不再比它替代的正常区域还高），模型区内框高度改为按同页正常卡实测对齐，只调尺寸不动结构 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.16.md) |
-| [v1.0.15](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.15) | 2026-10-21 | 修复 v1.0.14 解除风控标记按钮假成功的缺陷——请求被 catch-all 路由转给官方后端返回 200，标记实际未被清除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.15.md) |
-| [v1.0.14](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.14) | 2026-10-21 | 账号卡片新增「被上游风控标记」徽章与推送通知，标记落在独立存储里、与本地停用彻底分开；只通知不自动停用，也不碰账号数据文件 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.14.md) |
-| [v1.0.13](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.13) | 2026-10-21 | 补齐单账号风控预警推送（只通知不自动停用）与打卡事件时间戳抖动两项真缺口，均不改账号数据、不新增自动处置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.13.md) |
-| [v1.0.11](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.11) | 2026-10-21 | 版本号规范回归语义化三位制，撤销四段日期制试验；顺带修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.11.md) |
-| [v1.0.10](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.10) | 2026-10-22 | 账号搜索框挪到档位切换行右端并对齐官方尺寸，每日任务签到/执行两个开关彻底拆分独立持久化，账号签到与凭据板块补背景框，设备指纹与 UA 改为动态池化隔离并覆盖新账号，关于页「说明」项移除 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.10.md) |
-| [v1.0.9](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.9) | 2026-10-21 | 账号池白名单彻底收紧 + 负载均衡平摊 + 每日任务安全分级与防风控加固 + 国际版每日活跃接入 + 全量账号独立硬件指纹 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.9.md) |
-| [v1.0.8](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.8) | 2026-10-20 | 安全修复——WebUI 全部 54 个管理端点补登录鉴权（此前 /api/import 等写操作未登录可直接调用，线上曾被写入注入测试账号） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.8.md) |
-| [v1.0.7](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.7) | 2026-10-20 | 401 卡片视觉精修：提示块对齐正常卡片官方区高度（112px 实测），顶部外框官方「需重新登录」badge 隐藏，按钮区/模型区灰化禁用 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.7.md) |
-| [v1.0.6](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.6) | 2026-10-20 | 新增调用分流三档开关与 API 密钥编辑/重置统计/高危二次确认，401 账号卡片积分区原始错误页替换为「需要重新登录」提示（后端双来源合并判定） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.6.md) |
-| [v1.0.5](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.5) | 2026-10-20 | 修复账号卡片开关抖动 / 按钮跑位 / 移动端整页刷新三处交互缺陷，vendor 脚本升级 v3.14 支持 500 积分补偿领取 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.5.md) |
-| [v1.0.4](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.4) | 2026-10-18 | 模型拉取支持国际版双通道并发与幂等合并，补齐国际版出站路由映射，国际独占模型定向放行，导出账号默认脱敏 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.4.md) |
-| [v1.0.3](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.3) | 2026-10-18 | 版本仅含账号级停用策略的脏数据清理说明与版本号推进，无功能与逻辑变更（代码零改动） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.3.md) |
-| [v1.0.2](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.2) | 2026-10-18 | 修复移动端「账号管理」误跳数据总览（下拉面板丢失导航语义），并根治日报「昨日签到积分」「昨日调用」恒为 0（跨进程缓存失效 + 跨天聚合链抖动，改直连官方接口 + SQLite 精确计数兜底） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.2.md) |
+| [v1.0.28](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.28) | 2026-10-24 | 修积分统计页误报「部分账号官方用量未同步」—— 账号状态字段改为如实反映，与 errors 数组自洽 | — |
+| [v1.0.27](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.27) | 2026-10-24 | 修复 | — |
+| [v1.0.26](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.26) | 2026-10-26 | 修整轮任务状态判定误用国际版账号条件，导致账号池全为国内版时每一轮都被误判 failed | — |
+| [v1.0.25](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.25) | 2026-10-23 | 补全官方桌面端请求特征 —— X-Domain 改纯域名、Content-Type 补 charset、新增 X-Client-* 三件套，并加 _domain_host 辅助函数 | — |
+| [v1.0.24](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.24) | 2026-10-23 | 修搜索栏误注入数据总览页 —— 页面守卫误判「根路径无 hash」为账号页，官方路由里那是总览；CDP 实证修复 | — |
+| [v1.0.23](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.23) | 2026-10-23 | 修积分统计页「官方用量暂不可用」—— 重建 officialUsage 时漏改 status，前端准入校验把整份实时数据丢弃 | — |
+| [v1.0.22](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.22) | 2026-10-23 | 修 11128 渠道拦截不换号致客户端全 400、补官方桌面端完整请求特征、网关自检 NameError、搜索栏昼夜适配与右端对齐且只在账号页出现、修账号卡片被误灰化的前端时序 | — |
+| [v1.0.21](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.21) | 2026-10-22 | 异常卡片登录提醒区域占满原积分区对齐尺寸、账号卡片三原则精细化排序、清理仓库残留文件 | — |
+| [v1.0.20](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.20) | 2026-10-22 | 修自动留底清理范围的通配符 bug——人工命名的留证（32 条干净源、污染态留证、手工备份）会被当旧垃圾删掉；新增 22 项专项测试锁住清理边界 | — |
+| [v1.0.19](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.19) | 2026-10-22 | 修 v1.0.18 留底机制自身的两个 bug——同秒多次留底会互相覆盖丢内容、清理排序会误删更新鲜的那份 | — |
+| [v1.0.18](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.18) | 2026-10-21 | 安全修复——网关本体（18091）32 个零鉴权路由补齐登录门，与 WebUI 同一套会话判定；账号池落盘前留时间戳备份，注入不再不留痕 | — |
+| [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17) | 2026-10-21 | — | — |
+| [v1.0.17](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.17) | 2026-10-21 | 修复账号卡片点「启用」时按钮跑到卡片底部（flex 折行点随按钮文案长度漂移），并补齐注入按钮 innerHTML 路径缺失的 type="button"（移动端整页刷新） | — |
+| [v1.0.16](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.16) | 2026-10-21 | 异常账号卡片登录提醒区域尺寸下调（不再比它替代的正常区域还高），模型区内框高度改为按同页正常卡实测对齐，只调尺寸不动结构 | — |
+| [v1.0.15](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.15) | 2026-10-21 | 修复 v1.0.14 解除风控标记按钮假成功的缺陷——请求被 catch-all 路由转给官方后端返回 200，标记实际未被清除 | — |
+| [v1.0.14](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.14) | 2026-10-21 | 账号卡片新增「被上游风控标记」徽章与推送通知，标记落在独立存储里、与本地停用彻底分开；只通知不自动停用，也不碰账号数据文件 | — |
+| [v1.0.13](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.13) | 2026-10-21 | 补齐单账号风控预警推送（只通知不自动停用）与打卡事件时间戳抖动两项真缺口，均不改账号数据、不新增自动处置 | — |
+| [v1.0.11](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.11) | 2026-10-21 | 版本号规范回归语义化三位制，撤销四段日期制试验；顺带修掉 GHCR 镜像标签带 v 前缀和 latest 重复产出两个 CI 缺陷 | — |
+| [v1.0.10](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.10) | 2026-10-22 | 账号搜索框挪到档位切换行右端并对齐官方尺寸，每日任务签到/执行两个开关彻底拆分独立持久化，账号签到与凭据板块补背景框，设备指纹与 UA 改为动态池化隔离并覆盖新账号，关于页「说明」项移除 | — |
+| [v1.0.9](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.9) | 2026-10-21 | 账号池白名单彻底收紧 + 负载均衡平摊 + 每日任务安全分级与防风控加固 + 国际版每日活跃接入 + 全量账号独立硬件指纹 | — |
+| [v1.0.8](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.8) | 2026-10-20 | 安全修复——WebUI 全部 54 个管理端点补登录鉴权（此前 /api/import 等写操作未登录可直接调用，线上曾被写入注入测试账号） | — |
+| [v1.0.7](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.7) | 2026-10-20 | 401 卡片视觉精修：提示块对齐正常卡片官方区高度（112px 实测），顶部外框官方「需重新登录」badge 隐藏，按钮区/模型区灰化禁用 | — |
+| [v1.0.6](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.6) | 2026-10-20 | 新增调用分流三档开关与 API 密钥编辑/重置统计/高危二次确认，401 账号卡片积分区原始错误页替换为「需要重新登录」提示（后端双来源合并判定） | — |
+| [v1.0.5](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.5) | 2026-10-20 | 修复账号卡片开关抖动 / 按钮跑位 / 移动端整页刷新三处交互缺陷，vendor 脚本升级 v3.14 支持 500 积分补偿领取 | — |
+| [v1.0.4](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.4) | 2026-10-18 | 模型拉取支持国际版双通道并发与幂等合并，补齐国际版出站路由映射，国际独占模型定向放行，导出账号默认脱敏 | — |
+| [v1.0.3](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.3) | 2026-10-18 | 版本仅含账号级停用策略的脏数据清理说明与版本号推进，无功能与逻辑变更（代码零改动） | — |
+| [v1.0.2](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.2) | 2026-10-18 | 修复移动端「账号管理」误跳数据总览（下拉面板丢失导航语义），并根治日报「昨日签到积分」「昨日调用」恒为 0（跨进程缓存失效 + 跨天聚合链抖动，改直连官方接口 + SQLite 精确计数兜底） | — |
 | [v1.0.1](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.1) | 2026-10-18 | 修复上游 401 英文错误页原样透传（改为中文「登录已过期」），并落地刷新令牌四项防复发改造（单飞锁、失败隔离、批量熔断告警、节奏限制），应对上游 session 批量重置 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.1.md) |
 | [v1.0.0](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.0) | 2026-10-17 | 正式版发布。六大页面样式完全统一、数据总览仪表盘、任务巡检与断点续跑、签到/任务调度拆分、智能助手双查能力，以及顶栏导航整体放大 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.0.md) |
 | [v0.9.99](https://github.com/deltrivx/autobuddy/releases/tag/v0.9.99) | 2026-10-17 | 修复 v0.9.94–v0.9.98 连续五个版本 CI 构建失败（源码契约测试未随代码同步，导致 test job 失败、镜像未推送） | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.9.99.md) |
@@ -209,8 +211,9 @@
 | [v0.3.1](https://github.com/deltrivx/autobuddy/releases/tag/v0.3.1) | 2026-09-18 | 请求明细从弹窗改为页面内平铺 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.3.1.md) |
 | [v0.3.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.3.0) | 2026-09-18 | 界面源码级精简 + Token 统计引擎上线 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.3.0.md) |
 | [v0.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.2.0) | 2026-09-18 | 容器化体验升级与全量模型网关支持 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.2.0.md) |
-| [v0.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.2) | 2026-09-18 | 图标全链路对齐与 Sub2API 对接 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.1.2.md) |
-| [v0.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0) | 2026-09-18 | 初始版本发布 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.1.0.md) |
+| [v0.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.2) | 2026-09-18 | 图标全链路对齐与 Sub2API 对接 | — |
+| [v0.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0) | 2026-09-18 | 初始版本发布 | — |
+| [vX.Y.Z](https://github.com/deltrivx/autobuddy/releases/tag/vX.Y.Z) | YYYY-MM-DD | 一句话说清这个版本做了什么 | — |
 
 ## 镜像标签
 
@@ -218,7 +221,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.26    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.28    # 锁定版本
 ```
 
 ## 部署产物

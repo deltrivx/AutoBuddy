@@ -31,6 +31,32 @@
 
 ---
 
+## [v1.0.28] - 2026-10-24
+
+<!-- summary: 修积分统计页误报「部分账号官方用量未同步」—— 账号状态字段改为如实反映，与 errors 数组自洽 -->
+
+### 修复
+
+- **积分统计页误报「部分账号官方用量未同步」**（`gateway/web_proxy.py` 的
+  `_reconcile_official_usage()`）：
+
+  重建 `officialUsage.accounts[]` 时，每个账号的状态字段被**无条件硬编码** ——
+  `detailTruncated=True`、`error=None`、`ok=True`，紧接着又无条件
+  `ou["errors"] = []`。这四个字段互相矛盾：「明细被截断」却「没有任何错误」。
+  官方前端读到 `detailTruncated=True` 就判「有账号未同步」，于是页面同时显示
+  「已同步 4/4 个当前账号」和「部分账号官方用量未同步」，失败账号的官方数值
+  一片「—」。实际 4 个当前账号全部同步成功 —— 纯误报。
+
+  现改为如实反映：`detailTruncated` 只在真的没有逐模型明细时为 True；`ok`
+  取决于该账号是否取到 daily 数据；`error` 只在真的没明细时给文案；
+  `errors` 数组由 `accounts` 里 `ok=False` 的项聚合而来，与 accounts 严格自洽。
+  全部账号有明细时 `errors` 为空，不再误报。
+
+  新增 `tests/test_official_usage_sync_status.py` 锁定该自洽性契约（23 项断言，
+  含「4/4 全同步时 errors 必须为空」这一核心断言）。
+
+---
+
 ## [v1.0.27] - 2026-10-24
 
 ### 修复
@@ -5594,7 +5620,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.27...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.28...HEAD
+[v1.0.28]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.27...v1.0.28
 [v1.0.27]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.26...v1.0.27
 [v1.0.26]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.25...v1.0.26
 [v1.0.25]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.24...v1.0.25
