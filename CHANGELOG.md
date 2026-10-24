@@ -31,6 +31,36 @@
 
 ---
 
+## [v1.0.29] - 2026-10-24
+
+<!-- summary: 镜像 OCI version label 与 RELEASES 详细说明链接修正后的首个正式版本 -->
+
+### 修复
+
+- **镜像 `org.opencontainers.image.version` label 反映真实版本号**
+  （`.github/workflows/docker-build-ghcr.yml`）：
+
+  此前 metadata-action 未设显式 `labels:`，按其默认行为把该 label 设成「本次产出的
+  第一个 tag 名」。于是推 `latest` 的那次构建，label 就成了字面量 `latest`，
+  `docker inspect` 读出来分不清镜像究竟是哪个版本。
+
+  现新增 `Resolve version` 步骤，从单一版本源 `gateway/main.py` 的
+  `VERSION_DEFAULT` 解析真实版本号，再用 `labels:` 显式覆盖
+  `version` / `revision` / `source` / `title`。不用 `github.ref_name`：
+  它在 tag 场景带 `v` 前缀、在 main 场景是 `main`，两种都不对。
+
+- **`RELEASES.md` 的「详细说明」列不再偶发显示 `—`**
+  （`scripts/gen_releases.py`）：
+
+  原判断用 `note.exists()`，依赖 RELEASE_NOTES 文件此刻是否存在于本地磁盘 ——
+  本地跑脚本时新版本 NOTES 常常还没提交，于是 v1.0.27、v1.0.28 都漏了链接；
+  且判断随机器环境而变，同一份 CHANGELOG 产出不同结果，不幂等。
+
+  现改为只看 CHANGELOG 是否有该版本段（这是仓库约定，由
+  `tests/test_version_sync.py` 强制 NOTES 文件存在且与 Release body 逐字一致）。
+
+---
+
 ## [v1.0.28] - 2026-10-24
 
 <!-- summary: 修积分统计页误报「部分账号官方用量未同步」—— 账号状态字段改为如实反映，与 errors 数组自洽 -->
@@ -5620,7 +5650,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.28...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.29...HEAD
+[v1.0.29]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.28...v1.0.29
 [v1.0.28]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.27...v1.0.28
 [v1.0.27]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.26...v1.0.27
 [v1.0.26]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.25...v1.0.26

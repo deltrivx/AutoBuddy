@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.28](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.28)
+**当前稳定版：** [v1.0.29](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.29)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.29](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.29) | 2026-10-24 | 镜像 OCI version label 与 RELEASES 详细说明链接修正后的首个正式版本 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.29.md) |
 | [v1.0.28](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.28) | 2026-10-24 | 修积分统计页误报「部分账号官方用量未同步」—— 账号状态字段改为如实反映，与 errors 数组自洽 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.28.md) |
 | [v1.0.27](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.27) | 2026-10-24 | 修复 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.27.md) |
 | [v1.0.26](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.26) | 2026-10-26 | 修整轮任务状态判定误用国际版账号条件，导致账号池全为国内版时每一轮都被误判 failed | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.26.md) |
@@ -221,7 +222,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.28    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.29    # 锁定版本
 ```
 
 ## 部署产物
