@@ -31,6 +31,51 @@
 
 ---
 
+## [v1.0.33] - 2026-10-24
+
+<!-- summary: officialUsage.status 改为按账本接管情况判定，消除「部分账号未同步」误报 -->
+
+### 修复
+
+- **积分统计页「部分账号官方用量未同步」误报仍未消除**
+  （`gateway/web_proxy.py` 的 `_reconcile_official_usage()`）：
+
+  v1.0.30~v1.0.32 都在修 `ok` / `detailTruncated` / `errors` 那套字段，
+  但容器实测（塔灵）显示：API 侧 `errors=[]`、4 个账号 `ok` 全 `true`、`detailTruncated`
+  全 `false`，数据层已经全部正确 —— 页面却仍显示「部分账号官方用量未同步」。
+
+  真正的原因是 **`officialUsage.status`**：它在 10943 行被**无条件硬编码**为
+  `ou["status"] = "partial"`，没有任何条件判断，全文仅此 1 处赋值。
+
+  该硬编码源于 v1.0.23 的历史理由 —— 注释写「requests 仍来自已停更的采集」，
+  所以如实标 `partial`。但 v1.0.32 已把 `requests` 换成网关账本
+  （`_gateway_recent_requests()`），塔灵实测容器里 requests 为 **600 条账本实时数据**，`source` 为 `gateway-realtime`。**当初的前提已被推翻，status 却没跟着改**。
+
+  现改为按账本是否接管来判定：
+
+  ```python
+  ou["status"] = "complete" if _g_reqs else "partial"
+  ```
+
+  | `_g_reqs`（账本请求明细） | `status` | 含义 |
+  | :--- | :--- | :--- |
+  | 非空（当前实测 600 条） | **`complete`** | accounts/daily/models/requests/summary 全部实时重建 |
+  | 为空 | `partial` | requests 仍是上游透传旧值，如实表达不谎报 |
+
+  该条件与 10914 行已有的 `if _g_reqs: ou["requests"] = _g_reqs` **同源**，逻辑自洽。
+
+  **安全性**：官方前端 `py()` 对 `complete` 与 `partial` 都返回 true，因此改成
+  `complete` 不会触发「官方用量暂不可用」，只会消除「部分账号未同步」。
+
+### 测试
+
+新增 `tests/test_status.py`（9 项），且采用**源码驱动**方式：直接从 `web_proxy.py`
+里抽出 status 赋值表达式并代入 `_g_reqs` 求值，断言真实产出的 status —— 测的是源码本身，而非手写副本，避免"副本与源码脱节"的假绿。
+
+反向验证已执行：同一份测试在**旧代码**（`ou["status"] = "partial"`）上 **3 项 FAIL**，在**新代码**上 **9 项全过**，证明测试确实能抓住此缺陷。
+
+---
+
 ## [v1.0.32] - 2026-10-24
 
 <!-- summary: 官方用量同步判定改为只看官方数据，不再受网关账本逐模型明细有无影响 -->
@@ -5771,7 +5816,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.32...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.33...HEAD
+[v1.0.33]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.32...v1.0.33
 [v1.0.32]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.31...v1.0.32
 [v1.0.31]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.30...v1.0.31
 [v1.0.30]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.29...v1.0.30

@@ -10937,10 +10937,17 @@ def _reconcile_official_usage(data: dict, valid_account_ids) -> None:
                     # 数据明明是实时的（source 已标 gateway-realtime），
                     # 只因一个字段没同步就被判为不可用 —— 必须一起改。
                     #
-                    # 取 partial 而非 complete：账号明细与按日明细是实时重建的，
-                    # 但「官方请求级原始用量（requests）」仍来自已停更的采集，
-                    # 用 partial 如实表达「部分实时」，与 errors=[] 不矛盾。
-                    ou["status"] = "partial"
+                    # 2026-10-24：requests 已由网关账本接管
+                    # （_g_reqs = _gateway_recent_requests()），当初选 partial 的
+                    # 前提（"requests 仍来自已停更的采集"）已不成立。账本有数据时
+                    # accounts/daily/models/requests/summary 全部实时重建，应如实
+                    # 标 complete；账本为空则 requests 仍是上游透传的旧值，维持
+                    # partial 不谎报。
+                    #
+                    # 与下面 10914 行 `if _g_reqs: ou["requests"] = _g_reqs` 同一条件，逻辑自洽。
+                    # 安全性：官方前端 py() 对 complete 与 partial 都返回 true，
+                    # 改完不会触发「官方用量暂不可用」，只会消除「部分账号未同步」。
+                    ou["status"] = "complete" if _g_reqs else "partial"
                     ou["source"] = "gateway-realtime"
                 except Exception:
                     pass

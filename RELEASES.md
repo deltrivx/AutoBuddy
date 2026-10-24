@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.32](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.32)
+**当前稳定版：** [v1.0.33](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.33)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.33](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.33) | 2026-10-24 | officialUsage.status 改为按账本接管情况判定，消除「部分账号未同步」误报 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.33.md) |
 | [v1.0.32](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.32) | 2026-10-24 | 官方用量同步判定改为只看官方数据，不再受网关账本逐模型明细有无影响 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.32.md) |
 | [v1.0.31](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.31) | 2026-10-24 | 消除 8 处硬编码路径，统一由 gateway/paths.py 按 AB_DATA_DIR 与 HOME 解析 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.31.md) |
 | [v1.0.30](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.30) | 2026-10-24 | 镜像构建改为只在打 tag 时执行一次，latest 与版本号同批产出、指向同一 digest | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.30.md) |
@@ -225,7 +226,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.32    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.33    # 锁定版本
 ```
 
 ## 部署产物
