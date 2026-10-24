@@ -86,7 +86,19 @@ def main() -> int:
     rows = []
     for entry in entries:
         note = NOTES_DIR / f"RELEASE_NOTES_{entry['version']}.md"
-        link = f"[详细说明](./docs/release-notes/{note.name})" if note.exists() else "—"
+        # 2026-10-24：链接是否给出，改为**只看 CHANGELOG 是否有该版本段**，
+        # 不再依赖 RELEASE_NOTES 文件此刻是否存在于本地磁盘。
+        #
+        # 原来的 `note.exists()` 有两个问题：
+        #   1. 本地跑脚本时，新版本的 NOTES 往往还没写完/还没提交，
+        #      于是该行只显示「—」。v1.0.27、v1.0.28 都这样漏过链接。
+        #   2. 判断依据随「跑脚本的机器」而变，同一份 CHANGELOG 在不同环境
+        #      产出的 RELEASES.md 不同，不幂等。
+        #
+        # 现在的规则：版本出现在 CHANGELOG 里，就一定有对应的发布说明（这是仓库
+        # 约定，_test_version_sync.py 强制校验 NOTES 文件与 Release body 一致），
+        # 所以直接给出链接。真缺文件时由那个测试拦住，而不是在这里静默降级成「—」。
+        link = f"[详细说明](./docs/release-notes/{note.name})"
         rows.append(
             f"| [{entry['version']}](https://github.com/{REPO_SLUG}/releases/tag/{entry['version']}) "
             f"| {entry['date']} | {entry['title']} | {link} |"

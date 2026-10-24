@@ -94,6 +94,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 解析真实版本号，供镜像 label 使用。
+      #
+      # 2026-10-24 修复：此前 metadata-action 没有显式 labels:，它按默认行为把
+      # org.opencontainers.image.version 设成「本次产出的第一个 tag 名」。于是
+      # 推 latest 的那次构建，该 label 就成了字面量 "latest" 而不是真实版本号 ——
+      # docker inspect 读出来分不清这个镜像到底是哪个版本。
+      #
+      # 这里改成从**单一版本源** gateway/main.py 的 VERSION_DEFAULT 解析。
+      # 为什么不用 github.ref_name：它在 tag 场景是 "v1.0.28"（带 v，与 docker tag
+      # 的 1.0.28 不一致），在 push main 场景是 "main"（完全不是版本号），
+      # 还得写表达式剥前缀、且对 main 构建无能为力。
+      # 为什么不用 steps.meta.outputs.version：同理会随 tag 形态漂移。
+      # VERSION_DEFAULT 是 _test_version_sync.py 强制与 CHANGELOG 对齐的唯一源，
+      # 任何场景下读它都能得到正确版本号。
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          V="$(grep -oP 'VERSION_DEFAULT\s*=\s*"\K[^"]+' gateway/main.py || true)"
+          if [ -z "$V" ]; then
+            echo "::error::无法从 gateway/main.py 解析 VERSION_DEFAULT"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "镜像版本号: $V"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -127,6 +153,14 @@ jobs:
           #   push main        → enable=true  → 推 latest（并在 build 后更新指向）
           #   release published → enable=true  → 推 latest
           #   push tag / dispatch 到 tag → enable=false 且 auto 已关 → 不推 latest
+          # 显式覆盖 OCI label，避免默认行为把 version 写成 tag 名（如 "latest"）。
+          # version 取自上一步从 VERSION_DEFAULT 解析出的真实版本号；
+          # revision 用 github.sha（commit 全 SHA），source 指向仓库。
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=AutoBuddy
           flavor: latest=false
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
