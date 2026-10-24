@@ -31,6 +31,50 @@
 
 ---
 
+## [v1.0.31] - 2026-10-24
+
+<!-- summary: 消除 8 处硬编码路径，统一由 gateway/paths.py 按 AB_DATA_DIR 与 HOME 解析 -->
+
+### 变更
+
+- **路径解析统一到 `gateway/paths.py`**（新增模块）：
+
+  代码里原本并存两种写法 —— 19 处用 `Path(os.getenv("AB_DATA_DIR", ...))`
+  从环境变量读，**8 处直接写死** `/data/.autobuddy` 或 `/data/.wb-switch`。
+  当前恰好 `AB_DATA_DIR == /data/.autobuddy` 且 `HOME == /data`，两边解析结果
+  相同所以从未暴露。
+
+  但只要把挂载点从 `/data` 换到别处：那 19 处会正确跟着 `AB_DATA_DIR` 走，
+  那 8 处仍往 `/data/...` 写 —— 而 `/data` 此时已不是挂载卷，新文件落进
+  **容器可写层，重建即丢，且不会有任何报错**。
+
+  其中 `token_tracker.py` 最严重：它用 `TRACKER_FILE.parent` 决定
+  `token_stats.db`（5MB+ 用量库）与 rollup 文件的位置，等于绕过了
+  `AB_DATA_DIR`。
+
+  现统一为两个入口：
+  - `get_data_dir()` ← `AB_DATA_DIR`，兜底 `/data/.autobuddy`
+  - `get_switch_dir()` ← `$HOME/.wb-switch`，兜底 `/data/.wb-switch`
+
+  官方镜像目录**由 `HOME` 派生而非独立环境变量** —— 因为官方 wb-switch 二进制
+  硬编码读 `$HOME/.wb-switch`（见 `entrypoint.sh` 注释），这个子目录名由官方
+  决定，我们无法改它的查找规则，只能跟着 `HOME` 走。再引入一个独立 env 反而会
+  造出「HOME 改了而新 env 没改」的新不一致。
+
+- **`entrypoint.sh` 同步变量化**：`mkdir` 与两轮双向软链循环不再写死 `/data`，
+  改为跟随 `AB_DATA_DIR` / `HOME`，与 Python 侧同一套推导。否则改挂载点后
+  Python 跟着新路径走、shell 还在建旧路径，两边打架。
+
+### 影响
+
+| 项 | 说明 |
+| :--- | :--- |
+| 运行时行为 | **零变化**。生产环境 `AB_DATA_DIR=/data/.autobuddy`、`HOME=/data`，解析结果与修复前逐字符相同（已用四场景验证） |
+| 配置项 | **不新增环境变量** |
+| 新增测试 | `tests/test_paths_resolve.py`（25 项断言），覆盖兜底、单设、双设、生产现状复现，外加源码扫描防退化 |
+
+---
+
 ## [v1.0.30] - 2026-10-24
 
 <!-- summary: 镜像构建改为只在打 tag 时执行一次，latest 与版本号同批产出、指向同一 digest -->
@@ -5674,7 +5718,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.30...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.31...HEAD
+[v1.0.31]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.30...v1.0.31
 [v1.0.30]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.29...v1.0.30
 [v1.0.29]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.28...v1.0.29
 [v1.0.28]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.27...v1.0.28

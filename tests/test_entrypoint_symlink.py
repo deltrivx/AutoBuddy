@@ -51,6 +51,7 @@ sqlite3.OperationalError: unable to open database file
 
 import os
 import shutil
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -80,9 +81,32 @@ def extract_link_segment():
 
 
 def run_link_logic(seg, a, b):
-    """把目录前缀替换成沙箱路径后真实执行。"""
-    script = seg.replace("/data/.autobuddy", str(a)).replace("/data/.wb-switch", str(b))
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    """在沙箱里真实执行链接段。
+
+    2026-10-24 修改原因：原实现用 str.replace 把脚本里的字面路径
+    ``/data/.autobuddy`` 与 ``/data/.wb-switch`` 换成沙箱路径。但同一次修复中
+    entrypoint.sh 已改为跟随 ``AB_DATA_DIR`` / ``HOME``（消除「换挂载点会
+    静默丢数据」的硬编码隐患），脚本里不再有那两个字面量，字符串替换失效。
+
+    现改为**注入环境变量**：``AB_DATA_DIR=<a>``、``HOME=<b 的父目录>``，
+    脚本自己按环境变量推导 ``$HOME/.wb-switch``。因此要求调用方把 b 建成
+    ``<某目录>/.wb-switch``，这样 ``$HOME`` 指向 ``<某目录>`` 时正好落到 b。
+
+    这样测试验证的是真实的变量解析逻辑，比「字面量能否被替换」更贴近生产。
+    """
+    env = dict(os.environ)
+    env["AB_DATA_DIR"] = str(a)
+    env["HOME"] = str(b.parent)
+    # 关键：提取出的片段只含 link_if_absent/is_sqlite_sidecar 与两轮循环，
+    # 不含 entrypoint.sh 里给 AB_DATA_DIR / AB_HOME 赋值的那两行（它们在
+    # link_if_absent() 之前）。所以这里必须**显式前置**这两个 shell 变量，
+    # 否则循环展开成 "$AB_DATA_DIR"/* 时是空串，一条链接都建不出来。
+    prelude = (
+        f'AB_DATA_DIR={shlex.quote(str(a))}\n'
+        f'AB_HOME={shlex.quote(str(b.parent))}\n'
+    )
+    return subprocess.run(["bash", "-c", prelude + seg],
+                          capture_output=True, text=True, env=env)
 
 
 def find_bad_links(*dirs):
@@ -125,7 +149,7 @@ print("\n[3] 复刻故障现场 → 跑修复逻辑 → 验证无环")
 
 tmp = Path(tempfile.mkdtemp())
 try:
-    a, b = tmp / "autobuddy", tmp / "wb-switch"
+    a, b = tmp / "autobuddy", tmp / ".wb-switch"
     a.mkdir(); b.mkdir()
 
     # 现场：B 侧悬空链接（指向 A 的 wal，实体已被 SQLite 删除）
@@ -147,8 +171,8 @@ try:
 
     print("\n[4] SQLite 边车不跨目录链接（干净场景）")
 
-    a2, b2 = tmp / "a2", tmp / "b2"
-    a2.mkdir(); b2.mkdir()
+    a2, b2 = tmp / "a2", tmp / "a2h" / ".wb-switch"
+    a2.mkdir(); b2.mkdir(parents=True)
     (a2 / "token_stats.db").write_text("db")
     (a2 / "token_stats.db-wal").write_text("wal")
     (a2 / "token_stats.db-shm").write_text("shm")
@@ -171,8 +195,8 @@ try:
 
     print("\n[6] 真实故障形态：互指清理后重启，不再重建互指")
 
-    a3, b3 = tmp / "a3", tmp / "b3"
-    a3.mkdir(); b3.mkdir()
+    a3, b3 = tmp / "a3", tmp / "a3h" / ".wb-switch"
+    a3.mkdir(); b3.mkdir(parents=True)
     (a3 / "token_stats.db").write_text("db")
     # 制造生产中的双向互指
     (a3 / "token_stats.db-wal").symlink_to(b3 / "token_stats.db-wal")

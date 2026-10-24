@@ -40,7 +40,17 @@ try:
 except ImportError:  # pragma: no cover - 取决于运行方式
     import token_store  # type: ignore[no-redef]
 
-TRACKER_FILE = Path("/data/.autobuddy/token_stats_logs.json")
+# 2026-10-24：路径统一走 paths 模块。
+#
+# 原来这行是裸字符串 Path("/data/.autobuddy/token_stats_logs.json")，绕过了
+# AB_DATA_DIR。它不是孤立的 —— 下面 _store() / _rollup_path() 都用
+# TRACKER_FILE.parent 来决定 token_stats.db（5MB+ 用量库）与 rollup 文件的位置。
+# 换挂载点时那两处会静默写进容器可写层，重建即丢。
+try:                                  # gateway/ 在 sys.path 上（web_proxy 那种跑法）
+    from paths import get_data_file as _get_data_file
+except ImportError:                   # 仓库根在 sys.path 上（from gateway import ...）
+    from gateway.paths import get_data_file as _get_data_file
+TRACKER_FILE = _get_data_file("token_stats_logs.json")
 
 # Token 用量的存储后端。
 #

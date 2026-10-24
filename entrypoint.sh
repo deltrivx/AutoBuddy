@@ -64,8 +64,13 @@ echo "=== 启动 AutoBuddy & OpenAI API Gateway ==="
 # 容器 HOME=/data，真实持久化数据保存在 /data/.autobuddy/。
 # 建立 /data/.wb-switch 自动软链 / 同步，彻底保障官方服务读取原有账号与凭据。
 # ==============================================================================
-mkdir -p /data/.autobuddy
-mkdir -p /data/.wb-switch
+# 2026-10-24：目录不再写死 /data，改为跟随 AB_DATA_DIR 与 HOME ——
+# 与 gateway/paths.py 的 get_data_dir() / get_switch_dir() 保持同一套推导。
+# 否则改挂载点后，Python 侧跟着新路径走、这里还在建旧路径，两边打架。
+AB_DATA_DIR="${AB_DATA_DIR:-/data/.autobuddy}"
+AB_HOME="${HOME:-/data}"
+mkdir -p "$AB_DATA_DIR"
+mkdir -p "$AB_HOME/.wb-switch"
 
 # 自动双向映射保障
 #
@@ -99,18 +104,18 @@ is_sqlite_sidecar() {
     esac
 }
 
-for f in /data/.autobuddy/*; do
+for f in "$AB_DATA_DIR"/*; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     fname=$(basename "$f")
     is_sqlite_sidecar "$fname" && continue
-    link_if_absent "/data/.autobuddy/$fname" "/data/.wb-switch/$fname"
+    link_if_absent "$AB_DATA_DIR/$fname" "$AB_HOME/.wb-switch/$fname"
 done
 # 反向保障（官方生成的新文件落到 .autobuddy）
-for f in /data/.wb-switch/*; do
+for f in "$AB_HOME/.wb-switch"/*; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     fname=$(basename "$f")
     is_sqlite_sidecar "$fname" && continue
-    link_if_absent "/data/.wb-switch/$fname" "/data/.autobuddy/$fname"
+    link_if_absent "$AB_HOME/.wb-switch/$fname" "$AB_DATA_DIR/$fname"
 done
 
 

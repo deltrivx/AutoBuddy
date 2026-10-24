@@ -33,6 +33,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
+try:
+    from paths import get_switch_file          # gateway/ 在 sys.path 上
+except ImportError:                            # 仓库根在 sys.path 上
+    from gateway.paths import get_switch_file
 
 # ⚠️ 两个目录的职责（2026-10-13 核实 git 历史 + 实证后定论，切勿删错）：
 #   - /data/.wb-switch/  ← **官方引擎（autobuddy-engine，闭源二进制）的数据目录**。
@@ -52,7 +56,7 @@ DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
 # DATA_DIR 那份只作回退（防某天引擎改目录时还能跑）。
 def _pick_snapshot_file():
     candidates = [
-        Path("/data/.wb-switch/credit_usage_snapshots.json"),
+        get_switch_file("credit_usage_snapshots.json"),
         DATA_DIR / "credit_usage_snapshots.json",
     ]
     best = None

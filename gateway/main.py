@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.30"
+VERSION_DEFAULT = "1.0.31"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -155,6 +155,10 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="AutoBuddy OpenAI Gateway", version=GATEWAY_VERSION, lifespan=lifespan)
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
+try:
+    from paths import get_switch_file          # gateway/ 在 sys.path 上
+except ImportError:                            # 仓库根在 sys.path 上
+    from gateway.paths import get_switch_file
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool_config.json"
 SELECTION_LOG_FILE = DATA_DIR / "selection_logs.json"
 # 模型级禁用策略：某些账号的个别模型会因优惠政策调整 / 时效到期而不可调用，
@@ -1233,7 +1237,7 @@ def _save_accounts(accounts: List[Dict[str, Any]]) -> None:
     避免每次刷新令牌都攒一个新文件。
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    primary = Path("/data/.wb-switch/accounts.json")
+    primary = get_switch_file("accounts.json")
     targets = [primary] if primary.parent.exists() else []
     local = DATA_DIR / "accounts.json"
     if local not in targets:
@@ -4168,7 +4172,7 @@ def _load_accounts() -> List[Dict[str, Any]]:
     读不到就返回空列表，绝不因账号文件异常而让网关崩溃。
     """
     merged: Dict[str, Dict[str, Any]] = {}
-    sources = [Path("/data/.wb-switch/accounts.json"), DATA_DIR / "accounts.json"]
+    sources = [get_switch_file("accounts.json"), DATA_DIR / "accounts.json"]
     for accounts_file in sources:
         if not accounts_file.exists():
             continue

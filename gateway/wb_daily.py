@@ -51,6 +51,10 @@ except ImportError:  # pragma: no cover - 取决于运行方式
     import fingerprint  # type: ignore[no-redef]
 
 DATA_DIR = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy"))
+try:
+    from paths import get_switch_file          # gateway/ 在 sys.path 上
+except ImportError:                            # 仓库根在 sys.path 上
+    from gateway.paths import get_switch_file
 CONFIG_FILE = DATA_DIR / "wb_daily_config.json"
 WORK_DIR = DATA_DIR / "wb-daily"
 # 账号池有两份文件，且内容并不一致，**必须合并读**：
@@ -58,7 +62,7 @@ WORK_DIR = DATA_DIR / "wb-daily"
 #     （如「一杯美式」）先出现在这里；
 #   - $AB_DATA_DIR/accounts.json —— 容器自己的副本，字段更全。
 # 早先只读官方那一份，导致容器副本里独有的账号在每日任务里出现不了。
-ACCOUNTS_JSON = Path("/data/.wb-switch/accounts.json")
+ACCOUNTS_JSON = get_switch_file("accounts.json")   # 官方镜像目录，见 gateway/paths.py
 ACCOUNTS_JSON_LOCAL = Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json"
 
 

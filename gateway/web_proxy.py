@@ -1,4 +1,8 @@
 import db
+try:
+    from paths import get_switch_file          # gateway/ 在 sys.path 上
+except ImportError:                            # 仓库根在 sys.path 上
+    from gateway.paths import get_switch_file
 import json
 import logging
 import os
@@ -11139,7 +11143,7 @@ _MDL_TTL_SEC = 120.0
 def _credit_snapshot_files():
     """快照文件（两个位置都可能有，合并读取）。"""
     out = []
-    for p in (Path("/data/.wb-switch/credit_usage_snapshots.json"),
+    for p in (get_switch_file("credit_usage_snapshots.json"),
               Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "credit_usage_snapshots.json"):
         try:
             if p.exists():
@@ -11360,7 +11364,7 @@ async def credits_stats_proxy(request: Request, user: "str" = Depends(require_us
     # 正确做法：两个来源取**并集**，谁都不漏。
     valid_account_ids = set()
     for acc_file in [Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json",
-                     Path("/data/.wb-switch/accounts.json")]:
+                     get_switch_file("accounts.json")]:
         if not acc_file.exists():
             continue
         try:
@@ -12547,7 +12551,7 @@ def _load_accounts_for_models() -> list:
     绝不因账号文件异常而让调用方失败。
     """
     merged: Dict[str, Dict[str, Any]] = {}
-    for acc_file in [Path("/data/.wb-switch/accounts.json"),
+    for acc_file in [get_switch_file("accounts.json"),
                      Path(os.getenv("AB_DATA_DIR", "/data/.autobuddy")) / "accounts.json"]:
         if not acc_file.exists():
             continue
