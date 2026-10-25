@@ -129,13 +129,14 @@ check("零时长不显示时长行", "已运行" not in "\n".join(
 print("\n[6] 场景总数与既有场景不冲突")
 
 # 2026-10-21 加 account_risk_alert（推测性风控预警）后为 9，
-# 同日又加 account_risk_flagged（上游确诊风控标记）后为 10。
+# 同日又加 account_risk_flagged（上游确诊风控标记）后为 10；
+# 2026-10-25 并入账号池就绪探针场景 account_pool_ready 后为 11。
 # 这里断言的是「数量与登记表一致」，再登记场景就改这一处。
-check("场景数 = 10", len(N.SCENES) == 10, f"got {len(N.SCENES)}")
+check("场景数 = 11", len(N.SCENES) == 11, f"got {len(N.SCENES)}")
 keys = [s["key"] for s in N.SCENES]
 check("场景键唯一", len(keys) == len(set(keys)))
 for must in ("task_done", "task_failed_analysis", "account_risk_alert",
-             "account_risk_flagged"):
+             "account_risk_flagged", "account_pool_ready"):
     check(f"既有场景 {must} 仍在", must in keys)
 # 两个风控场景都是纯通知，且**刻意分开**：一个是「可能被限流」的推测，
 # 一个是「上游确诊被拦」的事实。合成一个，用户就分不清该等一会儿

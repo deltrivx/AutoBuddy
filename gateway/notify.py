@@ -163,6 +163,11 @@ SCENES: List[Dict[str, str]] = [
     # 而这两件事的处置完全不同（限流等一会儿，风控要人工介入）。
     {"key": "account_risk_flagged", "name": "账号被风控标记",
      "desc": "上游明确返回 11140 判定账号被拦时推送（仅通知，不自动停用）"},
+    # 账号池就绪探针（2026-10-25 并入，源：v1.0.16 补丁镜像 优化9）：
+    # 可用账号归零是全网停摆级事件，必须第一时间知道。
+    # 只报「上一轮 >0 且本轮 =0」的下降沿；归零期间由冷却/风控场景负责。
+    {"key": "account_pool_ready", "name": "账号池就绪探针",
+     "desc": "定时巡检可用账号数，归零时推送告警（复用 system 通知场景的定位）"},
     # 保留的通用场景
     {"key": "account_low", "name": "账号余额不足",
      "desc": "账号余额低于阈值时提醒"},
@@ -2205,7 +2210,8 @@ def build_daily_report(yesterday_credits: Dict[str, Any],
 
 
 def build_checkin_done(checkin_credits: float, remaining: float,
-                       total: float) -> tuple:
+                       total: float, today_task: float = 0.0,
+                       usage_today: float = None) -> tuple:
     """② 签到成功：签到积分 + 账号池剩余 + 累计任务积分。
 
     ⚠️ 口径（2026-10-13 用户反馈「通知里剩余积分大于总积分」）：
@@ -2214,9 +2220,18 @@ def build_checkin_done(checkin_credits: float, remaining: float,
     并列成「剩余 / 总」必然出现「剩余 > 总」的悖论。
 
     改为各自带明确归属：余额归账号池，累计归任务台账，不再并排比较。
+
+    2026-10-25 并入（源：v1.0.16 补丁镜像「院长需求」）：补「今日新增」
+    「今日消耗」两行。today_task / usage_today 均可选（默认 0 / None），
+    旧调用不受影响；usage_today 取不到时显示 —（区别于真实的 0）。
     """
+    _today_total = float(checkin_credits or 0) + float(today_task or 0)
+    _usage_txt = "—" if usage_today is None else _fmt_num(usage_today)
     lines = [
         "  · 本次签到积分：%s" % _fmt_num(checkin_credits),
+        "  · 今日新增：%s（签到 %s / 任务 %s）" % (
+            _fmt_num(_today_total), _fmt_num(checkin_credits), _fmt_num(today_task)),
+        "  · 今日消耗：%s" % _usage_txt,
         "  · 账号池剩余积分：%s" % _fmt_num(remaining),
         "  · 累计任务积分：%s" % _fmt_num(total),
     ]

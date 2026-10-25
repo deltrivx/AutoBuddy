@@ -237,6 +237,11 @@ def default_config() -> Dict[str, Any]:
         "autoDisableAccounts": True,
         # 是否把每轮结果落盘，供重启后界面回显
         "logResults": True,
+        # 账号级自动启用（2026-10-25 并入，源：v1.0.16 补丁镜像 2026-10-21 优化6）：
+        # 此前不在 _coerce_config 白名单，run_health_check 里
+        # config.get("autoEnableAccounts", True) 永远拿 True，用户关不掉 = 隐性常开。
+        # 补进白名单，默认开（与既有行为一致）但可显式关闭。
+        "autoEnableAccounts": True,
     }
 
 
@@ -257,6 +262,8 @@ def _coerce_config(raw: Any) -> Dict[str, Any]:
         cfg["checkAccounts"] = bool(raw.get("checkAccounts"))
     if "autoDisableAccounts" in raw:
         cfg["autoDisableAccounts"] = bool(raw.get("autoDisableAccounts"))
+    if "autoEnableAccounts" in raw:
+        cfg["autoEnableAccounts"] = bool(raw.get("autoEnableAccounts"))
 
     try:
         interval = int(raw.get("intervalMinutes", DEFAULT_INTERVAL_MINUTES))
@@ -301,7 +308,7 @@ def merge_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(payload, dict):
         for key in ("enabled", "intervalMinutes", "accountIds",
                     "onlyUsedModels", "autoEnable", "logResults",
-                    "checkAccounts", "autoDisableAccounts"):
+                    "checkAccounts", "autoDisableAccounts", "autoEnableAccounts"):
             if key in payload:
                 current[key] = payload[key]
     return save_config(current)
@@ -1171,7 +1178,7 @@ def run_round(accounts: List[Dict[str, Any]],
         # 但判据必须是**账号级结论**，不能是「名下某个模型探测通过了」：
         # 账号整体被风控时，个别模型偶然通过不代表它能用。
         # 也只放得开 auto 来源，人工停用的账号巡检无权替人放开。
-        if check_accounts and bool(config.get("autoEnableAccounts", True)):
+        if check_accounts and bool(config.get("autoEnableAccounts", False)):
             acc_policy = account_policy.load_policy()
             changed = False
             for acc_id, verdict in account_probes.items():

@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v2.0.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.0.0)
+**当前稳定版：** [v2.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.1.0)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v2.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.1.0) | 2026-10-25 | 并入另一设备 v1.0.16 补丁镜像的 5 项有效补丁：账号池归零告警、TTFB 埋点接线、autoEnableAccounts 白名单、refresh_guard 落盘加锁、签到推送补今日新增/消耗 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.1.0.md) |
 | [v2.0.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.0.0) | 2026-10-25 | 正式版：取消签到/旅行选中态背景，选中指示只剩品牌色图标，「账号」行全控件视觉统一 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.0.0.md) |
 | [v1.0.40](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.40) | 2026-10-25 | 「账号」行全控件对齐签到/旅行按钮未选中态：分隔线隐藏、搜索框转透明、列表/刷新剥背景 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.40.md) |
 | [v1.0.39](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.39) | 2026-10-25 | 移动端搜索图标兜底背景从 --card 改 --accent，消除浅色主题下与相邻按钮的两张皮 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.39.md) |
@@ -234,7 +235,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:2.0.0    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:2.1.0    # 锁定版本
 ```
 
 ## 部署产物

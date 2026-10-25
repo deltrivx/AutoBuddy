@@ -1338,7 +1338,8 @@ check("实测·风控停用写的是 auto 来源（可被自愈放回）",
 account_policy.save_policy({_AID: "auto"})
 _ok_round = model_health.run_round(
     accounts=[accounts[0]],
-    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True,
+            "autoEnableAccounts": True},
     client_factory=lambda: FakeClient({(_TOK, "hy3"): 200, (_TOK, "kimi-k3"): 200}),
     base_url_for=lambda variant="ai": "https://example.test",
     used_models={},
@@ -1349,6 +1350,21 @@ check("实测·账号恢复正常 → 被自动放回轮询",
       f"got {_ok_round.get('accountsEnabled')}")
 check("实测·放回后策略里不再有该账号",
       _AID not in account_policy.load_policy(),
+      f"got {account_policy.load_policy()}")
+
+# v2.1.0 并入（源：v1.0.16 补丁镜像）：autoEnableAccounts 进配置白名单后，
+# 缺键（旧配置文件）默认 False —— 不再隐性常开，用户关得掉。
+account_policy.save_policy({_AID: "auto"})
+_off_round = model_health.run_round(
+    accounts=[accounts[0]],
+    config={"accountIds": [], "onlyUsedModels": False, "autoEnable": True},
+    client_factory=lambda: FakeClient({(_TOK, "hy3"): 200, (_TOK, "kimi-k3"): 200}),
+    base_url_for=lambda variant="ai": "https://example.test",
+    used_models={},
+    base_models=["hy3", "kimi-k3"],
+)
+check("实测·未显式开启 autoEnableAccounts 时账号保持停用（隐性常开修复）",
+      _AID in account_policy.load_policy(),
       f"got {account_policy.load_policy()}")
 
 # 人工停用的账号，巡检无权替人放开

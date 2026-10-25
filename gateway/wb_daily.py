@@ -506,6 +506,27 @@ class DailyJob:
                 summ = _db.summarize_wb_daily_credits() or {}
                 checkin = float(summ.get("todayCheckinCredits") or 0)
                 total = float(summ.get("totalCredits") or 0)
+                # 2026-10-25 并入（源：v1.0.16 补丁镜像「院长需求」）：
+                # 推送补「今日新增/今日消耗」。
+                # 今日任务积分 = 今日合计 - 今日签到；今日消耗问 WebUI 代理。
+                # ⚠️ 与补丁原版的差异：原版直连官方后端 57890（未校准口径且
+                # 端口写死）；本版改调 WebUI 代理（PORT，默认 18090）的
+                # /api/credits/stats —— summary.usageToday 已被
+                # _reconcile_official_usage() 校准（见 web_proxy.py 注释：
+                # 官方原始 accounts[].daily 口径不准）。
+                today_task = max(0.0, float(summ.get("todayCredits") or 0) - checkin)
+                usage_today = None
+                try:
+                    import urllib.request as _urq
+                    import json as _json
+                    _port = int(os.getenv("PORT", "18090") or 18090)
+                    _cs = _json.loads(_urq.urlopen(
+                        "http://127.0.0.1:%d/api/credits/stats" % _port,
+                        timeout=8).read().decode("utf-8", "replace"))
+                    _u = float(((_cs.get("summary") or {}).get("usageToday")) or 0)
+                    usage_today = _u      # 拿到即算 0 也是真 0
+                except Exception:
+                    usage_today = None    # 取不到显示 —
                 remaining = 0.0
                 try:
                     import credit_floor
@@ -513,7 +534,9 @@ class DailyJob:
                     remaining = sum(v for v in bals.values() if isinstance(v, (int, float)))
                 except Exception:
                     pass
-                title, lines = notify.build_checkin_done(checkin, remaining, total)
+                title, lines = notify.build_checkin_done(
+                    checkin, remaining, total,
+                    today_task=today_task, usage_today=usage_today)
                 r = notify.send_scene("checkin_done", title, lines)
                 if r.get("ok"):
                     # 只有真的发出去了才记时间戳：被内容去重（deduped）不算一次

@@ -31,6 +31,61 @@
 
 ---
 
+## [v2.1.0] - 2026-10-25
+
+<!-- summary: 并入另一设备 v1.0.16 补丁镜像的 5 项有效补丁：账号池归零告警、TTFB 埋点接线、autoEnableAccounts 白名单、refresh_guard 落盘加锁、签到推送补今日新增/消耗 -->
+
+### 新增
+
+- **账号池就绪探针**（源补丁「优化9」，`gateway/main.py` 的
+  `account_pool_ready_loop()` + `gateway/notify.py` 新场景
+  `account_pool_ready`）：5 分钟一轮统计可用账号数（停用/风控/冷却叠加后
+  的结论），只在「上一轮 >0 且本轮 =0」下降沿推送告警 —— 账号池归零是
+  全网停摆级事件；恢复不推送，连续归零由 send_scene 内容指纹去重。
+  设置页可按场景开关。
+
+### 修复
+
+- **流式首帧 TTFB 埋点接线**（源补丁「优化7」，`gateway/main.py`）：
+  `reqlog.set_status()` 早已存在却一直没有调用方 —— 面板的请求指标里
+  首字节耗时（模型开始吐字的延迟）一直是空的。现在流式路径首帧到达即记
+  `status + ttfb_ms`。
+- **refresh_guard 落盘加锁**（源补丁「优化7」，`gateway/refresh_guard.py`）：
+  `_save()` 此前无锁，并发时两个线程同时 `os.replace` 同一 tmp 路径可把
+  状态文件写撕裂。整体收进 `_LOCK`。
+- **model_health `autoEnableAccounts` 进配置白名单**（源补丁「优化6 补
+  字段」）：此前不在 `_coerce_config` 键表，`run_health_check` 里
+  `config.get("autoEnableAccounts", True)` 永远拿 True —— 用户在设置页
+  关不掉，隐性常开。现补进 `default_config` / `_coerce_config` /
+  `merge_config` 三处；使用点缺键默认改 **False**（旧配置文件不再隐性
+  开启），显式开启才生效。
+
+### 变更
+
+- **签到成功推送补「今日新增」「今日消耗」两行**（源补丁「院长需求」，
+  `gateway/notify.py` 的 `build_checkin_done()` + `gateway/wb_daily.py`）：
+  今日新增 = 签到 + 任务（台账口径）；今日消耗取自 WebUI 代理的
+  `/api/credits/stats`（`summary.usageToday` 已被 `_reconcile_official_usage()`
+  校准）。⚠️ 与补丁原版的差异：原版直连官方后端 57890（口径未校准、端口
+  写死），本版改走代理校准口径，端口跟随 `PORT` 环境变量；取不到时显示
+  「—」（区别于真实的 0）。新参数均为可选，旧调用不受影响。
+
+### 判定记录（另一设备补丁镜像的其余 2 项）
+
+- **wb_daily 刷屏根因修复（rc 判定错配 else 分支）** —— 上游 v1.0.22+ 已
+  重构并入（「整轮 status 判定只看 rc」），无需重复。
+- **anchor_pilot 锚点轮小流量** —— 补丁自身未接任何 API/UI（无入口、
+  无持久化、无调用方传参），属未完成的实验代码，**忽略不并入**。
+
+### 测试
+
+- 新增 `tests/test_merged_patches.py`（17 项）：逐补丁锁定接入点、调用方、
+  白名单、加锁与口径；并断言 anchor_pilot 未被误并入。
+- `tests/test_model_health.py` 补「缺键不隐性开启」实测断言（+3 项）；
+  `tests/test_broadcast_analysis.py` 场景数 10 → 11。
+
+---
+
 ## [v2.0.0] - 2026-10-25
 
 <!-- summary: 正式版：取消签到/旅行选中态背景，选中指示只剩品牌色图标，「账号」行全控件视觉统一 -->
@@ -6066,7 +6121,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.0.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.0...HEAD
+[v2.1.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.0.0...v2.1.0
 [v2.0.0]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.40...v2.0.0
 [v1.0.40]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.39...v1.0.40
 [v1.0.39]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.38...v1.0.39

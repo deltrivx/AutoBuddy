@@ -84,16 +84,20 @@ def _load() -> Dict[str, Any]:
 
 
 def _save(state: Dict[str, Any]) -> None:
-    try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = str(STATE_FILE) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, STATE_FILE)
-    except Exception as e:
-        print(f"[refresh_guard] save failed: {e}")
+    # 2026-10-25 并入（源：另一设备 v1.0.16 补丁镜像 2026-10-21 优化7）：
+    # 落盘加 _LOCK —— 此前仅单飞标记有锁，_save 无锁可被并发撕裂
+    #（两个线程同时 os.replace 同一 tmp 路径，一方读到半截 JSON）。
+    with _LOCK:
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = str(STATE_FILE) + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, STATE_FILE)
+        except Exception as e:
+            print(f"[refresh_guard] save failed: {e}")
 
 
 # ---------------------------------------------------------------------------

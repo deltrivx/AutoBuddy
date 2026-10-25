@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.0.0"
+VERSION_DEFAULT = "2.1.0"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -144,12 +144,17 @@ async def lifespan(_app: FastAPI):
     health_task = asyncio.create_task(model_health_loop())
     upstream_task = asyncio.create_task(upstream_models_loop())
     report_task = asyncio.create_task(daily_report_loop())
+    # 2026-10-25 并入（源：另一设备 v1.0.16 补丁镜像 2026-10-21 优化9）：
+    # 账号池就绪探针 —— 可用账号归零是全网停摆级事件，5 分钟一轮巡检告警。
+    pool_probe_task = asyncio.create_task(account_pool_ready_loop())
     try:
         yield
     finally:
         task.cancel()
         health_task.cancel()
         upstream_task.cancel()
+        report_task.cancel()
+        pool_probe_task.cancel()
 
 
 app = FastAPI(title="AutoBuddy OpenAI Gateway", version=GATEWAY_VERSION, lifespan=lifespan)
@@ -1120,6 +1125,49 @@ async def daily_report_loop() -> None:
         except Exception as e:
             lprint("report", f"loop error: {e}")
             await asyncio.sleep(300)
+
+
+async def account_pool_ready_loop() -> None:
+    """账号池就绪探针（2026-10-25 并入，源：v1.0.16 补丁镜像 优化9）。
+
+    定时数可用账号，归零推通知：
+    - 只在「上一轮 >0 且本轮 =0」的下降沿推送（send_scene 自带内容指纹
+      去重，连续归零也只会发一条）；恢复不推送，避免噪音。
+    - _account_is_usable 已综合停用/风控标记/冷却 —— 这里不再重复判定。
+    - 异常绝不外抛：探针自己挂掉不能拖垮整个事件循环。
+    """
+    print("[pool-probe] account pool readiness probe started (5 min interval)")
+    prev_usable: int = -1
+    while True:
+        try:
+            accounts = _load_accounts()
+            now_ms = int(time.time() * 1000)
+            usable = [a for a in accounts if _account_is_usable(a, now_ms)]
+            count = len(usable)
+            if prev_usable > 0 and count == 0:
+                total = len(accounts)
+                names = ", ".join(_account_label(a) for a in accounts[:8]) or "(空池)"
+                try:
+                    r = await asyncio.to_thread(
+                        _notify_mod.send_scene,
+                        "account_pool_ready",
+                        "🚨 账号池可用账号归零",
+                        [
+                            f"账号总数 {total}，当前可用 0（停用/风控/冷却全部叠加后的结论）",
+                            f"账号清单：{names}",
+                            "所有转发请求将立即失败，请尽快检查账号状态与凭据。",
+                        ],
+                    )
+                    if not r.get("ok") and "总开关未开启" not in str(r.get("error") or ""):
+                        lprint("pool-probe", f"notify failed: {_scene_err(r)}")
+                except Exception as _e:
+                    lprint("pool-probe", f"notify failed: {_e}")
+            prev_usable = count
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            lprint("pool-probe", f"loop error: {e}")
+        await asyncio.sleep(300)
 
 
 _MODEL_CACHE: Dict[str, Any] = {"signature": None, "catalog": []}
@@ -3943,8 +3991,20 @@ async def chat_completions(request: Request):
             # 逐块扫描而非缓冲：先 yield 把字节送出去，再解析这一块。
             # 只留「最后一行没读完」的残余，正文只数字符不存内容。
             scanner = UsageScanner()
+            # 2026-10-25 并入（源：v1.0.16 补丁镜像 优化7）：首帧 TTFB 埋点。
+            # reqlog.set_status 早已存在却一直没有调用方 —— 流式请求在
+            # reqlog 里只记整流总耗时，首字节耗时（模型开始吐字的延迟）
+            # 这个最有诊断价值的指标一直是空的。首帧到达即记一次。
+            _first_chunk = True
             try:
                 async for chunk in res.aiter_bytes():
+                    if _first_chunk:
+                        _first_chunk = False
+                        try:
+                            reqlog.set_status(rid, res.status_code,
+                                              (time.time() - start_time) * 1000.0)
+                        except Exception:
+                            pass
                     yield chunk
                     scanner.feed(chunk)
                 reqlog.done(rid, reqlog.OUTCOME_SUCCESS)
