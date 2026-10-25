@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v1.0.38](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.38)
+**当前稳定版：** [v1.0.39](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.39)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v1.0.39](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.39) | 2026-10-25 | 移动端搜索图标兜底背景从 --card 改 --accent，消除浅色主题下与相邻按钮的两张皮 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.39.md) |
 | [v1.0.38](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.38) | 2026-10-25 | 「账号」行右侧控件间距归一化（分隔线 mx 归零），刷新按钮补同款背景，两主题自动跟随 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.38.md) |
 | [v1.0.37](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.37) | 2026-10-25 | 账号页搜索框配色对齐「账号」行图标按钮（bg-accent + --border），两个主题自动跟随 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.37.md) |
 | [v1.0.36](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.36) | 2026-10-25 | 账号页搜索框进「账号」行图标按钮前，移动端同款搜索图标 + 弹窗过滤（用户方案） | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.36.md) |
@@ -231,7 +232,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:1.0.38    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:1.0.39    # 锁定版本
 ```
 
 ## 部署产物

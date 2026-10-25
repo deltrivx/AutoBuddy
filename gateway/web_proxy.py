@@ -508,14 +508,16 @@ COLLAPSE_SCRIPT = r"""
     height: 36px;
     border-radius: 10px;
     border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
-    background: var(--card, #ffffff);
+    /* v1.0.39：兜底背景从 --card 改 --accent —— 本规则在官方 Tailwind 之后
+       加载，同优先级会盖掉克隆来的 bg-accent（浅色下露出纯白，与旁边按钮
+       两张皮）。改用 --accent 后：盖掉与被盖两个值同源，两主题必然一致。 */
+    background: var(--accent, #f4f4f5);
     color: var(--muted-foreground, #6b7280);
     cursor: pointer;
     padding: 0;
   }
   .dark .wb-acc-search-iconbtn,
   html.dark .wb-acc-search-iconbtn {
-    background: var(--popover, #1f2430);
     border-color: rgba(148, 163, 184, 0.28);
   }
   .wb-acc-search-iconbtn svg { width: 16px; height: 16px; }

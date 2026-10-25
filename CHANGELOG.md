@@ -31,6 +31,22 @@
 
 ---
 
+## [v1.0.39] - 2026-10-25
+
+<!-- summary: 移动端搜索图标兜底背景从 --card 改 --accent，消除浅色主题下与相邻按钮的两张皮 -->
+
+### 修复
+
+- **移动端搜索图标浅色主题下背景发白**：图标按钮的兜底 CSS（`.wb-acc-search-iconbtn`
+  的 `background: var(--card)`）在官方 Tailwind 之后加载，同优先级盖掉了
+  运行时克隆来的 `bg-accent` —— 浅色下显示纯白，与旁边浅灰按钮两张皮；
+  深色下 `--card` 与 `--accent` 数值恰好相同所以一直没暴露。兜底改用
+  `--accent` 后，无论克隆类是否被盖，取值都与相邻按钮同源，两主题必然一致
+  （实测浅色 bg=`oklch(0.955 0.004 264)` 与其它按钮逐值相同）。
+  同时移除深色兜底里的 `--popover` 背景覆盖（同一类问题），仅保留边框兜底。
+
+---
+
 ## [v1.0.38] - 2026-10-25
 
 <!-- summary: 「账号」行右侧控件间距归一化（分隔线 mx 归零），刷新按钮补同款背景，两主题自动跟随 -->
@@ -5987,7 +6003,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.38...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.39...HEAD
+[v1.0.39]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.38...v1.0.39
 [v1.0.38]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.37...v1.0.38
 [v1.0.37]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.36...v1.0.37
 [v1.0.36]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.35...v1.0.36
