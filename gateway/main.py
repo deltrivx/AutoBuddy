@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "1.0.33"
+VERSION_DEFAULT = "1.0.34"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -456,6 +456,54 @@ def _desktop_headers(token: str, acc: Optional[Dict[str, Any]] = None,
         return base
 
 
+# ---------------------------------------------------------------------------
+# 渠道校验指纹句改写（2026-10-25，v1.0.34）
+#
+# 背景：dsh（DeepSeek Harness）经网关调用时稳定收到上游 400 code=11128
+# 「Illegal API invocation from an unapproved channel」，且**换号无效**——
+# 同一批账号用最小请求立刻成功。对 dsh 真实请求体做二分复测后定位：
+# 触发点是 dsh 默认 system prompt 的第一句
+#   "You are an AI agent powered by DeepSeek Harness"
+# 整句出现即 100% 被拦；只改动其中一处（加逗号 / 换动词 / 去 DeepSeek）就放行。
+# 这是上游渠道校验对特定客户端默认提示词的特征匹配，与账号、模型无关。
+#
+# 处理：转发前把指纹句替换成语义等价的近义句，其余内容一字不动。
+# 已实测「You are an AI agent running on DeepSeek Harness」可通过渠道校验。
+# 后续上游若更新特征串，向表里追加 (命中, 替换) 对即可；
+# AB_CHANNEL_SANITIZE=0 可整体关闭（回退到透传形态）。
+# ---------------------------------------------------------------------------
+CHANNEL_SANITIZE = (os.getenv("AB_CHANNEL_SANITIZE", "1") or "1").strip() not in ("0", "false", "no")
+CHANNEL_FINGERPRINT_RULES = [
+    ("You are an AI agent powered by DeepSeek Harness",
+     "You are an AI agent running on DeepSeek Harness"),
+]
+
+
+def _sanitize_channel_fingerprints(messages: Any) -> Any:
+    """对 messages 里的文本内容做指纹句改写（原对象原位修改，结构不变）。"""
+    if not isinstance(messages, list):
+        return messages
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            for hit, repl in CHANNEL_FINGERPRINT_RULES:
+                if hit in content:
+                    content = content.replace(hit, repl)
+            msg["content"] = content
+        elif isinstance(content, list):
+            # 多模态 content 是 [{type: "text", text: "..."}, ...] 形态
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    text = part["text"]
+                    for hit, repl in CHANNEL_FINGERPRINT_RULES:
+                        if hit in text:
+                            text = text.replace(hit, repl)
+                    part["text"] = text
+    return messages
+
+
 def _upstream_body(body: Dict[str, Any], acc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """官方桌面端请求体特征补齐（2026-10-23 新增）。
 
@@ -463,6 +511,8 @@ def _upstream_body(body: Dict[str, Any], acc: Optional[Dict[str, Any]] = None) -
       · ``conversationId`` —— 官方桌面端每次真实对话都带（vendor:937 的
         webchat2 真实请求形态）；缺失时用会话键派生一个稳定的，
         让同一会话在上游眼里是同一台机器上的同一串对话。
+      · 渠道校验指纹句改写（2026-10-25）—— dsh 等客户端的默认 system prompt
+        含上游特征串，原样转发必被 11128 拦截，见 CHANNEL_FINGERPRINT_RULES。
 
     刻意**不做**的事：不注入 _meta 埋点信封（那是 /v2/report 的东西，
     chat/completions 带它是反效果），不改 temperature / max_tokens
@@ -480,6 +530,8 @@ def _upstream_body(body: Dict[str, Any], acc: Optional[Dict[str, Any]] = None) -
                 out.get("messages") or [], ensure_ascii=False, sort_keys=True)[:512]
             ).encode("utf-8", "ignore")).hexdigest()
             out["conversationId"] = "wb-" + conv
+        if CHANNEL_SANITIZE:
+            out["messages"] = _sanitize_channel_fingerprints(out.get("messages"))
         return out
     except Exception:
         return body

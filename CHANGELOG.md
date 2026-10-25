@@ -31,6 +31,40 @@
 
 ---
 
+## [v1.0.34] - 2026-10-25
+
+<!-- summary: 转发前改写 dsh 默认提示词里的上游渠道校验指纹句，修复 dsh 调用稳定 400 code=11128 -->
+
+### 修复
+
+- **dsh（DeepSeek Harness）经网关调用稳定收到上游 400 code=11128「Illegal API
+  invocation from an unapproved channel」，换号重试无效**（`gateway/main.py`
+  的 `_upstream_body()`）：
+
+  现象：dsh 发起的请求在候选账号上轮遍全部被 11128 拦截，而同一批账号用最小
+  OpenAI 请求立刻成功 —— 与账号、模型、UA、头族均无关，是**请求体文本**触发。
+
+  二分定位：把 dsh 真实请求体逐级裁剪回放，最后收敛到 dsh 默认 system prompt
+  的第一句 —— **`You are an AI agent powered by DeepSeek Harness`**。该句出现
+  即 100% 被拦（多次复测稳定），只改动其中一处（加逗号 / 换动词 / 去品牌词）
+  即放行；同请求其余内容（26KB 提示词、25 个 tools 定义、stream_options 等
+  字段）均不触发。结论：上游渠道校验对特定客户端默认提示词做**特征串匹配**，
+  dsh 恰好命中。
+
+  处理：转发前按新增的 `CHANNEL_FINGERPRINT_RULES` 把指纹句改写为语义等价的
+  近义句（实测 `running on` 版本可通过渠道校验），其余内容一字不动；多模态
+  content（list 形态）一并覆盖。`AB_CHANNEL_SANITIZE=0` 可整体关闭回退透传。
+  上游后续若更换特征串，向规则表追加 `(命中, 替换)` 对即可，不改逻辑。
+
+### 测试
+
+- 新增 `tests/test_channel_sanitize.py`（10 项）：沿用**源码驱动**方式，直接
+  从 `main.py` 抽出改写表与接线做断言，并原样复现改写逻辑验证 str 与多模态
+  list 两种 content 形态、其余片段不被误改。锁死「指纹句必须被覆盖、替换串
+  不得再含命中串」两条回归红线。
+
+---
+
 ## [v1.0.33] - 2026-10-24
 
 <!-- summary: officialUsage.status 改为按账本接管情况判定，消除「部分账号未同步」误报 -->
@@ -5816,7 +5850,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.33...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.34...HEAD
+[v1.0.34]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.33...v1.0.34
 [v1.0.33]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.32...v1.0.33
 [v1.0.32]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.31...v1.0.32
 [v1.0.31]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.30...v1.0.31
