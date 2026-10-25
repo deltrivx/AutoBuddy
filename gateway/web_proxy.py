@@ -506,19 +506,15 @@ COLLAPSE_SCRIPT = r"""
     justify-content: center;
     width: 36px;
     height: 36px;
-    border-radius: 10px;
-    border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
-    /* v1.0.39：兜底背景从 --card 改 --accent —— 本规则在官方 Tailwind 之后
-       加载，同优先级会盖掉克隆来的 bg-accent（浅色下露出纯白，与旁边按钮
-       两张皮）。改用 --accent 后：盖掉与被盖两个值同源，两主题必然一致。 */
-    background: var(--accent, #f4f4f5);
-    color: var(--muted-foreground, #6b7280);
+    border-radius: 12px;
+    border: none;
+    /* v1.0.40：以未选中态为标准 —— 背景透明、无边框；克隆自兄弟按钮的
+       bg-accent 已在运行时剥离（wbInjectAccountSearch），这里兜底同样透明，
+       两主题天然一致（透明无需变量跟随）。 */
+    background: transparent;
+    color: var(--foreground, #374151);
     cursor: pointer;
     padding: 0;
-  }
-  .dark .wb-acc-search-iconbtn,
-  html.dark .wb-acc-search-iconbtn {
-    border-color: rgba(148, 163, 184, 0.28);
   }
   .wb-acc-search-iconbtn svg { width: 16px; height: 16px; }
   /* 过滤生效中：图标点亮，提醒移动端用户当前列表处于过滤态 */
@@ -526,11 +522,12 @@ COLLAPSE_SCRIPT = r"""
     border-color: rgba(59, 130, 246, 0.65) !important;
     color: #3b82f6 !important;
   }
-  /* v1.0.38：刷新按钮官方是透明 ghost 形态（lucide-refresh-cw，无 bg-accent），
-     与旁边自动签到/自动执行/视图切换三个按钮不一致（用户要求「加一样的背景」）。
-     用官方 --accent 变量补背景 —— 与 bg-accent 同源，两个主题自动跟随。 */
-  button.wb-acc-btn-flat {
-    background: var(--accent, #f4f4f5);
+  /* v1.0.40：列表切换（lucide-rows3）官方常驻 bg-accent，刷新本就透明 ——
+     用户要求全部对齐「签到/旅行」的未选中态（透明 ghost）。本类由
+     wbNormalizeAccountRowActions 运行时挂到这两个按钮上剥掉背景；
+     官方 hover:bg-accent 优先级更高（:hover 伪类），悬停反馈保留。 */
+  button.wb-acc-btn-ghost {
+    background: transparent;
   }
   .wb-acc-search-box {
     display: flex;
@@ -538,24 +535,24 @@ COLLAPSE_SCRIPT = r"""
     gap: 6px;
     height: 36px;                 /* 与「账号」行图标按钮 36×36 对齐 */
     box-sizing: border-box;
-    /* v1.0.37：配色与「账号」行图标按钮完全一致（用户要求「背景相同、
-       两个主题颜色同步」）。按钮实测用的是官方 bg-accent + --border，
-       这里同款取值 —— 两个主题由 --accent / --border 变量自动跟随，
-       不再像旧版那样浅色用 --card（纯白）、深色叠硬编码边框。
-       圆角同按钮 rounded-lg = 12px。 */
-    background: var(--accent, #f4f4f5);
-    border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
+    /* v1.0.40：以「签到/旅行」按钮的**未选中态**为全行统一标准（用户方案）。
+       未选中态实测：背景透明、无边框（border-width 0）、圆角 12px（rounded-lg）、
+       图标 16px / 描边 2 / 前景色。透明背景天然适配两个主题（零变量依赖）；
+       hover / 聚焦时显 var(--accent)，与官方按钮的 hover:bg-accent 同款。 */
+    background: transparent;
+    border: none;
     border-radius: 12px;
     padding: 0 10px;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: background 0.15s ease;
   }
+  .wb-acc-search-box:hover,
   .wb-acc-search-box:focus-within {
-    border-color: rgba(59, 130, 246, 0.65);
+    background: var(--accent, #f4f4f5);
   }
   .wb-acc-search-icon {
-    width: 14px;
-    height: 14px;
-    color: var(--foreground, #374151);   /* 与按钮图标同色（v1.0.37） */
+    width: 16px;                  /* 对齐官方按钮图标 size-4 = 16px */
+    height: 16px;
+    color: var(--foreground, #374151);   /* 未选中态 = 前景色 */
     flex-shrink: 0;
   }
   .wb-acc-search-input {
@@ -6292,22 +6289,21 @@ COLLAPSE_SCRIPT = r"""
         if (cards[i].style.display === "none") cards[i].style.display = "";
       }
     } catch (e) {}
-    // 还原 v1.0.38 归一化改动：分隔线原始 margin、刷新按钮的补背景类
+    // 还原 v1.0.40 归一化改动：分隔线原始 display、ghost 类
     //（「账号」行还在 DOM 里时才有得还原；切页后整行已卸载则自然无需）。
     try {
       var acts = wbFindAccountRowActions();
       if (acts) {
-        var dividers = acts.querySelectorAll("div.bg-border[data-wb-orig-ml]");
+        var dividers = acts.querySelectorAll("div.bg-border[data-wb-orig-display]");
         for (var j = 0; j < dividers.length; j++) {
           var dv = dividers[j];
-          dv.style.marginLeft = dv.dataset.wbOrigMl || "";
-          dv.style.marginRight = dv.dataset.wbOrigMr || "";
-          delete dv.dataset.wbOrigMl;
-          delete dv.dataset.wbOrigMr;
+          dv.style.display = dv.dataset.wbOrigDisplay || "";
+          delete dv.dataset.wbOrigDisplay;
         }
-        var rSvg = acts.querySelector("svg.lucide-refresh-cw");
-        var rBtn = rSvg ? rSvg.closest("button") : null;
-        if (rBtn) rBtn.classList.remove("wb-acc-btn-flat");
+        var ghosts = acts.querySelectorAll("button.wb-acc-btn-ghost");
+        for (var k = 0; k < ghosts.length; k++) {
+          ghosts[k].classList.remove("wb-acc-btn-ghost");
+        }
       }
     } catch (e3) {}
   }
@@ -6340,13 +6336,20 @@ COLLAPSE_SCRIPT = r"""
     return null;
   }
 
-  /* 「账号」行右侧控件归一化（v1.0.38，幂等，每次 run() 重放）：
-     ① 分隔线（div.bg-border）水平 margin 归零 —— 消除 mx-2 撑出的 25px
-        大间隙，全行统一为容器 gap-1 的 4px（PC 4 控件 / 移动端 5 控件一致）；
-     ② 刷新按钮（svg.lucide-refresh-cw）补同款背景 —— 官方此处是透明
-        ghost 形态，与旁边三个 bg-accent 按钮不一致，用户要求统一。
-     React 重渲染会冲掉内联样式与追加的 class，所以不能只在注入时做一次，
-     必须每次 run() 重放；dataset.wbOrigMl/Mr 记录原始内联值供撤销还原。 */
+  /* 「账号」行右侧控件归一化（v1.0.40，幂等，每次 run() 重放）。
+     标准 = 「签到/旅行」两个开关按钮的**未选中态**（用户 2026-10-25 方案）：
+     背景透明、无边框、36px、rounded-lg 12px、图标 16px/描边 2/前景色；
+     选中态只是这两个按钮多了 bg-accent + text-brand，属于官方开关行为，
+     归一化不碰它们的 class。
+     ① 分隔线（div.bg-border）：隐藏本体 —— 只归零 margin 还剩 1px 线 +
+        两侧 gap 共 9px，与相邻 4px 仍不等宽（用户实测「第二个旅行图标和
+        第三个图标间隔明显宽一点」）；隐藏后全行统一容器 gap-1 的 4px。
+     ② 列表切换（lucide-rows3）/ 刷新（lucide-refresh-cw）：官方分别是
+        常驻 bg-accent 与透明 ghost，与未选中标准不一 → 挂 wb-acc-btn-ghost
+        剥掉背景（透明对两个主题天然一致；官方 hover:bg-accent 优先级更高，
+        悬停反馈保留）。
+     React 重渲染会冲掉内联样式与追加的 class，所以每轮 run() 重放；
+     dataset.wbOrigDisplay 记录分隔线原始 display 供撤销还原。 */
   function wbNormalizeAccountRowActions() {
     var actions = wbFindAccountRowActions();
     if (!actions) return;
@@ -6354,16 +6357,16 @@ COLLAPSE_SCRIPT = r"""
       var dividers = actions.querySelectorAll("div.bg-border");
       for (var i = 0; i < dividers.length; i++) {
         var d = dividers[i];
-        if (d.dataset.wbOrigMl === undefined) d.dataset.wbOrigMl = d.style.marginLeft || "";
-        if (d.dataset.wbOrigMr === undefined) d.dataset.wbOrigMr = d.style.marginRight || "";
-        d.style.marginLeft = "0";
-        d.style.marginRight = "0";
+        if (d.dataset.wbOrigDisplay === undefined) d.dataset.wbOrigDisplay = d.style.display || "";
+        d.style.display = "none";
       }
     } catch (e1) {}
     try {
-      var refreshSvg = actions.querySelector("svg.lucide-refresh-cw");
-      var refreshBtn = refreshSvg ? refreshSvg.closest("button") : null;
-      if (refreshBtn) refreshBtn.classList.add("wb-acc-btn-flat");
+      var ghosts = actions.querySelectorAll(
+        "button:has(> svg.lucide-rows3), button:has(> svg.lucide-refresh-cw)");
+      for (var j = 0; j < ghosts.length; j++) {
+        ghosts[j].classList.add("wb-acc-btn-ghost");
+      }
     } catch (e2) {}
   }
 
@@ -6410,15 +6413,17 @@ COLLAPSE_SCRIPT = r"""
         '<span id="wb-account-search-count" class="wb-acc-search-count" style="display:none"></span>' +
       '</div>';
 
-    // 移动端搜索图标按钮：克隆右侧容器现有图标按钮的 class，保证同款外观
-    //（36×36、边框、底色、hover 全部与旁边两个图标一致）。
+    // 移动端搜索图标按钮：克隆右侧容器现有图标按钮的 class，保证同款外观，
+    // 并剥离 bg-accent —— v1.0.40 全行以「未选中态」为标准，克隆源可能是
+    // 处于选中态的开关按钮（bg-accent + text-brand），不剥就会常亮。
     var iconBtn = document.createElement("button");
     iconBtn.type = "button";
     iconBtn.id = "wb-account-search-icon";
     iconBtn.setAttribute("aria-label", "搜索账号");
     var siblingCls = actions && actions.querySelector("button")
       ? actions.querySelector("button").className : "";
-    iconBtn.className = ("wb-acc-search-iconbtn " + siblingCls).trim();
+    iconBtn.className = ("wb-acc-search-iconbtn " + siblingCls)
+      .replace(/\bbg-accent\b/g, "").replace(/\s+/g, " ").trim();
     iconBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
         '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>' +

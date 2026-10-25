@@ -31,6 +31,41 @@
 
 ---
 
+## [v1.0.40] - 2026-10-25
+
+<!-- summary: 「账号」行全控件对齐签到/旅行按钮未选中态：分隔线隐藏、搜索框转透明、列表/刷新剥背景 -->
+
+### 变更
+
+- **全行控件对齐「签到/旅行」按钮的未选中态**（用户 2026-10-25 方案：
+  「这两个只是多了个选中状态，以未选中状态为标准」）。
+
+  未选中态实测标准：背景透明、无边框（border-width 0）、36px、圆角 12px
+  （rounded-lg）、图标 16px（size-4）/ 描边 2 / 前景色；选中态只是多了
+  `bg-accent` + `text-brand`（官方开关行为，归一化不碰）。
+
+  | 控件 | 改动 |
+  | :--- | :--- |
+  | 分隔线 | **整个隐藏** —— v1.0.38 只归零 margin 仍剩 1px 线 + 两侧 gap 共 9px，与相邻 4px 不等宽（用户实测「旅行→视图切换间隔明显宽一点」）；隐藏后全行统一 4px |
+  | 搜索框 | 背景转透明、去边框（v1.0.37 的 `--accent` 底废止）；hover / 聚焦显 `var(--accent)`，与官方 `hover:bg-accent` 同款；透明背景对两个主题天然一致 |
+  | 列表切换 | 官方常驻 `bg-accent`，运行时挂 `wb-acc-btn-ghost` 剥掉 |
+  | 刷新 | v1.0.38 补的背景撤回（回到官方透明 ghost），同样挂 ghost 类保持一致 |
+  | 移动端图标 | 克隆兄弟 class 时**剥离 `bg-accent`**——克隆源可能是选中态的开关按钮，不剥会常亮 |
+  | 图标 | 搜索图标从 14px 提到 16px，对齐官方 `size-4`；描边统一 stroke-width 2 |
+
+- **实现**：归一化仍每轮 run() 重放（幂等，抗 React 冲样式），分隔线原始
+  display 记在 `dataset.wbOrigDisplay`，撤销时还原并摘除 ghost 类；
+  `wb-acc-btn-ghost` 只剥背景（透明），官方 `hover:bg-accent` 优先级更高，
+  悬停反馈保留。
+
+### 测试
+
+- `tests/legacy/test_v1010_features.py` [1b] 契约重写为 v1.0.40：分隔线隐藏、
+  ghost 类、搜索框透明 + hover accent、克隆剥 bg-accent、图标 16px、
+  dataset 还原共 9 项。
+
+---
+
 ## [v1.0.39] - 2026-10-25
 
 <!-- summary: 移动端搜索图标兜底背景从 --card 改 --accent，消除浅色主题下与相邻按钮的两张皮 -->
@@ -6003,7 +6038,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.39...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.40...HEAD
+[v1.0.40]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.39...v1.0.40
 [v1.0.39]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.38...v1.0.39
 [v1.0.38]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.37...v1.0.38
 [v1.0.37]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.36...v1.0.37

@@ -46,8 +46,9 @@ check("主锚点：H2 文本 === 账号 定位「账号」行",
 check("主锚点：右侧图标按钮容器（ml-auto）首位插入",
       'actions.insertBefore(searchWrap, actions.firstChild)' in PROXY
       and 'actions.insertBefore(iconBtn, actions.firstChild)' in PROXY)
-check("移动端图标按钮克隆兄弟图标 class（同款外观）",
-      'iconBtn.className = ("wb-acc-search-iconbtn " + siblingCls).trim()' in PROXY)
+check("移动端图标按钮克隆兄弟图标 class 并剥离 bg-accent（未选中态标准）",
+      'iconBtn.className = ("wb-acc-search-iconbtn " + siblingCls)' in PROXY
+      and 'replace(/\\bbg-accent\\b/g, "")' in PROXY)
 check("移动端弹窗：点击图标弹出、输入即过滤、✕/遮罩/Esc 三路关闭",
       'modal.id = "wb-account-search-modal"' in PROXY
       and 'id="wb-account-search-minput"' in PROXY
@@ -57,6 +58,8 @@ check("过滤状态 PC 内联框 ↔ 移动端弹窗双向同步",
       'function applyFilter(raw)' in PROXY and 'state.q' in PROXY)
 check("过滤生效时图标点亮（wb-acc-search-icon-on）",
       '"wb-acc-search-icon-on"' in PROXY)
+check("搜索框透明背景在两主题天然一致（不依赖 --accent/--card 变量）",
+      re.search(r'\.wb-acc-search-box\s*\{[^}]*background:\s*transparent', PROXY) is not None)
 check("兜底形态保留：找不到「账号」行时退回独立过滤行（afterend）",
       re.search(r'header\.insertAdjacentElement\("afterend",\s*searchRow\)', PROXY) is not None)
 check("不再改写官方档位容器布局（wbSearchRow 内联改写已整体移除）",
@@ -77,21 +80,29 @@ check("移动端 type=search（原生清除按钮）",
 check("DOM 取不到档位组时安静退出，不拖垮页面",
       re.search(r'if \(!group \|\| !group\.parentElement\) return;', PROXY) is not None)
 
-print("\n[1b] v1.0.38：间距归一化 + 刷新按钮补背景")
+print("\n[1b] v1.0.40：分隔线隐藏 + 全行对齐未选中态")
 check("归一化函数存在且幂等（wbNormalizeAccountRowActions）",
       "function wbNormalizeAccountRowActions()" in PROXY)
 check("归一化先于去重 early-return（每轮 run() 重放，抗 React 冲样式）",
       re.search(r'wbNormalizeAccountRowActions\(\);\s*\n\s*// 避免重复注入', PROXY) is not None)
-check("分隔线 mx 归零（消除 25px 大间隙，全行统一容器 gap-1 = 4px）",
-      'div.bg-border' in PROXY and 'd.style.marginLeft = "0"' in PROXY
-      and 'd.style.marginRight = "0"' in PROXY)
-check("刷新按钮补同款背景（lucide-refresh-cw → wb-acc-btn-flat）",
-      'svg.lucide-refresh-cw' in PROXY and 'wb-acc-btn-flat' in PROXY)
-check("刷新按钮背景用官方 --accent 变量（两主题自动跟随）",
-      re.search(r'button\.wb-acc-btn-flat\s*\{[^}]*background:\s*var\(--accent', PROXY) is not None)
-check("撤销时按 dataset 还原分隔线 margin 与刷新按钮类",
-      'data-wb-orig-ml' in PROXY and 'dv.style.marginLeft = dv.dataset.wbOrigMl' in PROXY
-      and 'rBtn.classList.remove("wb-acc-btn-flat")' in PROXY)
+check("分隔线整个隐藏（只归零 margin 仍剩 1px 线 + 8px，隐藏后全行统一 4px）",
+      'div.bg-border' in PROXY and 'd.style.display = "none"' in PROXY)
+check("列表/刷新按钮挂 wb-acc-btn-ghost 剥背景（对齐未选中态）",
+      'svg.lucide-rows3' in PROXY and 'svg.lucide-refresh-cw' in PROXY
+      and 'wb-acc-btn-ghost' in PROXY)
+check("ghost 类只剥背景（官方 hover:bg-accent 悬停反馈保留）",
+      re.search(r'button\.wb-acc-btn-ghost\s*\{[^}]*background:\s*transparent', PROXY) is not None)
+check("搜索框对齐未选中态：背景透明 + 无边框 + hover 显 accent",
+      re.search(r'\.wb-acc-search-box\s*\{[^}]*background:\s*transparent', PROXY) is not None
+      and re.search(r'\.wb-acc-search-box\s*\{[^}]*border:\s*none', PROXY) is not None
+      and '.wb-acc-search-box:hover,\n  .wb-acc-search-box:focus-within' in PROXY)
+check("移动端图标克隆时剥离 bg-accent（不因克隆选中态按钮而常亮）",
+      'replace(/\\bbg-accent\\b/g, "")' in PROXY)
+check("图标 16px 对齐官方 size-4（描边统一 stroke-width=2）",
+      re.search(r'\.wb-acc-search-icon\s*\{[^}]*width:\s*16px', PROXY) is not None)
+check("撤销时按 dataset 还原分隔线 display 并摘掉 ghost 类",
+      'data-wb-orig-display' in PROXY and 'dv.style.display = dv.dataset.wbOrigDisplay' in PROXY
+      and 'ghosts[k].classList.remove("wb-acc-btn-ghost")' in PROXY)
 
 # ---------------------------------------------------- 需求 2：两个开关拆分/持久化
 print("\n[2] 每日任务：自动签到 / 自动执行任务 两个独立开关")
