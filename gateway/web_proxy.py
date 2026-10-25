@@ -490,6 +490,13 @@ COLLAPSE_SCRIPT = r"""
     flex: 0 1 auto;
     max-width: 100%;
   }
+  /* v1.0.38：「账号」行右侧控件的间距归一化（用户要求全行间距一致）。
+     官方结构实测：容器 gap-1（4px），但中间的分隔线自带 mx-2（8+1+8），
+     使「自动执行」与「视图切换」之间出现 25px 大间隙；PC 4 控件 / 移动端
+     5 控件间距不一。归一化 = 分隔线水平 margin 归零，全行统一 4px 间距
+     （分隔线本体保留，仍是那个 1px 竖线，只是不再撑出额外空隙）。
+     React 重渲染会把内联样式/class 冲掉，所以归一化在每次 run() 都重放
+     （wbNormalizeAccountRowActions，幂等），撤销时按 dataset 记录还原。 */
   /* 移动端搜索图标按钮：默认隐藏（PC 不显示）；class 主体克隆自旁边的
      官方图标按钮（wbInjectAccountSearch 里 dynamic copy），这里只补
      「没克隆到兄弟 class」时的兜底外观与激活态。 */
@@ -516,6 +523,12 @@ COLLAPSE_SCRIPT = r"""
   .wb-acc-search-icon-on {
     border-color: rgba(59, 130, 246, 0.65) !important;
     color: #3b82f6 !important;
+  }
+  /* v1.0.38：刷新按钮官方是透明 ghost 形态（lucide-refresh-cw，无 bg-accent），
+     与旁边自动签到/自动执行/视图切换三个按钮不一致（用户要求「加一样的背景」）。
+     用官方 --accent 变量补背景 —— 与 bg-accent 同源，两个主题自动跟随。 */
+  button.wb-acc-btn-flat {
+    background: var(--accent, #f4f4f5);
   }
   .wb-acc-search-box {
     display: flex;
@@ -6277,6 +6290,24 @@ COLLAPSE_SCRIPT = r"""
         if (cards[i].style.display === "none") cards[i].style.display = "";
       }
     } catch (e) {}
+    // 还原 v1.0.38 归一化改动：分隔线原始 margin、刷新按钮的补背景类
+    //（「账号」行还在 DOM 里时才有得还原；切页后整行已卸载则自然无需）。
+    try {
+      var acts = wbFindAccountRowActions();
+      if (acts) {
+        var dividers = acts.querySelectorAll("div.bg-border[data-wb-orig-ml]");
+        for (var j = 0; j < dividers.length; j++) {
+          var dv = dividers[j];
+          dv.style.marginLeft = dv.dataset.wbOrigMl || "";
+          dv.style.marginRight = dv.dataset.wbOrigMr || "";
+          delete dv.dataset.wbOrigMl;
+          delete dv.dataset.wbOrigMr;
+        }
+        var rSvg = acts.querySelector("svg.lucide-refresh-cw");
+        var rBtn = rSvg ? rSvg.closest("button") : null;
+        if (rBtn) rBtn.classList.remove("wb-acc-btn-flat");
+      }
+    } catch (e3) {}
   }
 
   /* 定位「账号」行的右侧图标按钮容器（v1.0.36 主锚点）。
@@ -6307,7 +6338,38 @@ COLLAPSE_SCRIPT = r"""
     return null;
   }
 
+  /* 「账号」行右侧控件归一化（v1.0.38，幂等，每次 run() 重放）：
+     ① 分隔线（div.bg-border）水平 margin 归零 —— 消除 mx-2 撑出的 25px
+        大间隙，全行统一为容器 gap-1 的 4px（PC 4 控件 / 移动端 5 控件一致）；
+     ② 刷新按钮（svg.lucide-refresh-cw）补同款背景 —— 官方此处是透明
+        ghost 形态，与旁边三个 bg-accent 按钮不一致，用户要求统一。
+     React 重渲染会冲掉内联样式与追加的 class，所以不能只在注入时做一次，
+     必须每次 run() 重放；dataset.wbOrigMl/Mr 记录原始内联值供撤销还原。 */
+  function wbNormalizeAccountRowActions() {
+    var actions = wbFindAccountRowActions();
+    if (!actions) return;
+    try {
+      var dividers = actions.querySelectorAll("div.bg-border");
+      for (var i = 0; i < dividers.length; i++) {
+        var d = dividers[i];
+        if (d.dataset.wbOrigMl === undefined) d.dataset.wbOrigMl = d.style.marginLeft || "";
+        if (d.dataset.wbOrigMr === undefined) d.dataset.wbOrigMr = d.style.marginRight || "";
+        d.style.marginLeft = "0";
+        d.style.marginRight = "0";
+      }
+    } catch (e1) {}
+    try {
+      var refreshSvg = actions.querySelector("svg.lucide-refresh-cw");
+      var refreshBtn = refreshSvg ? refreshSvg.closest("button") : null;
+      if (refreshBtn) refreshBtn.classList.add("wb-acc-btn-flat");
+    } catch (e2) {}
+  }
+
   function wbInjectAccountSearch() {
+    // v1.0.38：归一化先于去重 early-return —— 即使搜索框已注入，
+    // React 重渲染冲掉的间距/背景也要在每轮 run() 里补回来（幂等）。
+    wbNormalizeAccountRowActions();
+
     // 避免重复注入（内联框与兜底行一起查：都是自己的节点）
     if (document.getElementById("wb-account-search-bar")) return;
     if (document.getElementById("wb-account-search-row")) return;

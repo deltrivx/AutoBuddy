@@ -31,6 +31,39 @@
 
 ---
 
+## [v1.0.38] - 2026-10-25
+
+<!-- summary: 「账号」行右侧控件间距归一化（分隔线 mx 归零），刷新按钮补同款背景，两主题自动跟随 -->
+
+### 变更
+
+- **「账号」行右侧控件间距归一**（`gateway/web_proxy.py` 的
+  `wbNormalizeAccountRowActions()`，用户要求「PC 4 个按钮、移动端 5 个按钮
+  间距相同」）：
+
+  官方容器是 `gap-1`（4px），但中间的分隔线（`div.bg-border`）自带 `mx-2`
+  （8+1+8），使「自动执行」与「视图切换」之间出现 **25px 大间隙**，全行
+  间距不一。归一化把分隔线水平 margin 归零 —— 分隔线本体（1px 竖线）保留，
+  全行统一为容器的 4px；PC 4 控件、移动端 5 控件（含搜索图标）间距一致。
+
+- **刷新按钮补同款背景**：官方刷新按钮（`lucide-refresh-cw`）是透明 ghost
+  形态，与旁边三个 `bg-accent` 按钮不一致。新增 `wb-acc-btn-flat` 类按官方
+  `--accent` 变量补背景 —— 与搜索框 v1.0.37 的对齐方式同源，两个主题自动
+  跟随，昼夜切换零额外代码。
+
+- **实现约束**：React 重渲染会冲掉内联样式与追加的 class，所以归一化在
+  **每轮 run() 重放**（幂等，先于 wbInjectAccountSearch 的去重 early-return），
+  原始值记在 `dataset.wbOrigMl/Mr`，撤销（wbRemoveAccountSearch）时按记录
+  还原分隔线 margin 并摘掉刷新按钮的补背景类。
+
+### 测试
+
+- `tests/legacy/test_v1010_features.py` 新增 [1b] 契约 6 项：归一化函数存在
+  且先于 early-return 重放、分隔线归零、刷新按钮补背景走 `--accent`、
+  dataset 还原路径齐全。
+
+---
+
 ## [v1.0.37] - 2026-10-25
 
 <!-- summary: 账号页搜索框配色对齐「账号」行图标按钮（bg-accent + --border），两个主题自动跟随 -->
@@ -5954,7 +5987,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.37...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.38...HEAD
+[v1.0.38]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.37...v1.0.38
 [v1.0.37]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.36...v1.0.37
 [v1.0.36]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.35...v1.0.36
 [v1.0.35]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.34...v1.0.35

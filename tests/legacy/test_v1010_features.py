@@ -77,6 +77,22 @@ check("移动端 type=search（原生清除按钮）",
 check("DOM 取不到档位组时安静退出，不拖垮页面",
       re.search(r'if \(!group \|\| !group\.parentElement\) return;', PROXY) is not None)
 
+print("\n[1b] v1.0.38：间距归一化 + 刷新按钮补背景")
+check("归一化函数存在且幂等（wbNormalizeAccountRowActions）",
+      "function wbNormalizeAccountRowActions()" in PROXY)
+check("归一化先于去重 early-return（每轮 run() 重放，抗 React 冲样式）",
+      re.search(r'wbNormalizeAccountRowActions\(\);\s*\n\s*// 避免重复注入', PROXY) is not None)
+check("分隔线 mx 归零（消除 25px 大间隙，全行统一容器 gap-1 = 4px）",
+      'div.bg-border' in PROXY and 'd.style.marginLeft = "0"' in PROXY
+      and 'd.style.marginRight = "0"' in PROXY)
+check("刷新按钮补同款背景（lucide-refresh-cw → wb-acc-btn-flat）",
+      'svg.lucide-refresh-cw' in PROXY and 'wb-acc-btn-flat' in PROXY)
+check("刷新按钮背景用官方 --accent 变量（两主题自动跟随）",
+      re.search(r'button\.wb-acc-btn-flat\s*\{[^}]*background:\s*var\(--accent', PROXY) is not None)
+check("撤销时按 dataset 还原分隔线 margin 与刷新按钮类",
+      'data-wb-orig-ml' in PROXY and 'dv.style.marginLeft = dv.dataset.wbOrigMl' in PROXY
+      and 'rBtn.classList.remove("wb-acc-btn-flat")' in PROXY)
+
 # ---------------------------------------------------- 需求 2：两个开关拆分/持久化
 print("\n[2] 每日任务：自动签到 / 自动执行任务 两个独立开关")
 check("前端保留「启用签到调度」开关（wb-dl-checkin-sched）",
