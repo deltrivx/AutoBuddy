@@ -522,9 +522,9 @@ COLLAPSE_SCRIPT = r"""
     border-color: rgba(59, 130, 246, 0.65) !important;
     color: #3b82f6 !important;
   }
-  /* v1.0.40：列表切换（lucide-rows3）官方常驻 bg-accent，刷新本就透明 ——
-     用户要求全部对齐「签到/旅行」的未选中态（透明 ghost）。本类由
-     wbNormalizeAccountRowActions 运行时挂到这两个按钮上剥掉背景；
+  /* v2.0.0：行内全部官方按钮（含签到/旅行选中态的 bg-accent）统一剥背景，
+     选中指示只剩图标自带的 text-brand 品牌色。本类由
+     wbNormalizeAccountRowActions 每轮 run() 运行时挂上（抗 React 冲 class）；
      官方 hover:bg-accent 优先级更高（:hover 伪类），悬停反馈保留。 */
   button.wb-acc-btn-ghost {
     background: transparent;
@@ -6344,10 +6344,11 @@ COLLAPSE_SCRIPT = r"""
      ① 分隔线（div.bg-border）：隐藏本体 —— 只归零 margin 还剩 1px 线 +
         两侧 gap 共 9px，与相邻 4px 仍不等宽（用户实测「第二个旅行图标和
         第三个图标间隔明显宽一点」）；隐藏后全行统一容器 gap-1 的 4px。
-     ② 列表切换（lucide-rows3）/ 刷新（lucide-refresh-cw）：官方分别是
-        常驻 bg-accent 与透明 ghost，与未选中标准不一 → 挂 wb-acc-btn-ghost
-        剥掉背景（透明对两个主题天然一致；官方 hover:bg-accent 优先级更高，
-        悬停反馈保留）。
+     ② 行内全部官方按钮挂 wb-acc-btn-ghost 剥掉背景 —— v2.0.0 起包括
+        签到/旅行两个开关按钮的**选中态**：选中指示只剩品牌色图标
+        （svg text-brand），背景不再随选中变化（用户 2026-10-25 最终方案
+        「取消两个标准图标选中状态下的背景」）。透明对两个主题天然一致；
+        官方 hover:bg-accent 优先级更高，悬停反馈保留。
      React 重渲染会冲掉内联样式与追加的 class，所以每轮 run() 重放；
      dataset.wbOrigDisplay 记录分隔线原始 display 供撤销还原。 */
   function wbNormalizeAccountRowActions() {
@@ -6362,10 +6363,12 @@ COLLAPSE_SCRIPT = r"""
       }
     } catch (e1) {}
     try {
-      var ghosts = actions.querySelectorAll(
-        "button:has(> svg.lucide-rows3), button:has(> svg.lucide-refresh-cw)");
-      for (var j = 0; j < ghosts.length; j++) {
-        ghosts[j].classList.add("wb-acc-btn-ghost");
+      // v2.0.0：行内全部官方按钮统一剥背景（含签到/旅行的选中态 bg-accent），
+      // 只排除我们自己的搜索图标按钮；选中指示由图标自带的 text-brand 承担。
+      var allBtns = actions.querySelectorAll("button");
+      for (var j = 0; j < allBtns.length; j++) {
+        if (allBtns[j].id === "wb-account-search-icon") continue;
+        allBtns[j].classList.add("wb-acc-btn-ghost");
       }
     } catch (e2) {}
   }

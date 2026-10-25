@@ -31,6 +31,34 @@
 
 ---
 
+## [v2.0.0] - 2026-10-25
+
+<!-- summary: 正式版：取消签到/旅行选中态背景，选中指示只剩品牌色图标，「账号」行全控件视觉统一 -->
+
+### 变更
+
+- **取消签到/旅行两个开关按钮选中态的背景**（`gateway/web_proxy.py` 的
+  `wbNormalizeAccountRowActions()`，用户最终方案）：行内**全部官方按钮**
+  （含签到/旅行选中态的 `bg-accent`）统一挂 `wb-acc-btn-ghost` 剥掉背景，
+  只排除搜索图标按钮自身。选中指示由图标自带的 `text-brand` 品牌色承担 ——
+  选中与否只剩图标颜色一个差异维度，整行视觉完全统一为未选中形态。
+
+  - ghost 类只剥背景（透明），官方 `hover:bg-accent` 优先级更高（:hover
+    伪类），悬停反馈保留；透明对两个主题天然一致，昼夜切换零变量依赖。
+  - 归一化依旧每轮 run() 重放（幂等，抗 React 冲 class）；撤销时按
+    `querySelectorAll("button.wb-acc-btn-ghost")` 全量摘除。
+
+- 本版本为 **v2.0.0 正式版**：自 v1.0.22 起 19 个版本迭代的账号页搜索框与
+  「账号」行视觉统一工程至此收敛 —— 搜索框进「账号」行、全控件未选中态
+  统一、间距归一、主题自适应全部落定。
+
+### 测试
+
+- `tests/legacy/test_v1010_features.py` [1b] 契约更新：ghost 覆盖行内全部
+  官方按钮（排除搜索图标自身）、撤销全量摘除。
+
+---
+
 ## [v1.0.40] - 2026-10-25
 
 <!-- summary: 「账号」行全控件对齐签到/旅行按钮未选中态：分隔线隐藏、搜索框转透明、列表/刷新剥背景 -->
@@ -6038,7 +6066,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.40...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.0.0...HEAD
+[v2.0.0]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.40...v2.0.0
 [v1.0.40]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.39...v1.0.40
 [v1.0.39]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.38...v1.0.39
 [v1.0.38]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.37...v1.0.38

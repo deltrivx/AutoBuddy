@@ -87,9 +87,11 @@ check("归一化先于去重 early-return（每轮 run() 重放，抗 React 冲�
       re.search(r'wbNormalizeAccountRowActions\(\);\s*\n\s*// 避免重复注入', PROXY) is not None)
 check("分隔线整个隐藏（只归零 margin 仍剩 1px 线 + 8px，隐藏后全行统一 4px）",
       'div.bg-border' in PROXY and 'd.style.display = "none"' in PROXY)
-check("列表/刷新按钮挂 wb-acc-btn-ghost 剥背景（对齐未选中态）",
-      'svg.lucide-rows3' in PROXY and 'svg.lucide-refresh-cw' in PROXY
-      and 'wb-acc-btn-ghost' in PROXY)
+check("行内全部官方按钮挂 wb-acc-btn-ghost 剥背景（v2.0.0：含签到/旅行选中态）",
+      'allBtns[j].classList.add("wb-acc-btn-ghost")' in PROXY
+      and 'allBtns[j].id === "wb-account-search-icon"' in PROXY)
+check("ghost 撤销覆盖行内全部按钮（querySelectorAll 不限 rows3/refresh）",
+      'acts.querySelectorAll("button.wb-acc-btn-ghost")' in PROXY)
 check("ghost 类只剥背景（官方 hover:bg-accent 悬停反馈保留）",
       re.search(r'button\.wb-acc-btn-ghost\s*\{[^}]*background:\s*transparent', PROXY) is not None)
 check("搜索框对齐未选中态：背景透明 + 无边框 + hover 显 accent",
