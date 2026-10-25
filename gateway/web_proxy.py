@@ -523,34 +523,24 @@ COLLAPSE_SCRIPT = r"""
     gap: 6px;
     height: 36px;                 /* 与「账号」行图标按钮 36×36 对齐 */
     box-sizing: border-box;
-    /* 视觉对齐官方图标按钮：白底 + 1px 边框 + radius 10px。
-       底色用官方同款 CSS 变量（html.dark 下 --card 翻成暗色），不写死颜色。 */
-    background: var(--card, #ffffff);
+    /* v1.0.37：配色与「账号」行图标按钮完全一致（用户要求「背景相同、
+       两个主题颜色同步」）。按钮实测用的是官方 bg-accent + --border，
+       这里同款取值 —— 两个主题由 --accent / --border 变量自动跟随，
+       不再像旧版那样浅色用 --card（纯白）、深色叠硬编码边框。
+       圆角同按钮 rounded-lg = 12px。 */
+    background: var(--accent, #f4f4f5);
     border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
-    border-radius: 10px;          /* 对齐官方按钮 rounded-md */
+    border-radius: 12px;
     padding: 0 10px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
     transition: border-color 0.15s ease, background 0.15s ease;
-  }
-  /* 深色主题兜底：官方变量缺失时也保证不是白底（不依赖 --card 一定存在）。 */
-  .dark .wb-acc-search-box,
-  html.dark .wb-acc-search-box {
-    background: var(--popover, #1f2430);
-    border-color: rgba(148, 163, 184, 0.28);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   }
   .wb-acc-search-box:focus-within {
     border-color: rgba(59, 130, 246, 0.65);
-    background: var(--card, #ffffff);
-  }
-  .dark .wb-acc-search-box:focus-within,
-  html.dark .wb-acc-search-box:focus-within {
-    background: var(--popover, #1f2430);
   }
   .wb-acc-search-icon {
     width: 14px;
     height: 14px;
-    color: var(--muted-foreground, #6b7280);
+    color: var(--foreground, #374151);   /* 与按钮图标同色（v1.0.37） */
     flex-shrink: 0;
   }
   .wb-acc-search-input {

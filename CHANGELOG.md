@@ -31,6 +31,32 @@
 
 ---
 
+## [v1.0.37] - 2026-10-25
+
+<!-- summary: 账号页搜索框配色对齐「账号」行图标按钮（bg-accent + --border），两个主题自动跟随 -->
+
+### 变更
+
+- **搜索框配色与「账号」行图标按钮完全一致**（`gateway/web_proxy.py`
+  的 `.wb-acc-search-box`，用户要求「背景相同、两个主题颜色同步」）：
+
+  按钮实测用的是官方 `bg-accent` + `--border`。旧版搜索框浅色用 `--card`
+  （纯白，浅色主题下与浅灰按钮两张皮），深色还叠了硬编码边框色。现改为：
+
+  | 项 | 旧 | 新 |
+  | :--- | :--- | :--- |
+  | 背景 | `var(--card)` | `var(--accent)` —— 与按钮同源，两主题自动跟随 |
+  | 边框 | 深色下硬编码 `rgba(148,163,184,.28)` | 统一 `var(--border)` —— 与按钮同源 |
+  | 圆角 | 10px | 12px —— 对齐按钮 `rounded-lg` |
+  | 图标色 | `--muted-foreground`（偏灰） | `--foreground` —— 与按钮图标同色 |
+  | 阴影 | 常驻 box-shadow | 移除 —— 按钮没有阴影 |
+
+  深色主题下 `--accent`/`--border` 与按钮逐值相同（实测 bg=`oklch(0.279 0.041
+  260.031)`、border=`oklch(1 0 0/0.1)`），浅色主题随官方变量翻到浅灰档，
+  昼夜切换零额外代码。
+
+---
+
 ## [v1.0.36] - 2026-10-25
 
 <!-- summary: 账号页搜索框进「账号」行图标按钮前，移动端同款搜索图标 + 弹窗过滤（用户方案） -->
@@ -5928,7 +5954,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.36...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.37...HEAD
+[v1.0.37]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.36...v1.0.37
 [v1.0.36]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.35...v1.0.36
 [v1.0.35]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.34...v1.0.35
 [v1.0.34]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.33...v1.0.34
