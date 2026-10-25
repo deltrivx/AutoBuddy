@@ -462,53 +462,69 @@ COLLAPSE_SCRIPT = r"""
   .wb-header-badge-hidden span:not(:has(button)):not(:has(svg[class*=chevron])) {
     visibility: hidden;
   }
-  /* 账号管理搜索框（v1.0.35 重构：独立过滤行 + 移动端吸顶）
+  /* 账号管理搜索框（v1.0.36：进「账号」行 + 移动端图标弹窗，用户方案）
      ──────────────────────────────────────────────────────────
-     v1.0.34 及以前：搜索框寄生在官方「档位容器」里 —— 把官方 flex-col
-     容器内联改成 flex-row + justify-between，需要一整套 wbSearchRow 标记 +
-     wbRemoveAccountSearch 清理官方节点内联样式的机器，官方一改版最先坏
-     （历史上已为它修过一次「搜索框掉行」）。
-
-     v1.0.35：锚点换成「页头行（div.flex.items-start.justify-between）之后、
-     账号卡片列表之前」的**独立工具行**，不改官方任何节点的布局：
-       · PC（≥640px）：独立行、搜索框右对齐 —— 视觉位置与旧版几乎一致
-         （档位行正下方、行的右端），但官方 DOM 保持原样；
-       · 移动端（<640px）：独立行变全宽 + position:sticky 吸顶，长账号列表
-         滚到中段也能直接改过滤词。
-
-     移动端两个必修的坑（2026-10-25）：
-       (1) iOS Safari 聚焦自动放大 —— input 字号 <16px 时聚焦必 zoom 整页
-           且不回弹。移动端把输入框字号提到 16px；
-       (2) 触控目标 —— 旧版 36px 行高偏小，移动端框高提到 40px。 */
+     v1.0.34 及以前：搜索框寄生在官方「档位容器」里（内联改写官方 flex-col
+     → flex-row），需要一整套清理机器，官方一改版最先坏。
+     v1.0.35：独立过滤行插在页头行之后（现保留为官方改版时的兜底形态）。
+     v1.0.36（当前，用户 2026-10-25 方案）：
+       · PC（≥640px）：搜索框插进「账号」行右侧图标按钮容器的**首位** ——
+         即「账号」标题之后、自动签到/自动执行等图标按钮之前，与图标的
+         间距 = 容器自身 gap（与两个图标间距一致）；框高 36px 与图标对齐。
+       · 移动端（<640px）：内联框隐藏，改显**同款风格的搜索图标按钮**
+         （克隆旁边图标按钮的 class，外观完全一致）；点击弹出搜索弹窗，
+         16px 输入框（防 iOS 聚焦自动放大）+ 计数徽章 + 关闭按钮，
+         输入即过滤；过滤生效时图标点亮提醒「列表当前处于过滤态」。
+     过滤状态在 PC 内联框与移动端弹窗之间双向同步（同一 state.q）。 */
   .wb-acc-search-row {
     display: flex;
-    justify-content: flex-end;    /* PC：搜索框靠右 —— 与旧行位（档位行右端）视觉一致 */
+    justify-content: flex-end;    /* 兜底形态：搜索框靠右 */
     align-items: center;
     margin: 8px 0 4px;
   }
   .wb-acc-search-wrap {
     display: inline-flex;
     align-items: center;
-    height: 36px;                 /* 对齐官方切换组 h-9 */
+    height: 36px;                 /* 与「账号」行图标按钮 36×36 对齐 */
     box-sizing: border-box;
     flex: 0 1 auto;
     max-width: 100%;
+  }
+  /* 移动端搜索图标按钮：默认隐藏（PC 不显示）；class 主体克隆自旁边的
+     官方图标按钮（wbInjectAccountSearch 里 dynamic copy），这里只补
+     「没克隆到兄弟 class」时的兜底外观与激活态。 */
+  .wb-acc-search-iconbtn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
+    background: var(--card, #ffffff);
+    color: var(--muted-foreground, #6b7280);
+    cursor: pointer;
+    padding: 0;
+  }
+  .dark .wb-acc-search-iconbtn,
+  html.dark .wb-acc-search-iconbtn {
+    background: var(--popover, #1f2430);
+    border-color: rgba(148, 163, 184, 0.28);
+  }
+  .wb-acc-search-iconbtn svg { width: 16px; height: 16px; }
+  /* 过滤生效中：图标点亮，提醒移动端用户当前列表处于过滤态 */
+  .wb-acc-search-icon-on {
+    border-color: rgba(59, 130, 246, 0.65) !important;
+    color: #3b82f6 !important;
   }
   .wb-acc-search-box {
     display: flex;
     align-items: center;
     gap: 6px;
-    height: 28px;                 /* 对齐官方切换按钮 h-7 */
+    height: 36px;                 /* 与「账号」行图标按钮 36×36 对齐 */
     box-sizing: border-box;
-    /* 视觉对齐官方「未选中档位按钮」：白底 + 1px 边框 + radius 10px。
-       官方实测（computed style）：
-         tablist  bg=oklch(0.96 0.004 264)（muted） radius=12px padding=4px
-         button  bg=oklch(1 0 0)（白）       radius=10px h=28px
-                   font-size 12px / weight 500 / padding 0 12px
-       搜索框要做成「第三个档位按钮」的样子，所以用白底而不是 muted 底。
-       ⚠️ 2026-10-23：底色改用 var(--card, …) 而不是硬编码 #ffffff ——
-       html.dark 下官方会把 --card 翻成暗色，硬编码白底在深色主题里
-       就是一块显眼的白补丁。 */
+    /* 视觉对齐官方图标按钮：白底 + 1px 边框 + radius 10px。
+       底色用官方同款 CSS 变量（html.dark 下 --card 翻成暗色），不写死颜色。 */
     background: var(--card, #ffffff);
     border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
     border-radius: 10px;          /* 对齐官方按钮 rounded-md */
@@ -542,19 +558,72 @@ COLLAPSE_SCRIPT = r"""
     background: transparent;
     font-size: 12px;              /* 对齐官方 text-xs */
     font-weight: 500;             /* 对齐切换按钮 font-medium */
-    line-height: 28px;
+    line-height: 34px;
     color: var(--foreground, #374151);
     outline: none;
-    width: 200px;
+    width: 170px;
     min-width: 0;
   }
-  /* 移动端：搜索行变全宽独立行 + 吸顶。
-     v1.0.35 起搜索框不再与档位切换同层（不再依赖官方容器的 flex-wrap 折行），
-     独立行本身就是一行 —— 吸顶后滚到长账号列表中段也能直接改过滤词。
-     ⚠️ 吸顶行必须有实体背景，否则滚动时卡片会从框底透出来；top:0 避免
-     上方露出一条内容缝隙。z-index 取小值即可：SPA 切到非账号页时
-     wbRemoveAccountSearch 会把它撤走，不会压在数据总览等官方浮层上。 */
+  /* 移动端搜索弹窗（v1.0.36 用户方案）：点搜索图标弹出，输入即过滤。
+     输入框 16px 起步 —— iOS Safari 对 <16px 的 input 聚焦时自动放大
+     整页且不回弹；40px 触控高度。 */
+  .wb-acc-search-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+  }
+  .wb-acc-search-modal[hidden] { display: none; }
+  .wb-acc-search-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .wb-acc-search-sheet {
+    position: absolute;
+    left: 50%;
+    top: 96px;
+    transform: translateX(-50%);
+    width: min(92vw, 420px);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--card, #ffffff);
+    border: 1px solid var(--border, rgba(120, 120, 120, 0.25));
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  }
+  .dark .wb-acc-search-sheet,
+  html.dark .wb-acc-search-sheet {
+    background: var(--popover, #1f2430);
+    border-color: rgba(148, 163, 184, 0.28);
+  }
+  .wb-acc-search-minput {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 16px;              /* ≥16px：防 iOS Safari 聚焦自动放大 */
+    height: 40px;
+    line-height: 40px;
+    color: var(--foreground, #374151);
+  }
+  .wb-acc-search-close {
+    border: none;
+    background: transparent;
+    color: var(--muted-foreground, #6b7280);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 8px 6px;
+    flex-shrink: 0;
+  }
+  /* 移动端（<640px）：内联搜索框隐藏，改显同款风格搜索图标（点击弹窗）。
+     兜底独立行（wb-account-search-row，官方改版时才会出现）保持吸顶。 */
   @media (max-width: 640px) {
+    .wb-acc-search-wrap { display: none; }
+    .wb-acc-search-iconbtn { display: inline-flex; }
     .wb-acc-search-row {
       position: sticky;
       top: 0;
@@ -568,10 +637,12 @@ COLLAPSE_SCRIPT = r"""
     html.dark .wb-acc-search-row {
       background: var(--background, #0b0e14);
     }
-    .wb-acc-search-wrap { width: 100%; height: 40px; }   /* 40px 触控目标 */
-    .wb-acc-search-box { width: 100%; height: 40px; }
-    /* 16px 起步：iOS Safari 对 <16px 的 input 聚焦时自动放大整页且不回弹 */
-    .wb-acc-search-input { width: 100%; font-size: 16px; line-height: 40px; }
+    .wb-acc-search-row .wb-acc-search-wrap {
+      display: inline-flex;       /* 兜底行里内联框仍要显示 */
+      width: 100%; height: 40px;
+    }
+    .wb-acc-search-row .wb-acc-search-box { width: 100%; height: 40px; }
+    .wb-acc-search-row .wb-acc-search-input { width: 100%; font-size: 16px; line-height: 40px; }
     .wb-acc-search-icon { width: 16px; height: 16px; }
     /* 移动端登录提醒块：占满对应积分区域高度并自适应居中 */
     .wb-official-relogin { padding: 10px 12px; gap: 3px; min-height: 130px; }
@@ -6202,14 +6273,13 @@ COLLAPSE_SCRIPT = r"""
      最先坏）。现在整条过滤行都是自己的节点（wb-account-search-row），
      撤销时把自己的两个节点删掉即可，官方 DOM 零残留。 */
   function wbRemoveAccountSearch() {
-    var bar = document.getElementById("wb-account-search-bar");
-    if (bar) {
-      if (bar.parentNode) bar.parentNode.removeChild(bar);
-    }
-    var row = document.getElementById("wb-account-search-row");
-    if (row) {
-      if (row.parentNode) row.parentNode.removeChild(row);
-    }
+    // v1.0.36：自己的节点一共四个（PC 内联框 / 移动端图标 / 弹窗 / 兜底独立行），
+    // 全部清掉；官方 DOM 从不改写，所以不存在「清理官方节点」这回事。
+    ["wb-account-search-bar", "wb-account-search-icon",
+     "wb-account-search-modal", "wb-account-search-row"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
     // 复位被过滤隐藏的账号卡片
     try {
       var cards = document.querySelectorAll("article");
@@ -6219,8 +6289,36 @@ COLLAPSE_SCRIPT = r"""
     } catch (e) {}
   }
 
+  /* 定位「账号」行的右侧图标按钮容器（v1.0.36 主锚点）。
+     官方结构实测（生产 DOM）：
+       section.mt-7                                                  ← 账号卡片区
+         └ div.mb-4.flex.flex-wrap.items-center.justify-between.gap-3 ← 「账号」行
+             ├ div.flex.items-center.gap-2    ← 左：H2「账号」+ 计数徽章
+             └ div.ml-auto.flex.items-center.gap-* ← 右：自动签到/自动执行/列表/刷新
+                                                      四个 36×36 图标按钮
+     搜索框 / 搜索图标插进右侧容器**首位** = 标题之后、图标按钮之前，
+     与图标的间距天然等于容器自身的 gap（用户要求「与两个图标间距相同」）。
+     定位走「H2 文本 === 账号」判据，不依赖易变的 class 名。 */
+  function wbFindAccountRowActions() {
+    try {
+      var heads = document.querySelectorAll("h2");
+      for (var i = 0; i < heads.length; i++) {
+        if ((heads[i].textContent || "").trim() !== "账号") continue;
+        var row = heads[i].parentElement;              // 左组 flex items-center gap-2
+        var rowWrap = row ? row.parentElement : null;  // 「账号」行
+        if (!rowWrap) return null;
+        for (var j = 0; j < rowWrap.children.length; j++) {
+          var c = rowWrap.children[j];
+          if (c !== row && (c.className || "").indexOf("ml-auto") >= 0) return c;
+        }
+        return rowWrap.children.length > 1 ? rowWrap.lastElementChild : null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function wbInjectAccountSearch() {
-    // 避免重复注入（过滤行与搜索框一起查：两个都是自己的节点）
+    // 避免重复注入（内联框与兜底行一起查：都是自己的节点）
     if (document.getElementById("wb-account-search-bar")) return;
     if (document.getElementById("wb-account-search-row")) return;
 
@@ -6243,21 +6341,7 @@ COLLAPSE_SCRIPT = r"""
     if (!group || !group.parentElement) wbRemoveAccountSearch();
     if (!group || !group.parentElement) return;
 
-    // v1.0.35 重构：独立过滤行，插在「页头行（div.flex.items-start.justify-between，
-    // 内含标题与档位切换）」的紧后方 = 档位行下方、账号卡片列表上方。
-    // PC 上搜索框在这行里右对齐（视觉位置与旧版「档位行右端」几乎一致）；
-    // 移动端这行变全宽 + CSS 吸顶（见 .wb-acc-search-row 的媒体查询）。
-    // ⚠️ 不再改官方节点的任何内联布局 —— closest 只是**读**祖先，
-    // 兜底用档位容器的父级，保证两个锚点之后都是卡片列表方向。
-    var header = null;
-    try {
-      header = group.closest("div.flex.items-start.justify-between");
-    } catch (e) {}
-    if (!header || !header.parentNode) header = group.parentElement;
-
-    var searchRow = document.createElement("div");
-    searchRow.id = "wb-account-search-row";
-    searchRow.className = "wb-acc-search-row";
+    var actions = wbFindAccountRowActions();
 
     var searchWrap = document.createElement("div");
     searchWrap.id = "wb-account-search-bar";
@@ -6272,45 +6356,118 @@ COLLAPSE_SCRIPT = r"""
         '<span id="wb-account-search-count" class="wb-acc-search-count" style="display:none"></span>' +
       '</div>';
 
-    searchRow.appendChild(searchWrap);
-    // 独立行插在页头行的紧后方（afterend = 与页头行同级、卡片列表之前）
-    header.insertAdjacentElement("afterend", searchRow);
+    // 移动端搜索图标按钮：克隆右侧容器现有图标按钮的 class，保证同款外观
+    //（36×36、边框、底色、hover 全部与旁边两个图标一致）。
+    var iconBtn = document.createElement("button");
+    iconBtn.type = "button";
+    iconBtn.id = "wb-account-search-icon";
+    iconBtn.setAttribute("aria-label", "搜索账号");
+    var siblingCls = actions && actions.querySelector("button")
+      ? actions.querySelector("button").className : "";
+    iconBtn.className = ("wb-acc-search-iconbtn " + siblingCls).trim();
+    iconBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>' +
+      '</svg>';
 
-    var input = searchWrap.querySelector("#wb-account-search-input");
-    var countSpan = searchWrap.querySelector("#wb-account-search-count");
-    // 搜索框自身渲染失败（极端 DOM 环境）不能拖垮整个设置页：
-    // 找不到输入框就安静退出，与其它注入函数一样「坏了也别炸」。
-    if (!input || !countSpan) return;
+    // 移动端弹窗：点搜索图标弹出，输入即过滤（v1.0.36 用户方案）
+    var modal = document.createElement("div");
+    modal.id = "wb-account-search-modal";
+    modal.hidden = true;
+    modal.innerHTML =
+      '<div class="wb-acc-search-backdrop"></div>' +
+      '<div class="wb-acc-search-sheet">' +
+        '<svg class="wb-acc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>' +
+        '</svg>' +
+        '<input type="search" id="wb-account-search-minput" class="wb-acc-search-minput" placeholder="搜索账号（名称 / 手机号 / ID）..." autocomplete="off" />' +
+        '<span id="wb-account-search-mcount" class="wb-acc-search-count" style="display:none"></span>' +
+        '<button type="button" id="wb-account-search-close" class="wb-acc-search-close" aria-label="关闭搜索">✕</button>' +
+      '</div>';
 
-    function doFilter() {
-      var query = (input.value || "").trim().toLowerCase();
+    // 共享过滤状态：PC 内联输入框 ↔ 移动端弹窗输入框，任一变化双向同步。
+    var state = { q: "" };
+    function applyFilter(raw) {
+      state.q = (raw || "").trim();
+      var ql = state.q.toLowerCase();
       var currentCards = Array.prototype.slice.call(document.querySelectorAll("article"));
       var matched = 0;
       currentCards.forEach(function (card) {
-        if (!query) {
+        if (!ql) {
           card.style.display = "";
           matched++;
           return;
         }
         var text = (card.textContent || "").toLowerCase();
         var accId = (card.getAttribute("data-wb-acc") || "").toLowerCase();
-        if (text.indexOf(query) >= 0 || accId.indexOf(query) >= 0) {
+        if (text.indexOf(ql) >= 0 || accId.indexOf(ql) >= 0) {
           card.style.display = "";
           matched++;
         } else {
           card.style.display = "none";
         }
       });
-      if (!query) {
-        countSpan.textContent = "";
-        countSpan.style.display = "none";
-      } else {
-        countSpan.textContent = matched + " / " + currentCards.length;
-        countSpan.style.display = "inline-block";
-      }
+      // 输入框与计数位双向同步（两个输入框 + 两个计数徽章）
+      var pcInput = searchWrap.querySelector("#wb-account-search-input");
+      var pcCount = searchWrap.querySelector("#wb-account-search-count");
+      var mInput = modal.querySelector("#wb-account-search-minput");
+      var mCount = modal.querySelector("#wb-account-search-mcount");
+      [[pcInput, pcCount], [mInput, mCount]].forEach(function (pair) {
+        var inp = pair[0], cnt = pair[1];
+        if (inp && inp.value !== state.q && document.activeElement !== inp) inp.value = state.q;
+        if (cnt) {
+          if (!state.q) { cnt.textContent = ""; cnt.style.display = "none"; }
+          else { cnt.textContent = matched + " / " + currentCards.length; cnt.style.display = "inline-block"; }
+        }
+      });
+      // 过滤生效中给图标按钮点亮，提醒移动端用户「当前列表是被过滤的」
+      try { iconBtn.classList.toggle("wb-acc-search-icon-on", !!state.q); } catch (e2) {}
     }
 
-    input.addEventListener("input", doFilter);
+    function openModal() {
+      modal.hidden = false;
+      var mInput = modal.querySelector("#wb-account-search-minput");
+      if (mInput) { mInput.value = state.q; try { mInput.focus(); } catch (e3) {} }
+    }
+    function closeModal() { modal.hidden = true; }
+
+    iconBtn.addEventListener("click", openModal);
+    modal.querySelector(".wb-acc-search-backdrop").addEventListener("click", closeModal);
+    var closeBtn = modal.querySelector("#wb-account-search-close");
+    if (closeBtn) closeBtn.addEventListener("click", closeModal);
+    // Esc 关闭：挂在弹窗自己的 keydown 上（输入框聚焦时冒泡可达），不碰 document
+    modal.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") closeModal();
+    });
+    searchWrap.addEventListener("input", function (ev) {
+      if (ev.target && ev.target.id === "wb-account-search-input") applyFilter(ev.target.value);
+    });
+    modal.addEventListener("input", function (ev) {
+      if (ev.target && ev.target.id === "wb-account-search-minput") applyFilter(ev.target.value);
+    });
+
+    if (actions) {
+      // 主锚点：插进「账号」行右侧图标容器首位 —— 标题之后、图标按钮之前，
+      // 与图标的间距 = 容器自身 gap（与两个图标间距一致）。
+      // PC 显示内联输入框、移动端显示搜索图标（CSS 按断点二选一），互不挤占。
+      actions.insertBefore(searchWrap, actions.firstChild);
+      actions.insertBefore(iconBtn, actions.firstChild);
+    } else {
+      // 兜底（官方改版找不到「账号」行时）：退回 v1.0.35 的独立过滤行形态 ——
+      // 插在页头行（含标题与档位切换）紧后方，PC 右对齐、移动端吸顶。
+      var header = null;
+      try {
+        header = group.closest("div.flex.items-start.justify-between");
+      } catch (e4) {}
+      if (!header || !header.parentNode) header = group.parentElement;
+      var searchRow = document.createElement("div");
+      searchRow.id = "wb-account-search-row";
+      searchRow.className = "wb-acc-search-row";
+      searchRow.appendChild(searchWrap);
+      header.insertAdjacentElement("afterend", searchRow);
+    }
+    // 弹窗挂 body（fixed 定位不受父容器影响）
+    document.body.appendChild(modal);
   }
 
   /* ------------------------------------------------------------------

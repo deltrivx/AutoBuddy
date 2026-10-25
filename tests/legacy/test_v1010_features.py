@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """v1.0.10 专项单测（用户 2026-10-21/22 反馈的五处调整）：
-1. 账号搜索框：v1.0.21 挪到档位切换同一行右端；v1.0.35 重构为独立过滤行
-   （页头行之后、卡片列表之前），移动端吸顶 + 防 iOS 聚焦缩放，PC 尺寸契约不变
+1. 账号搜索框：v1.0.36 进「账号」行图标按钮前，移动端同款图标 + 弹窗过滤（用户方案）
 2. 每日任务：「自动签到 / 自动执行任务」拆成两个独立开关、独立持久化
 3. 每日任务页「账号签到与凭据」加背景框，样式与同页其它板块一致
 4. 设备指纹与 UA：动态池化隔离，覆盖新账号，任何两项不碰撞
@@ -34,39 +33,45 @@ def check(name, cond, detail=""):
 
 
 # ---------------------------------------------------------------- 需求 1：搜索框
-# v1.0.35 更新：锚点从「寄生官方档位容器（内联改写 flex-col → flex-row）」
-# 重构为「页头行之后的独立过滤行」，官方 DOM 零改写；移动端吸顶 +
-# 16px 输入字号（防 iOS 聚焦自动放大）+ 40px 触控高度。PC 视觉尺寸
-# （36px 行高 / 28px 框高 / 10px 圆角 / 12px 字号）保持不变。
-print("[1] 搜索框：独立过滤行 + 移动端吸顶（v1.0.35 契约）")
+# v1.0.35：锚点从「寄生官方档位容器」重构为独立过滤行。
+# v1.0.36（用户 2026-10-25 方案）：搜索框进「账号」行右侧图标按钮容器首位
+#（标题之后、自动签到/自动执行等图标之前，间距 = 容器自身 gap）；
+# 移动端隐藏内联框、改显同款风格搜索图标按钮（克隆兄弟按钮 class），
+# 点击弹窗输入过滤。独立过滤行保留为官方改版时的兜底形态。
+print("[1] 搜索框：账号行内嵌 + 移动端图标弹窗（v1.0.36 契约）")
 check("定位档位切换组：aria-label 含「档位」",
       "wbFindVariantSwitchGroup" in PROXY and '档位' in PROXY)
-check("定位兜底：含 国内版/国际版 文本的按钮父级",
-      'btns[j].textContent' in PROXY and "国内版" in PROXY and "国际版" in PROXY)
-check("独立过滤行插在页头行之后（insertAdjacentElement afterend）",
+check("主锚点：H2 文本 === 账号 定位「账号」行",
+      re.search(r'trim\(\)\s*!==\s*"账号"', PROXY) is not None)
+check("主锚点：右侧图标按钮容器（ml-auto）首位插入",
+      'actions.insertBefore(searchWrap, actions.firstChild)' in PROXY
+      and 'actions.insertBefore(iconBtn, actions.firstChild)' in PROXY)
+check("移动端图标按钮克隆兄弟图标 class（同款外观）",
+      'iconBtn.className = ("wb-acc-search-iconbtn " + siblingCls).trim()' in PROXY)
+check("移动端弹窗：点击图标弹出、输入即过滤、✕/遮罩/Esc 三路关闭",
+      'modal.id = "wb-account-search-modal"' in PROXY
+      and 'id="wb-account-search-minput"' in PROXY
+      and 'modal.querySelector(".wb-acc-search-backdrop").addEventListener("click", closeModal)' in PROXY
+      and 'ev.key === "Escape"' in PROXY)
+check("过滤状态 PC 内联框 ↔ 移动端弹窗双向同步",
+      'function applyFilter(raw)' in PROXY and 'state.q' in PROXY)
+check("过滤生效时图标点亮（wb-acc-search-icon-on）",
+      '"wb-acc-search-icon-on"' in PROXY)
+check("兜底形态保留：找不到「账号」行时退回独立过滤行（afterend）",
       re.search(r'header\.insertAdjacentElement\("afterend",\s*searchRow\)', PROXY) is not None)
 check("不再改写官方档位容器布局（wbSearchRow 内联改写已整体移除）",
       'row.style.flexDirection' not in PROXY and "data-wb-search-row" not in PROXY)
-check("锚点读祖先 closest（只读，不改官方节点）",
-      'group.closest("div.flex.items-start.justify-between")' in PROXY)
-check("容器高度对齐官方切换组 h-9 = 36px（PC）",
-      re.search(r'\.wb-acc-search-wrap\s*\{[^}]*height:\s*36px', PROXY) is not None)
-check("输入框高度对齐官方切换按钮 h-7 = 28px（PC）",
-      re.search(r'\.wb-acc-search-box\s*\{[^}]*height:\s*28px', PROXY) is not None)
-check("圆角对齐官方 rounded-lg = 10px",
-      re.search(r'\.wb-acc-search-box\s*\{[^}]*border-radius:\s*10px', PROXY) is not None)
-check("字号/字重对齐官方 text-xs + font-medium（PC）",
-      re.search(r'\.wb-acc-search-input\s*\{[^}]*font-size:\s*12px[^}]*font-weight:\s*500',
-                PROXY) is not None)
-check("移动端（≤640px）过滤行吸顶（position: sticky）",
-      re.search(r'@media \(max-width:\s*640px\)\s*\{[^}]*\.wb-acc-search-row\s*\{[^}]*position:\s*sticky',
-                PROXY) is not None)
-check("移动端输入框 ≥16px（防 iOS Safari 聚焦自动放大）",
-      re.search(r'@media \(max-width:\s*640px\)\s*\{.*?\.wb-acc-search-input\s*\{[^}]*font-size:\s*16px',
-                PROXY, re.S) is not None)
-check("移动端触控目标 40px",
-      re.search(r'@media \(max-width:\s*640px\)\s*\{.*?\.wb-acc-search-box\s*\{\s*width:\s*100%;\s*height:\s*40px',
-                PROXY, re.S) is not None)
+check("PC 框高与「账号」行图标按钮对齐 36px",
+      re.search(r'\.wb-acc-search-box\s*\{[^}]*height:\s*36px', PROXY) is not None)
+check("移动端弹窗输入框 ≥16px（防 iOS Safari 聚焦自动放大）",
+      re.search(r'\.wb-acc-search-minput\s*\{[^}]*font-size:\s*16px', PROXY) is not None)
+check("移动端弹窗输入框 40px 触控高度",
+      re.search(r'\.wb-acc-search-minput\s*\{[^}]*height:\s*40px', PROXY) is not None)
+_media_m = re.search(r'@media \(max-width:\s*640px\)\s*\{', PROXY)
+_media_body = PROXY[_media_m.start():_media_m.start() + 4000] if _media_m else ""
+check("移动端内联框隐藏、图标按钮显示（≤640px 断点二选一）",
+      '.wb-acc-search-wrap { display: none; }' in _media_body
+      and '.wb-acc-search-iconbtn { display: inline-flex; }' in _media_body)
 check("移动端 type=search（原生清除按钮）",
       'type="search"' in PROXY)
 check("DOM 取不到档位组时安静退出，不拖垮页面",
