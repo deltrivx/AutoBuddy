@@ -31,6 +31,50 @@
 
 ---
 
+## [v1.0.35] - 2026-10-25
+
+<!-- summary: 账号页搜索框重构为独立过滤行（官方 DOM 零改写），移动端吸顶 + 防 iOS 聚焦缩放 -->
+
+### 变更
+
+- **账号页搜索框锚点重构：不再寄生官方档位容器**（`gateway/web_proxy.py`
+  的 `wbInjectAccountSearch()` / `wbRemoveAccountSearch()`）：
+
+  旧实现把搜索框插进官方「档位容器」内部，靠**内联改写官方节点的布局**
+  （flex-col → flex-row + justify-between）实现同行右端对齐，于是需要一整套
+  `wbSearchRow` dataset 标记 + 撤销时清理官方节点内联样式的机器 —— 官方一改版
+  最先坏（历史上已为它修过一次「搜索框掉行」）。
+
+  现改为在**页头行（`div.flex.items-start.justify-between`）之后插入独立过滤行
+  `wb-account-search-row`**（`closest()` 只读祖先定位，兜底档位容器父级）：
+
+  | 端 | 位置 |
+  | :--- | :--- |
+  | PC（≥640px） | 档位行正下方独立行、搜索框右对齐 —— 视觉位置与旧版几乎一致 |
+  | 移动端（<640px） | 全宽过滤行 + `position: sticky` 吸顶，长账号列表滚到中段也能直接改过滤词 |
+
+  官方 DOM 零改写、零残留：撤销时只删自己的两个节点，`wbSearchRow` 内联
+  改写与清理逻辑整体移除。
+
+### 修复
+
+- **移动端 iOS 聚焦自动放大**：输入框字号 12px < 16px，iOS Safari 聚焦时
+  必自动 zoom 整页且不回弹。移动端输入框字号提到 **16px**、框高提到
+  **40px**（触控目标），`type="search"` 换上移动端原生清除按钮；吸顶行
+  补实体背景（跟随 `--background`，深色主题兜底），避免滚动时卡片从框底透出。
+- PC 端视觉尺寸契约保持不变（36px 行高 / 28px 框高 / 10px 圆角 /
+  12px 字号 / 右端对齐），昼夜主题适配沿用 `--card` / `--popover` 变量。
+
+### 测试
+
+- `tests/legacy/test_v1010_features.py` 需求 1 契约同步到 v1.0.35：锁定
+  「独立过滤行 + afterend 注入 + 官方节点零改写（`wbSearchRow` 不得回归）」、
+  移动端吸顶 / 16px / 40px / type=search 五条新契约，PC 尺寸四条原样保留。
+- 全量 `tests/`、`tests/legacy/` 通过（`test_db.py` 需 `PYTHONPATH=.`，
+  `test_webui_panels.py` 需 Python ≥3.10，均为本地环境项）。
+
+---
+
 ## [v1.0.34] - 2026-10-25
 
 <!-- summary: 转发前改写 dsh 默认提示词里的上游渠道校验指纹句，修复 dsh 调用稳定 400 code=11128 -->
@@ -5850,7 +5894,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.34...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.35...HEAD
+[v1.0.35]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.34...v1.0.35
 [v1.0.34]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.33...v1.0.34
 [v1.0.33]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.32...v1.0.33
 [v1.0.32]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.31...v1.0.32

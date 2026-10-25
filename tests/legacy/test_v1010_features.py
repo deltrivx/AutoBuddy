@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """v1.0.10 专项单测（用户 2026-10-21/22 反馈的五处调整）：
-1. 账号搜索框：挪到「国内版/国际版」档位切换同一行右端，样式尺寸对齐切换按钮
+1. 账号搜索框：v1.0.21 挪到档位切换同一行右端；v1.0.35 重构为独立过滤行
+   （页头行之后、卡片列表之前），移动端吸顶 + 防 iOS 聚焦缩放，PC 尺寸契约不变
 2. 每日任务：「自动签到 / 自动执行任务」拆成两个独立开关、独立持久化
 3. 每日任务页「账号签到与凭据」加背景框，样式与同页其它板块一致
 4. 设备指纹与 UA：动态池化隔离，覆盖新账号，任何两项不碰撞
@@ -33,30 +34,41 @@ def check(name, cond, detail=""):
 
 
 # ---------------------------------------------------------------- 需求 1：搜索框
-print("[1] 搜索框：档位切换行右端 + 样式尺寸对齐")
+# v1.0.35 更新：锚点从「寄生官方档位容器（内联改写 flex-col → flex-row）」
+# 重构为「页头行之后的独立过滤行」，官方 DOM 零改写；移动端吸顶 +
+# 16px 输入字号（防 iOS 聚焦自动放大）+ 40px 触控高度。PC 视觉尺寸
+# （36px 行高 / 28px 框高 / 10px 圆角 / 12px 字号）保持不变。
+print("[1] 搜索框：独立过滤行 + 移动端吸顶（v1.0.35 契约）")
 check("定位档位切换组：aria-label 含「档位」",
       "wbFindVariantSwitchGroup" in PROXY and '档位' in PROXY)
 check("定位兜底：含 国内版/国际版 文本的按钮父级",
       'btns[j].textContent' in PROXY and "国内版" in PROXY and "国际版" in PROXY)
-check("插入档位容器行右端（row.appendChild）",
-      re.search(r'row\.appendChild\(searchWrap\)', PROXY) is not None)
-check("档位容器改横向 flex + 两端对齐（同行右端）",
-      'row.style.justifyContent = "space-between"' in PROXY
-      and 'row.style.flexDirection = "row"' in PROXY)
-check("容器高度对齐官方切换组 h-9 = 36px",
+check("独立过滤行插在页头行之后（insertAdjacentElement afterend）",
+      re.search(r'header\.insertAdjacentElement\("afterend",\s*searchRow\)', PROXY) is not None)
+check("不再改写官方档位容器布局（wbSearchRow 内联改写已整体移除）",
+      'row.style.flexDirection' not in PROXY and "data-wb-search-row" not in PROXY)
+check("锚点读祖先 closest（只读，不改官方节点）",
+      'group.closest("div.flex.items-start.justify-between")' in PROXY)
+check("容器高度对齐官方切换组 h-9 = 36px（PC）",
       re.search(r'\.wb-acc-search-wrap\s*\{[^}]*height:\s*36px', PROXY) is not None)
-check("输入框高度对齐官方切换按钮 h-7 = 28px",
+check("输入框高度对齐官方切换按钮 h-7 = 28px（PC）",
       re.search(r'\.wb-acc-search-box\s*\{[^}]*height:\s*28px', PROXY) is not None)
 check("圆角对齐官方 rounded-lg = 10px",
       re.search(r'\.wb-acc-search-box\s*\{[^}]*border-radius:\s*10px', PROXY) is not None)
-check("字号/字重对齐官方 text-xs + font-medium",
+check("字号/字重对齐官方 text-xs + font-medium（PC）",
       re.search(r'\.wb-acc-search-input\s*\{[^}]*font-size:\s*12px[^}]*font-weight:\s*500',
                 PROXY) is not None)
-check("消除 tablist padding 造成的 4px 错位（垂直对齐）",
-      re.search(r'\.wb-acc-search-wrap\s*\{[^}]*padding-top:\s*4px', PROXY) is not None
-      and re.search(r'\.wb-acc-search-wrap\s*\{[^}]*align-items:\s*flex-start', PROXY) is not None)
-check("移动端（≤640px）退到下一行全宽，不撑破档位行",
-      re.search(r'@media \(max-width:\s*640px\)\s*\{[^}]*\.wb-acc-search-wrap', PROXY) is not None)
+check("移动端（≤640px）过滤行吸顶（position: sticky）",
+      re.search(r'@media \(max-width:\s*640px\)\s*\{[^}]*\.wb-acc-search-row\s*\{[^}]*position:\s*sticky',
+                PROXY) is not None)
+check("移动端输入框 ≥16px（防 iOS Safari 聚焦自动放大）",
+      re.search(r'@media \(max-width:\s*640px\)\s*\{.*?\.wb-acc-search-input\s*\{[^}]*font-size:\s*16px',
+                PROXY, re.S) is not None)
+check("移动端触控目标 40px",
+      re.search(r'@media \(max-width:\s*640px\)\s*\{.*?\.wb-acc-search-box\s*\{\s*width:\s*100%;\s*height:\s*40px',
+                PROXY, re.S) is not None)
+check("移动端 type=search（原生清除按钮）",
+      'type="search"' in PROXY)
 check("DOM 取不到档位组时安静退出，不拖垮页面",
       re.search(r'if \(!group \|\| !group\.parentElement\) return;', PROXY) is not None)
 

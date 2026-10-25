@@ -462,49 +462,37 @@ COLLAPSE_SCRIPT = r"""
   .wb-header-badge-hidden span:not(:has(button)):not(:has(svg[class*=chevron])) {
     visibility: hidden;
   }
-  /* 账号管理搜索框（需求 3 + 2026-10-21 位置微调）
+  /* 账号管理搜索框（v1.0.35 重构：独立过滤行 + 移动端吸顶）
      ──────────────────────────────────────────────────────────
-     位置：官方「国内版 / 国际版」档位切换的**同一行、右端对齐**。
-     官方结构实测（生产 DOM）：
-       <div class="flex items-start justify-between gap-4">        ← 页头行
-         <div class="min-w-0">                                     ← 左列
-           <h1>账号管理</h1><p>…</p>
-           <div class="flex flex-col mt-4 gap-0">                  ← 档位容器
-             <div role="tablist" aria-label="WorkBuddy 档位"
-                  class="inline-flex h-9 w-fit items-center rounded-lg
-                         bg-muted p-1 text-muted-foreground">      ← 切换组
-               <button class="inline-flex h-7 … rounded-md px-3 text-xs">国内版</button>
-               …
-     把搜索框插成「档位容器」的第二个子元素（紧跟切换组之后），
-     并让档位容器改横向 flex + justify-between，于是搜索框自然落在
-     同一行的最右端。
-     尺寸对齐官方切换组：容器 h-9=36px、圆角 10px（rounded-lg）、
-     字号 12px（text-xs）、字重 500 —— 与切换按钮视觉完全一致。 */
-  /* ⚠️ 垂直对齐的坑：wrap 与 tablist 都是 h-36，但 tablist 内部有 padding:4px，
-     里面的按钮实际落在 y+4。若 wrap 用 align-items:center，搜索框会比档位按钮
-     高 4px（实测 delta=-4，一眼能看出不在一个水平线上）。
-     这里 wrap 高 36px、padding-top 用 tablist 同样的 4px + align-items:flex-start，
-     搜索框与档位按钮**逐像素对齐**（实测中心线 delta=0px）。
+     v1.0.34 及以前：搜索框寄生在官方「档位容器」里 —— 把官方 flex-col
+     容器内联改成 flex-row + justify-between，需要一整套 wbSearchRow 标记 +
+     wbRemoveAccountSearch 清理官方节点内联样式的机器，官方一改版最先坏
+     （历史上已为它修过一次「搜索框掉行」）。
 
-     2026-10-23 两处修正：
-       (1) 昼夜适配 —— background / box-shadow 原来是硬编码 #ffffff，
-           深色主题下就是一坨白补丁贴在暗色页面上（用户实测「白天和黑夜
-           搜索框未自动适配」）。改用官方同款 CSS 变量：--card / --border
-           / --popover 由主题切换时 html.dark 上的变量值决定，不写死颜色。
-           同时补一条 .dark 兜底：万一官方变量没覆盖到，也有暗色底可用。
-       (2) PC 端右端对齐 —— margin-left 由 8px 改为 auto。原来写死 8px，
-           搜索框只是「紧跟档位组右侧」，仍留在页面中部；档位容器本身
-           是 w-fit（不占满整行），auto 才会把搜索框推到行的最右端
-           （用户实测「PC 端同一行未自动对齐页面右端，目前在页面中间」）。 */
+     v1.0.35：锚点换成「页头行（div.flex.items-start.justify-between）之后、
+     账号卡片列表之前」的**独立工具行**，不改官方任何节点的布局：
+       · PC（≥640px）：独立行、搜索框右对齐 —— 视觉位置与旧版几乎一致
+         （档位行正下方、行的右端），但官方 DOM 保持原样；
+       · 移动端（<640px）：独立行变全宽 + position:sticky 吸顶，长账号列表
+         滚到中段也能直接改过滤词。
+
+     移动端两个必修的坑（2026-10-25）：
+       (1) iOS Safari 聚焦自动放大 —— input 字号 <16px 时聚焦必 zoom 整页
+           且不回弹。移动端把输入框字号提到 16px；
+       (2) 触控目标 —— 旧版 36px 行高偏小，移动端框高提到 40px。 */
+  .wb-acc-search-row {
+    display: flex;
+    justify-content: flex-end;    /* PC：搜索框靠右 —— 与旧行位（档位行右端）视觉一致 */
+    align-items: center;
+    margin: 8px 0 4px;
+  }
   .wb-acc-search-wrap {
     display: inline-flex;
-    align-items: flex-start;
+    align-items: center;
     height: 36px;                 /* 对齐官方切换组 h-9 */
-    padding-top: 4px;             /* 与 tablist 的 padding:4px 完全一致 */
     box-sizing: border-box;
-    margin-left: auto;            /* 2026-10-23：推到档位行最右端 */
-    flex: 0 0 auto;
-    vertical-align: middle;
+    flex: 0 1 auto;
+    max-width: 100%;
   }
   .wb-acc-search-box {
     display: flex;
@@ -560,13 +548,31 @@ COLLAPSE_SCRIPT = r"""
     width: 200px;
     min-width: 0;
   }
-  /* 移动端：不撑破档位行 —— 搜索框退到下一行但仍与切换组左对齐，
-     避免 iPhone 上两个控件挤在同一行互相压扁（上次移动端漏看的教训）。
-     padding-top 归零，否则下一行会凭空多出 4px 空隙。 */
+  /* 移动端：搜索行变全宽独立行 + 吸顶。
+     v1.0.35 起搜索框不再与档位切换同层（不再依赖官方容器的 flex-wrap 折行），
+     独立行本身就是一行 —— 吸顶后滚到长账号列表中段也能直接改过滤词。
+     ⚠️ 吸顶行必须有实体背景，否则滚动时卡片会从框底透出来；top:0 避免
+     上方露出一条内容缝隙。z-index 取小值即可：SPA 切到非账号页时
+     wbRemoveAccountSearch 会把它撤走，不会压在数据总览等官方浮层上。 */
   @media (max-width: 640px) {
-    .wb-acc-search-wrap { margin-left: 0; width: 100%; height: 36px; padding-top: 0; }
-    .wb-acc-search-box { width: 100%; }
-    .wb-acc-search-input { width: 100%; }
+    .wb-acc-search-row {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      justify-content: stretch;
+      margin: 4px 0;
+      padding: 4px 0;
+      background: var(--background, #f7f7f8);
+    }
+    .dark .wb-acc-search-row,
+    html.dark .wb-acc-search-row {
+      background: var(--background, #0b0e14);
+    }
+    .wb-acc-search-wrap { width: 100%; height: 40px; }   /* 40px 触控目标 */
+    .wb-acc-search-box { width: 100%; height: 40px; }
+    /* 16px 起步：iOS Safari 对 <16px 的 input 聚焦时自动放大整页且不回弹 */
+    .wb-acc-search-input { width: 100%; font-size: 16px; line-height: 40px; }
+    .wb-acc-search-icon { width: 16px; height: 16px; }
     /* 移动端登录提醒块：占满对应积分区域高度并自适应居中 */
     .wb-official-relogin { padding: 10px 12px; gap: 3px; min-height: 130px; }
     .wb-pool-relogin-title { font-size: 12px; line-height: 1.3; }
@@ -6131,6 +6137,10 @@ COLLAPSE_SCRIPT = r"""
   //         · hash === "#/accounts"        → 账号管理（明确后缀路由）
   //         · path === "/" 且无 hash       → 官方根页 = 账号管理的背后页面
   //       其余一律不注入，安静退出（与其它注入函数「坏了也别炸」同风格）。
+  // 2026-10-25（v1.0.35）锚点重构：从「寄生官方档位容器（内联改写它的
+  // flex-col → flex-row）」改为「页头行之后插入独立过滤行」—— 官方 DOM
+  // 零改写、零残留，移动端顺带吸顶 + 防 iOS 聚焦缩放（见 CSS 注释与
+  // wbInjectAccountSearch 内注释）。
   // 官方 DOM 实测：
   //   div.flex.items-start.justify-between.gap-4      ← 页头行
   //     └ div.min-w-0
@@ -6184,15 +6194,21 @@ COLLAPSE_SCRIPT = r"""
        1. SPA 切到非账号页时（积分统计 / 词元统计 / 设置…）—— 只靠
           「不注入」不够，document 不重建，上次插的节点会一直留着；
        2. 档位容器结构找不到时（官方改版）—— 同样要收干净，不留孤儿节点。
-     顺带做两件收尾：
-       · 把被搜索过滤隐藏的卡片全部放出来（否则带着 display:none 切走
-         再切回来，账号会「少了一批」—— 过滤状态比 DOM 活得久）；
-       · 清掉档位容器的 wbSearchRow 标记与内联样式，让下次进来时重新
-         套上 flex 布局（不清的话新节点不会获得横向布局，搜索框掉行）。 */
+     顺带把被搜索过滤隐藏的卡片全部放出来（否则带着 display:none 切走
+     再切回来，账号会「少了一批」—— 过滤状态比 DOM 活得久）。
+
+     v1.0.35：搜索框不再寄生官方档位容器（旧实现要把官方 flex-col 内联改成
+     flex-row，还得在这里清官方节点的 dataset 标记与内联样式，官方一改版
+     最先坏）。现在整条过滤行都是自己的节点（wb-account-search-row），
+     撤销时把自己的两个节点删掉即可，官方 DOM 零残留。 */
   function wbRemoveAccountSearch() {
     var bar = document.getElementById("wb-account-search-bar");
     if (bar) {
       if (bar.parentNode) bar.parentNode.removeChild(bar);
+    }
+    var row = document.getElementById("wb-account-search-row");
+    if (row) {
+      if (row.parentNode) row.parentNode.removeChild(row);
     }
     // 复位被过滤隐藏的账号卡片
     try {
@@ -6201,26 +6217,12 @@ COLLAPSE_SCRIPT = r"""
         if (cards[i].style.display === "none") cards[i].style.display = "";
       }
     } catch (e) {}
-    // 清掉档位容器上为搜索栏加的横向布局标记与内联样式
-    try {
-      var rows = document.querySelectorAll('[data-wb-search-row="1"]');
-      for (var j = 0; j < rows.length; j++) {
-        var r = rows[j];
-        delete r.dataset.wbSearchRow;
-        r.style.display = "";
-        r.style.flexDirection = "";
-        r.style.alignItems = "";
-        r.style.justifyContent = "";
-        r.style.flexWrap = "";
-        r.style.gap = "";
-        r.style.width = "";
-      }
-    } catch (e2) {}
   }
 
   function wbInjectAccountSearch() {
-    // 避免重复注入
+    // 避免重复注入（过滤行与搜索框一起查：两个都是自己的节点）
     if (document.getElementById("wb-account-search-bar")) return;
+    if (document.getElementById("wb-account-search-row")) return;
 
     // 2026-10-23：只在账号管理页注入。
     // 积分统计 / 词元统计页同样有 article 卡片，此前会把搜索框也插上去
@@ -6241,25 +6243,21 @@ COLLAPSE_SCRIPT = r"""
     if (!group || !group.parentElement) wbRemoveAccountSearch();
     if (!group || !group.parentElement) return;
 
-    // 档位容器（官方 flex flex-col mt-4 gap-0）：改成横向 + 两端对齐，
-    // 切换组在左、搜索框在右 —— 同一行右端对齐。
-    var row = group.parentElement;
-    if (row.dataset.wbSearchRow !== "1") {
-      row.dataset.wbSearchRow = "1";
-      row.style.display = "flex";
-      row.style.flexDirection = "row";
-      row.style.alignItems = "center";
-      row.style.justifyContent = "space-between";
-      row.style.flexWrap = "wrap";
-      row.style.gap = "8px";
-      row.style.width = "100%";
-      // ⚠️ 官方容器是 flex-col（mt-4 gap-0），直接改横向后里面的
-      // 「标题 h2 + tablist」会被 space-between 甩到两端。
-      // 所以只把**切换组所在的那一层**改横向，标题保持独立一行。
-      // 同时把该层的 dataset 标记一起清掉由 wbRemoveAccountSearch 负责
-      // （否则下次回来时 row.dataset.wbSearchRow 仍是 "1"，
-      //  新节点不会重新套 flex 样式，搜索框会掉到下一行）。
-    }
+    // v1.0.35 重构：独立过滤行，插在「页头行（div.flex.items-start.justify-between，
+    // 内含标题与档位切换）」的紧后方 = 档位行下方、账号卡片列表上方。
+    // PC 上搜索框在这行里右对齐（视觉位置与旧版「档位行右端」几乎一致）；
+    // 移动端这行变全宽 + CSS 吸顶（见 .wb-acc-search-row 的媒体查询）。
+    // ⚠️ 不再改官方节点的任何内联布局 —— closest 只是**读**祖先，
+    // 兜底用档位容器的父级，保证两个锚点之后都是卡片列表方向。
+    var header = null;
+    try {
+      header = group.closest("div.flex.items-start.justify-between");
+    } catch (e) {}
+    if (!header || !header.parentNode) header = group.parentElement;
+
+    var searchRow = document.createElement("div");
+    searchRow.id = "wb-account-search-row";
+    searchRow.className = "wb-acc-search-row";
 
     var searchWrap = document.createElement("div");
     searchWrap.id = "wb-account-search-bar";
@@ -6269,12 +6267,14 @@ COLLAPSE_SCRIPT = r"""
         '<svg class="wb-acc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
           '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>' +
         '</svg>' +
-        '<input type="text" id="wb-account-search-input" class="wb-acc-search-input" placeholder="搜索账号（名称 / 手机号 / ID）..." autocomplete="off" />' +
+        // type="search"：移动端自带原生清除按钮（iOS 键盘上方也为搜索键）
+        '<input type="search" id="wb-account-search-input" class="wb-acc-search-input" placeholder="搜索账号（名称 / 手机号 / ID）..." autocomplete="off" />' +
         '<span id="wb-account-search-count" class="wb-acc-search-count" style="display:none"></span>' +
       '</div>';
 
-    // 插入在档位切换组的**后方**（同一父级内追加到末尾 = 同行最右端）
-    row.appendChild(searchWrap);
+    searchRow.appendChild(searchWrap);
+    // 独立行插在页头行的紧后方（afterend = 与页头行同级、卡片列表之前）
+    header.insertAdjacentElement("afterend", searchRow);
 
     var input = searchWrap.querySelector("#wb-account-search-input");
     var countSpan = searchWrap.querySelector("#wb-account-search-count");
