@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.1.0"
+VERSION_DEFAULT = "2.1.1"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -2569,6 +2569,16 @@ def _retry_candidates(model: Optional[str], exclude: set) -> List[Dict[str, Any]
                 pool = not_no
         except Exception:
             pass
+    # 冷却过滤：与 select_account 对齐 —— 冷却中的账号（尤其 400 渠道拦截
+    # channel_blocked 30 分钟）不得参与换号重试，否则刚被上游拦下的号会被
+    # 立刻选回来反复撞同一个 400，重试链形同虚设（v2.1.0 实测）。
+    # 兜底与 filter_cooling 一致：全部都在冷却时回退原集合。
+    try:
+        cool_alive = cooldown.filter_cooling(pool, _account_id)
+        if cool_alive:
+            pool = cool_alive
+    except Exception:
+        pass
     return [a for a in pool if str(_account_id(a)) not in exclude]
 
 
