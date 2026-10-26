@@ -6149,7 +6149,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.1...HEAD
+[v2.1.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.0...v2.1.1
 [v2.1.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.0.0...v2.1.0
 [v2.0.0]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.40...v2.0.0
 [v1.0.40]: https://github.com/deltrivx/AutoBuddy/compare/v1.0.39...v1.0.40
