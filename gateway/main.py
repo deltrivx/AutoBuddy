@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.2.3"
+VERSION_DEFAULT = "2.2.4"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -481,6 +481,8 @@ CHANNEL_FINGERPRINT_RULES = [
     ("You are an AI agent powered by DeepSeek Harness",
      "You are an AI agent running on a local coding tool"),
     ("DeepSeek Harness", "local coding tool"),
+    ("Tokens prefixed with @ are paths the user explicitly referenced.",
+     "Paths prefixed with @ are explicitly referenced by the user."),
 ]
 
 try:

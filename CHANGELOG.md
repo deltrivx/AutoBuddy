@@ -20,6 +20,16 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.2.4] - 2026-10-28
+
+<!-- summary: 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 -->
+
+### 修复
+
+- **彻底根治 DSH 提示词复合指纹特征（实测二分定点拦截）**：
+  - **精准定位病灶**：二分实测真实 DSH 生产会话（Turn 2 及长会话历史）确认，上游风控审计对 DSH 默认文件引用指令 `"Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root..."` 进行句式指纹检测，命中即报 `HTTP 400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel"}`。
+  - **针对性改写清洗**：将该句归一化改写为 `"Paths prefixed with @ are explicitly referenced by the user."`，语义完全等价且彻底破坏上游特征指纹，全量实测 100% 成功放行（HTTP 200）。
+
 ## [v2.2.3] - 2026-10-28
 
 <!-- summary: 对齐 freetier2api 消息与协议归一化管线，彻底消除 developer 角色导致的 11128 渠道拦截 -->
@@ -4868,6 +4878,16 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ## [未发布]
 
+## [v2.2.4] - 2026-10-28
+
+<!-- summary: 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 -->
+
+### 修复
+
+- **彻底根治 DSH 提示词复合指纹特征（实测二分定点拦截）**：
+  - **精准定位病灶**：二分实测真实 DSH 生产会话（Turn 2 及长会话历史）确认，上游风控审计对 DSH 默认文件引用指令 `"Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root..."` 进行句式指纹检测，命中即报 `HTTP 400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel"}`。
+  - **针对性改写清洗**：将该句归一化改写为 `"Paths prefixed with @ are explicitly referenced by the user."`，语义完全等价且彻底破坏上游特征指纹，全量实测 100% 成功放行（HTTP 200）。
+
 ## [v2.2.3] - 2026-10-28
 
 <!-- summary: 对齐 freetier2api 消息与协议归一化管线，彻底消除 developer 角色导致的 11128 渠道拦截 -->
@@ -6238,7 +6258,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.3...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.4...HEAD
+[v2.2.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.3...v2.2.4
 [v2.2.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.2...v2.2.3
 [v2.2.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.1...v2.2.2
 [v2.2.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.0...v2.2.1

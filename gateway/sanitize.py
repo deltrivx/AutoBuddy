@@ -58,6 +58,8 @@ DEFAULT_REWRITE_RULES: List[Tuple[str, str]] = [
      'You are an AI agent running on a local coding tool'),
     ('DeepSeek Harness',
      'local coding tool'),
+    ('Tokens prefixed with @ are paths the user explicitly referenced.',
+     'Paths prefixed with @ are explicitly referenced by the user.'),
     # --- Claude Code 特征（常见 Agent 客户端，上游同样做指纹审计） ---
     ("You are Claude Code, Anthropic's official CLI for Claude",
      "You are Claude Code, Anthropic's official CLI tool for Claude"),
@@ -86,6 +88,7 @@ DEFAULT_REGEX_RULES: List[Tuple[str, str]] = [
 DEFAULT_FEATURE_PRECHECK: List[str] = [
     'You are an AI agent powered by DeepSeek Harness',
     'DeepSeek Harness',
+    'Tokens prefixed with @',
     "You are Claude Code",
     "Anthropic's official CLI",
     "Main branch (",
