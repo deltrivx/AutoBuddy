@@ -24,7 +24,10 @@ import re
 import threading
 from typing import Any, Dict, List, Tuple
 
-from .paths import get_data_dir
+try:
+    from gateway.paths import get_data_dir
+except ImportError:
+    from paths import get_data_dir
 
 # ---------------------------------------------------------------------------
 # 配置与开关

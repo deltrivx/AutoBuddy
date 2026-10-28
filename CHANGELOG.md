@@ -20,6 +20,14 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.2.1] - 2026-10-28
+
+<!-- summary: 修复容器内独立启动 gateway/sanitize.py 时包导入路径问题 -->
+
+### 修复
+
+- **导入兼容**：`gateway/sanitize.py` 与 `gateway/main.py` 补充 `paths` 单独运行与包导入双模兼容，彻底解决容器入口 `python3 /app/gateway/main.py` 时的 `attempted relative import` 报错。
+
 ## [v2.2.0] - 2026-10-28
 
 <!-- summary: 一句话说清这个版本做了什么 -->
@@ -4839,6 +4847,14 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ## [未发布]
 
+## [v2.2.1] - 2026-10-28
+
+<!-- summary: 修复容器内独立启动 gateway/sanitize.py 时包导入路径问题 -->
+
+### 修复
+
+- **导入兼容**：`gateway/sanitize.py` 与 `gateway/main.py` 补充 `paths` 单独运行与包导入双模兼容，彻底解决容器入口 `python3 /app/gateway/main.py` 时的 `attempted relative import` 报错。
+
 ## [v2.2.0] - 2026-10-28
 
 <!-- summary: 架构级脱敏引擎上线：快路径预检、全字段（content/reasoning/tool_calls.arguments）覆盖、正则不动点清洗与外置 JSON 热更 -->
@@ -6182,7 +6198,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.1...HEAD
+[v2.2.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.0...v2.2.1
 [v2.2.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.2...v2.2.0
 [v2.1.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.1...v2.1.2
 [v2.1.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.0...v2.1.1
