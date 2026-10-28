@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.2.2"
+VERSION_DEFAULT = "2.2.3"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -456,6 +456,7 @@ def _desktop_headers(token: str, acc: Optional[Dict[str, Any]] = None,
         if CN_BASE_URL and str(CN_BASE_URL) in str(_resolve_base_url("cn", None)):
             headers["Origin"] = origin
             headers["Referer"] = origin + "/"
+        headers["X-CodeBuddy-Request"] = "1"
         return headers
     except Exception:
         return base
@@ -517,6 +518,46 @@ def _upstream_body(body: Dict[str, Any], acc: Optional[Dict[str, Any]] = None) -
             out["conversationId"] = "wb-" + conv
         if CHANNEL_SANITIZE:
             out["messages"] = _sanitize_channel_fingerprints(out.get("messages"))
+
+        # 归一化 tool_choice（与 freetier2api 严格对齐：上游字段为 Go string，对象直接 400 code=11101）
+        raw_tc = out.get("tool_choice")
+        if raw_tc is not None:
+            if isinstance(raw_tc, str):
+                if raw_tc.strip().lower() == "none":
+                    out.pop("tool_choice", None)
+                    out.pop("tools", None)
+                    out.pop("functions", None)
+            elif isinstance(raw_tc, dict):
+                tc_type = str(raw_tc.get("type", "")).strip().lower()
+                if tc_type == "none":
+                    out.pop("tool_choice", None)
+                    out.pop("tools", None)
+                    out.pop("functions", None)
+                elif tc_type in ("auto", "required"):
+                    out["tool_choice"] = tc_type
+                elif tc_type == "function":
+                    fn = raw_tc.get("function")
+                    fn_name = fn.get("name", "") if isinstance(fn, dict) else raw_tc.get("name", "")
+                    fn_name = str(fn_name).strip()
+                    if fn_name:
+                        out["tool_choice"] = fn_name
+                    else:
+                        out.pop("tool_choice", None)
+                else:
+                    out.pop("tool_choice", None)
+            else:
+                out.pop("tool_choice", None)
+
+        # max_completion_tokens -> max_tokens
+        alias_tokens = out.pop("max_completion_tokens", None)
+        if alias_tokens is not None and "max_tokens" not in out:
+            try:
+                val = int(alias_tokens)
+                if val > 0:
+                    out["max_tokens"] = val
+            except (ValueError, TypeError):
+                pass
+
         return out
     except Exception:
         return body
@@ -3697,12 +3738,41 @@ async def list_models(request: Request):
     }
 
 def normalize_messages_for_upstream(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not messages:
+    """规范化消息列表：
+    1. role='developer' 映射为 'system'（上游 role 白名单不含 developer，命中即 400 code=11128）
+    2. image_url 为 str 时规整为 {'url': ...} 对象
+    3. 保证首条消息是 system 角色
+    """
+    if not isinstance(messages, list) or not messages:
         return [{"role": "system", "content": "You are a helpful assistant."}]
-    first = messages[0]
+
+    normalized = []
+    for m in messages:
+        if not isinstance(m, dict):
+            normalized.append(m)
+            continue
+        item = dict(m)
+        role = str(item.get("role", "")).strip().lower()
+        if role == "developer":
+            item["role"] = "system"
+
+        parts = item.get("content")
+        if isinstance(parts, list):
+            new_parts = []
+            for p in parts:
+                if isinstance(p, dict) and p.get("type") == "image_url" and isinstance(p.get("image_url"), str):
+                    p_copy = dict(p)
+                    p_copy["image_url"] = {"url": p["image_url"]}
+                    new_parts.append(p_copy)
+                else:
+                    new_parts.append(p)
+            item["content"] = new_parts
+        normalized.append(item)
+
+    first = normalized[0]
     if first.get("role") != "system":
-        return [{"role": "system", "content": "You are a helpful assistant."}] + messages
-    return messages
+        return [{"role": "system", "content": "You are a helpful assistant."}] + normalized
+    return normalized
 
 def estimate_tokens_from_chars(char_count: int) -> int:
     """按 3.5 字符 ≈ 1 token 的粗估。只在拿不到上游 usage 时兜底。"""

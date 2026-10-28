@@ -20,6 +20,19 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.2.3] - 2026-10-28
+
+<!-- summary: 对齐 freetier2api 消息与协议归一化管线，彻底消除 developer 角色导致的 11128 渠道拦截 -->
+
+### 修复
+
+- **彻底根治 11128 渠道校验拦截（角色与参数归一化）**：
+  - **根本病灶验证**：实测坐实上游接口严格审计 `role` 白名单（仅允许 `system` / `user` / `assistant` / `tool`），现代客户端与 DSH 默认发出的 `role: "developer"` 会被上游直接判定为非官方客户端，返回 `HTTP 400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel"}`。
+  - **对齐 freetier2api 完整协议管线**：
+    1. `normalize_messages_for_upstream`：将 `developer` 角色全量映射为 `system`；多模态 `image_url` 为字符串时自动规整为 `{"url": ...}` 对象。
+    2. `_desktop_headers`：补齐官方必备基础指纹头 `X-CodeBuddy-Request: "1"`。
+    3. `_upstream_body`：对齐 `tool_choice` 归一化（对象提取 `name` / 模式转字符串，`none` 时安全剔除 `tools` 避免 11101），并将 `max_completion_tokens` 自动转换为上游支持的 `max_tokens`。
+
 ## [v2.2.2] - 2026-10-28
 
 <!-- summary: 参考 freetier2api 破坏 DeepSeek 与 harness 语义组合，彻底根治 DSH 渠道 11128 拦截 -->
@@ -4855,6 +4868,19 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ## [未发布]
 
+## [v2.2.3] - 2026-10-28
+
+<!-- summary: 对齐 freetier2api 消息与协议归一化管线，彻底消除 developer 角色导致的 11128 渠道拦截 -->
+
+### 修复
+
+- **彻底根治 11128 渠道校验拦截（角色与参数归一化）**：
+  - **根本病灶验证**：实测坐实上游接口严格审计 `role` 白名单（仅允许 `system` / `user` / `assistant` / `tool`），现代客户端与 DSH 默认发出的 `role: "developer"` 会被上游直接判定为非官方客户端，返回 `HTTP 400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel"}`。
+  - **对齐 freetier2api 完整协议管线**：
+    1. `normalize_messages_for_upstream`：将 `developer` 角色全量映射为 `system`；多模态 `image_url` 为字符串时自动规整为 `{"url": ...}` 对象。
+    2. `_desktop_headers`：补齐官方必备基础指纹头 `X-CodeBuddy-Request: "1"`。
+    3. `_upstream_body`：对齐 `tool_choice` 归一化（对象提取 `name` / 模式转字符串，`none` 时安全剔除 `tools` 避免 11101），并将 `max_completion_tokens` 自动转换为上游支持的 `max_tokens`。
+
 ## [v2.2.2] - 2026-10-28
 
 <!-- summary: 参考 freetier2api 破坏 DeepSeek 与 harness 语义组合，彻底根治 DSH 渠道 11128 拦截 -->
@@ -6212,7 +6238,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.3...HEAD
+[v2.2.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.2...v2.2.3
 [v2.2.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.1...v2.2.2
 [v2.2.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.0...v2.2.1
 [v2.2.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.2...v2.2.0
