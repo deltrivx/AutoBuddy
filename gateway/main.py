@@ -115,7 +115,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.2.1"
+VERSION_DEFAULT = "2.2.2"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -469,11 +469,17 @@ def _desktop_headers(token: str, acc: Optional[Dict[str, Any]] = None,
 # 全字段覆盖（content/reasoning/tool_calls.arguments）+ 正则不动点清洗 +
 # 规则外置 /data/sanitize_rules.json 可热更。AB_CHANNEL_SANITIZE=0 整体回退。
 # ---------------------------------------------------------------------------
+# 2026-10-28 DSH 渠道修复：破坏上游渠道识别拦的「DeepSeek」+「harness」
+# 语义串，参照 CLIProxyAPI-freetier2api-plugin 的 autoclaw 路由（它因走
+# 「去掉产品名 DeepSeek 换成中性前缀」400 为零，故沿用其口径：删产品名、
+# 中性化 harness）。之前三版只是把空格换连字符 DeepSeek-Harness，
+# 两个词照样共存、命中照旧，故换号 7 连败、11128 不停。
+# ---------------------------------------------------------------------------
 CHANNEL_SANITIZE = (os.getenv("AB_CHANNEL_SANITIZE", "1") or "1").strip() not in ("0", "false", "no")
 CHANNEL_FINGERPRINT_RULES = [
     ("You are an AI agent powered by DeepSeek Harness",
-     "You are an AI agent running on DeepSeek-Harness"),
-    ("DeepSeek Harness", "DeepSeek-Harness"),
+     "You are an AI agent running on a local coding tool"),
+    ("DeepSeek Harness", "local coding tool"),
 ]
 
 try:

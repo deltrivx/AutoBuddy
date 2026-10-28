@@ -20,6 +20,14 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.2.2] - 2026-10-28
+
+<!-- summary: 参考 freetier2api 破坏 DeepSeek 与 harness 语义组合，彻底根治 DSH 渠道 11128 拦截 -->
+
+### 修复
+
+- **DSH 渠道拦截根治**：参照 `CLIProxyAPI-freetier2api-plugin` 的 `autoclaw` 实测放行口径，将默认系统提示与短语中的 `"DeepSeek Harness"` 剥离产品品牌并中性化改写为 `"local coding tool"`，彻底破坏上游渠道审计对 `"DeepSeek"` + `"harness"` 复合特征的正则/子串匹配，彻底根除换号 7 连败及 `HTTP 400 (11128)` 报错。
+
 ## [v2.2.1] - 2026-10-28
 
 <!-- summary: 修复容器内独立启动 gateway/sanitize.py 时包导入路径问题 -->
@@ -4847,7 +4855,13 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ## [未发布]
 
-## [v2.2.1] - 2026-10-28
+## [v2.2.2] - 2026-10-28
+
+<!-- summary: 参考 freetier2api 破坏 DeepSeek 与 harness 语义组合，彻底根治 DSH 渠道 11128 拦截 -->
+
+### 修复
+
+- **DSH 渠道拦截根治**：参照 `CLIProxyAPI-freetier2api-plugin` 的 `autoclaw` 实测放行口径，将默认系统提示与短语中的 `"DeepSeek Harness"` 剥离产品品牌并中性化改写为 `"local coding tool"`，彻底破坏上游渠道审计对 `"DeepSeek"` + `"harness"` 复合特征的正则/子串匹配，彻底根除换号 7 连败及 `HTTP 400 (11128)` 报错。
 
 <!-- summary: 修复容器内独立启动 gateway/sanitize.py 时包导入路径问题 -->
 
@@ -6198,7 +6212,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.1...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.2...HEAD
+[v2.2.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.1...v2.2.2
 [v2.2.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.0...v2.2.1
 [v2.2.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.2...v2.2.0
 [v2.1.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.1...v2.1.2

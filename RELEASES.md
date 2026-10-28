@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v2.2.1](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.1)
+**当前稳定版：** [v2.2.2](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.2)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,7 +13,8 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
-| [v2.2.1](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.1) | 2026-10-28 | 修复容器内独立启动 gateway/sanitize.py 时包导入路径问题 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.1.md) |
+| [v2.2.2](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.2) | 2026-10-28 | 参考 freetier2api 破坏 DeepSeek 与 harness 语义组合，彻底根治 DSH 渠道 11128 拦截 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.2.md) |
+| [v2.2.2](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.2) | 2026-10-28 | 参考 freetier2api 破坏 DeepSeek 与 harness 语义组合，彻底根治 DSH 渠道 11128 拦截 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.2.md) |
 | [v2.2.1](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.1) | 2026-10-28 | 修复容器内独立启动 gateway/sanitize.py 时包导入路径问题 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.1.md) |
 | [v2.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.0) | 2026-10-28 | 一句话说清这个版本做了什么 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.0.md) |
 | [v2.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.0) | 2026-10-28 | 架构级脱敏引擎上线：快路径预检、全字段（content/reasoning/tool_calls.arguments）覆盖、正则不动点清洗与外置 JSON 热更 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.0.md) |
@@ -240,7 +241,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:2.2.1    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:2.2.2    # 锁定版本
 ```
 
 ## 部署产物
