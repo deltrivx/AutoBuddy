@@ -56,8 +56,10 @@ check("_upstream_body 在 CHANNEL_SANITIZE 开启时调用 _sanitize_channel_fin
       re.search(r"if CHANNEL_SANITIZE:\s*\n\s*out\[.messages.\]\s*=\s*_sanitize_channel_fingerprints", src) is not None)
 check("提供 AB_CHANNEL_SANITIZE 开关（=0 可整体回退透传）",
       "AB_CHANNEL_SANITIZE" in src)
+san_src = (SRC.parent / "sanitize.py").read_text(encoding="utf-8") if (SRC.parent / "sanitize.py").exists() else src
 check("改写函数同时覆盖 str 与多模态 list 两种 content 形态",
-      "isinstance(content, str)" in src and "isinstance(content, list)" in src)
+      ("isinstance(content, str)" in src and "isinstance(content, list)" in src) or
+      ("isinstance(content, str)" in san_src and "isinstance(content, list)" in san_src))
 
 print("\n[3] 行为模拟（用提取出的规则表原样复现改写逻辑）")
 sample = [

@@ -20,7 +20,7 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
-## [vX.Y.Z] - YYYY-MM-DD
+## [v2.2.0] - 2026-10-28
 
 <!-- summary: 一句话说清这个版本做了什么 -->
 
@@ -4839,6 +4839,21 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ## [未发布]
 
+## [v2.2.0] - 2026-10-28
+
+<!-- summary: 架构级脱敏引擎上线：快路径预检、全字段（content/reasoning/tool_calls.arguments）覆盖、正则不动点清洗与外置 JSON 热更 -->
+
+### 新增与修复
+
+- **架构级脱敏引擎 (`gateway/sanitize.py`)**：
+  - 前两次修复（v1.0.34、v2.1.2）面对 dsh 工具调用仍间歇性触发 `11128`，实测确认存在 `tool_calls.arguments` / `reasoning` 盲区，且硬编码追不上上游更新。
+  - 新增完整脱敏引擎：快路径预检（普通请求零正则开销）、全字段递归清洗（覆盖正文、思考流与工具参数，跳过 `image_url` 图片数据）、计费头与 `cc_*` 正则不动点清洗。
+  - 规则支持从挂载的 `/data/sanitize_rules.json` 热更新，上游再改特征词免重新发版。
+  - 保留 `AB_CHANNEL_SANITIZE` 兼容开关与向下兼容规则别名。
+- **单元测试**：
+  - 新增 `tests/test_sanitize_engine.py`（22 项），全套 61 个单测 100% 通过。
+
+
 ### 计划中
 
 - 暂无。
@@ -6167,7 +6182,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.0...HEAD
+[v2.2.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.2...v2.2.0
 [v2.1.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.1...v2.1.2
 [v2.1.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.1.0...v2.1.1
 [v2.1.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.0.0...v2.1.0

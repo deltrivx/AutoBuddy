@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v2.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.1.0)
+**当前稳定版：** [v2.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.0)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,10 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v2.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.0) | 2026-10-28 | 一句话说清这个版本做了什么 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.0.md) |
+| [v2.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.0) | 2026-10-28 | 架构级脱敏引擎上线：快路径预检、全字段（content/reasoning/tool_calls.arguments）覆盖、正则不动点清洗与外置 JSON 热更 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.0.md) |
+| [v2.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v2.1.2) | 2026-10-27 | 扩大渠道拦截特征串替换范围为 DeepSeek-Harness，修复 dsh 复合提示词被 11128 拦截 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.1.2.md) |
+| [v2.1.1](https://github.com/deltrivx/autobuddy/releases/tag/v2.1.1) | 2026-10-27 | 修复换号重试未过滤冷却账号导致的 400 渠道拦截死循环 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.1.1.md) |
 | [v2.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.1.0) | 2026-10-25 | 并入另一设备 v1.0.16 补丁镜像的 5 项有效补丁：账号池归零告警、TTFB 埋点接线、autoEnableAccounts 白名单、refresh_guard 落盘加锁、签到推送补今日新增/消耗 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.1.0.md) |
 | [v2.0.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.0.0) | 2026-10-25 | 正式版：取消签到/旅行选中态背景，选中指示只剩品牌色图标，「账号」行全控件视觉统一 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.0.0.md) |
 | [v1.0.40](https://github.com/deltrivx/autobuddy/releases/tag/v1.0.40) | 2026-10-25 | 「账号」行全控件对齐签到/旅行按钮未选中态：分隔线隐藏、搜索框转透明、列表/刷新剥背景 | [详细说明](./docs/release-notes/RELEASE_NOTES_v1.0.40.md) |
@@ -227,7 +231,6 @@
 | [v0.2.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.2.0) | 2026-09-18 | 容器化体验升级与全量模型网关支持 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.2.0.md) |
 | [v0.1.2](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.2) | 2026-09-18 | 图标全链路对齐与 Sub2API 对接 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.1.2.md) |
 | [v0.1.0](https://github.com/deltrivx/autobuddy/releases/tag/v0.1.0) | 2026-09-18 | 初始版本发布 | [详细说明](./docs/release-notes/RELEASE_NOTES_v0.1.0.md) |
-| [vX.Y.Z](https://github.com/deltrivx/autobuddy/releases/tag/vX.Y.Z) | YYYY-MM-DD | 一句话说清这个版本做了什么 | [详细说明](./docs/release-notes/RELEASE_NOTES_vX.Y.Z.md) |
 
 ## 镜像标签
 
@@ -235,7 +238,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:2.1.0    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:2.2.0    # 锁定版本
 ```
 
 ## 部署产物
