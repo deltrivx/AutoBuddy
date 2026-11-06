@@ -1746,9 +1746,15 @@ COLLAPSE_SCRIPT = r"""
     padding: 0 !important;
     margin: 0 !important;
   }
+  /* 智能路由视图与概览/每日任务同属注入视图，复用同一套容器复位规则。 */
+  #wb-routing-view {
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
 
   /* —— ⑦ 数据总览页 —— */
-  /* 与其他五个页面统一：1180px 居中（官方标准页就是 1180px）。 */
   /* 与其他五个页面统一：1180px 居中、左右内边距 16px（与官方 max-w-[1180px] 的
      px-4 完全一致），这样总览页内容区的**实测宽度与左边缘**和官方页逐像素相等。 */
   #wb-overview-view .wb-ov-wrap {
@@ -1758,6 +1764,121 @@ COLLAPSE_SCRIPT = r"""
        （2026-10-17 体检：原 28px 时概览 H1 y=93，官方页 y=101）。 */
     padding: 36px 16px 40px;
   }
+
+  /* —— ⑧ 智能路由页（第 7 核心功能） ——
+     复用概览页 1180px 居中容器规格，与各标准页左边缘严格对齐。 */
+  #wb-routing-view .wb-rt-wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 16px 40px;
+  }
+  .wb-rt-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .wb-rt-h1 {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin: 0;
+  }
+  .wb-rt-sub {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--muted-foreground, #64748b);
+  }
+  .wb-rt-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .wb-rt-btn {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.16));
+    background: var(--sidebar, #1b1e27);
+    color: var(--foreground, #e5e7eb);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .15s ease;
+  }
+  .wb-rt-btn:hover { background: color-mix(in oklab, var(--sidebar, #1b1e27) 85%, #fff); }
+  .wb-rt-btn-primary {
+    background: var(--accent, #3b82f6);
+    border-color: var(--accent, #3b82f6);
+    color: #fff;
+  }
+  .wb-rt-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 860px) { .wb-rt-cols { grid-template-columns: 1fr; } }
+  .wb-rt-card {
+    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.16));
+    border-radius: 12px;
+    background: var(--card, #161922);
+    padding: 16px;
+  }
+  .wb-rt-card-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 12px;
+  }
+  .wb-rt-list { display: flex; flex-direction: column; gap: 10px; }
+  .wb-rt-item {
+    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.14));
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: var(--background, #0f1117);
+  }
+  .wb-rt-item-off { opacity: .55; }
+  .wb-rt-item-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .wb-rt-item-name { font-weight: 600; font-size: 15px; }
+  .wb-rt-item-meta {
+    font-size: 12.5px;
+    color: var(--muted-foreground, #64748b);
+    line-height: 1.5;
+  }
+  .wb-rt-item-meta code {
+    background: color-mix(in oklab, var(--accent, #3b82f6) 16%, transparent);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .wb-rt-badge {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.2));
+    color: var(--muted-foreground, #64748b);
+    white-space: nowrap;
+  }
+  .wb-rt-badge-group { color: #38bdf8; border-color: rgba(56,189,248,.4); }
+  .wb-rt-badge-account { color: #34d399; border-color: rgba(52,211,153,.4); }
+  .wb-rt-badge-model { color: #fbbf24; border-color: rgba(251,191,36,.4); }
+  .wb-rt-badge-mode-smart, .wb-rt-badge-mode-order { color: #a78bfa; border-color: rgba(167,139,250,.4); }
+  .wb-rt-badge-mode-round_robin { color: #f472b6; border-color: rgba(244,114,182,.4); }
+  .wb-rt-badge-fb-error { color: #f87171; border-color: rgba(248,113,113,.4); }
+  .wb-rt-badge-fb-global_pool { color: #22d3ee; border-color: rgba(34,211,238,.4); }
+  .wb-rt-badge-off { color: #94a3b8; border-color: rgba(148,163,184,.4); }
+  .wb-rt-empty, .wb-rt-loading, .wb-rt-error {
+    font-size: 13px;
+    color: var(--muted-foreground, #64748b);
+    padding: 12px 4px;
+  }
+  .wb-rt-error { color: #f87171; }
   .wb-ov-head {
     display: flex;
     align-items: flex-start;
@@ -3627,9 +3748,12 @@ COLLAPSE_SCRIPT = r"""
      账号管理改走 hash 后缀 #/accounts —— 给它一个 id 才能被
      wbSyncNavActive 精确识别并高亮。 */
   var WB_ACCOUNTS_NAV_ID = "wb-nav-accounts";
+  /* 智能路由导航项 id（第 7 核心功能，对标 Magpie routing group）。
+     借用 hash 后缀 #/routing 复用与概览/每日任务同一套视图切换机制。 */
+  var WB_ROUTING_NAV_ID = "wb-nav-routing";
   /* 数据总览 / 每日任务在 URL 里的 hash 后缀。账号管理的后缀也在这里登记，
      点官方导航项时要把这些后缀清掉，否则会留在 URL 里造成状态错乱。 */
-  var WB_VIEW_HASHES = ["#/wb-overview", "#/wb-daily", "#/accounts"];
+  var WB_VIEW_HASHES = ["#/wb-overview", "#/wb-daily", "#/accounts", "#/routing"];
 
   /* 取「视图 hash」：去掉查询串与末尾斜杠，只留 #/xxx 本体。
      ⚠️ 为什么必须归一化：`window.location.hash` 对
@@ -3737,6 +3861,37 @@ COLLAPSE_SCRIPT = r"""
               window.location.pathname + window.location.search);
           }
         });
+      });
+    }
+  }
+
+  /* ---------- 智能路由导航项（插到导航末尾，第 7 核心功能） ----------
+     复用 injectWbOverview 同一套机制：自建 <a> 挂到 nav，绑定 hash 路由，
+     移动端收纳面板按 id 复刻点击语义。图标与文案沿用顶栏四字选项卡风格。 */
+  function injectWbRouting() {
+    var aside = document.querySelector("aside");
+    if (!aside) return;
+    var nav = aside.querySelector("nav");
+    if (!nav) return;
+    var link = document.getElementById(WB_ROUTING_NAV_ID);
+    if (!link) {
+      link = document.createElement("a");
+      link.id = WB_ROUTING_NAV_ID;
+      link.href = window.location.pathname + "#/routing";
+      link.innerHTML =
+        '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        + '<circle cx="6" cy="6" r="2.4"></circle>'
+        + '<circle cx="18" cy="6" r="2.4"></circle>'
+        + '<circle cx="6" cy="18" r="2.4"></circle>'
+        + '<circle cx="18" cy="18" r="2.4"></circle>'
+        + '<path d="M8.4 6H15.6M6 8.4V15.6M18 8.4V15.6M8.4 18H15.6M8.4 8.4L15.6 15.6M15.6 8.4L8.4 15.6"></path>'
+        + '</svg>'
+        + '<span class="wb-nav-label">智能路由</span>';
+      link.setAttribute("data-wb-label", "智能路由");
+      nav.appendChild(link);
+      link.addEventListener("click", function (e) {
+        e.preventDefault();
+        wbPushUrl(window.location.pathname + "#/routing");
       });
     }
   }
@@ -3874,6 +4029,93 @@ COLLAPSE_SCRIPT = r"""
      实测「从概览点账号管理后概览视图仍可见、官方内容也同时可见」
      （DOM 里 #wb-overview-view 与官方容器 display 都是 block）。
      现在合成一个函数，任何状态变更都走同一条路径，杜绝竞态。 */
+  /* ---------- 智能路由视图（第 7 核心功能） ----------
+     复用概览/每日任务的 hash 视图切换机制。main 下挂一个 #wb-routing-view，
+     切到路由页时显示它、隐藏其它子节点。视图内容由 wbLoadRoutingData 从
+     后端 /routing/rules + /routing/groups 拉取并渲染。 */
+  function wbCreateRoutingView() {
+    var v = document.createElement("div");
+    v.id = "wb-routing-view";
+    v.style.display = "none";
+    v.innerHTML =
+      '<div class="wb-rt-wrap">' +
+        '<div class="wb-rt-head">' +
+          '<div>' +
+            '<h1 class="wb-rt-h1">智能路由</h1>' +
+            '<p class="wb-rt-sub">对标 Magpie routing group：把账号/模型编成路由组，按规则分流，组内故障自动转移</p>' +
+          '</div>' +
+          '<div class="wb-rt-actions">' +
+            '<button class="wb-rt-btn wb-rt-btn-primary" data-act="new-rule" type="button">+ 新建规则</button>' +
+            '<button class="wb-rt-btn" data-act="new-group" type="button">+ 新建路由组</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wb-rt-cols">' +
+          '<section class="wb-rt-card">' +
+            '<h2 class="wb-rt-card-title">路由规则</h2>' +
+            '<div id="wb-rt-rules" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+          '</section>' +
+          '<section class="wb-rt-card">' +
+            '<h2 class="wb-rt-card-title">路由组</h2>' +
+            '<div id="wb-rt-groups" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+          '</section>' +
+        '</div>' +
+      '</div>';
+    return v;
+  }
+
+  /* 渲染路由规则与组。纯展示，不内联任何账号/密钥明文（诊断只记结构）。 */
+  function wbRenderRouting(rules, groups) {
+    var rBox = document.getElementById("wb-rt-rules");
+    var gBox = document.getElementById("wb-rt-groups");
+    if (!rBox || !gBox) return;
+    var gById = {};
+    (groups || []).forEach(function (g) { gById[g.id] = g; });
+    if (!rules || !rules.length) {
+      rBox.innerHTML = '<div class="wb-rt-empty">暂无规则。新建一条规则，按模型/密钥/客户端把请求分流到路由组。</div>';
+    } else {
+      rBox.innerHTML = rules.map(function (r) {
+        var tgtName = "-";
+        if (r.target_type === "group" && r.target_id) tgtName = (gById[r.target_id] || {}).name || r.target_id;
+        else if (r.target_type === "account") tgtName = "指定账号 " + (r.target_id || "-");
+        else if (r.target_type === "model") tgtName = "改模型 " + (r.target_model || r.target_id || "-");
+        var mv = (r.match_value || "").replace(/[<>&]/g, "");
+        return '<div class="wb-rt-item' + (r.enabled ? "" : " wb-rt-item-off") + '">' +
+          '<div class="wb-rt-item-top"><span class="wb-rt-item-name">' + (r.name || "").replace(/[<>&]/g, "") + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-' + r.target_type + '">' + r.target_type + '</span>' +
+          (r.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') + '</div>' +
+          '<div class="wb-rt-item-meta">当 ' + r.match_field + ' ' + r.match_op + ' <code>' + mv + '</code> → ' + tgtName + '</div>' +
+          '</div>';
+      }).join("");
+    }
+    if (!groups || !groups.length) {
+      gBox.innerHTML = '<div class="wb-rt-empty">暂无路由组。新建一个路由组，把多个账号编成故障转移链。</div>';
+    } else {
+      gBox.innerHTML = groups.map(function (g) {
+        var members = (g.members || []).map(function (m) { return m.id; }).join(" → ") || "-";
+        return '<div class="wb-rt-item' + (g.enabled ? "" : " wb-rt-item-off") + '">' +
+          '<div class="wb-rt-item-top"><span class="wb-rt-item-name">' + (g.name || "").replace(/[<>&]/g, "") + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-mode-' + g.mode + '">' + g.mode + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-fb-' + g.fallback + '">' + g.fallback + '</span>' +
+          (g.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') + '</div>' +
+          '<div class="wb-rt-item-meta">成员(' + (g.members || []).length + ')：' + members.replace(/[<>&]/g, "") + '</div>' +
+          '</div>';
+      }).join("");
+    }
+  }
+
+  function wbLoadRoutingData() {
+    var rBox = document.getElementById("wb-rt-rules");
+    var gBox = document.getElementById("wb-rt-groups");
+    if (rBox) rBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
+    if (gBox) gBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
+    wbJson("/routing/rules", 15000).then(function (res) {
+      if (res && res.rules) wbRenderRouting(res.rules || [], res.groups || []);
+      else if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
+    }).catch(function () {
+      if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
+    });
+  }
+
   function wbApplyMainView() {
     var main = document.querySelector("main");
     if (!main) return;
@@ -3903,6 +4145,7 @@ COLLAPSE_SCRIPT = r"""
        会被打回 /），要给它一个可访问的地址只能走 hash 后缀。 */
     if (hash === "#/wb-daily") mode = "daily";
     else if (hash === "#/accounts") mode = "accounts";
+    else if (hash === "#/routing") mode = "routing";
     else if (hash === "#/wb-overview") mode = "overview";
     else if (hash === "" || hash === "#/") {
       // 无后缀：根路径才是数据总览；停在别的官方路径上时照常显示那一页
@@ -3956,12 +4199,30 @@ COLLAPSE_SCRIPT = r"""
       return;
     }
 
+    if (mode === "routing") {
+      var routing = document.getElementById("wb-routing-view");
+      if (!routing) {
+        routing = wbCreateRoutingView();
+        main.appendChild(routing);
+      }
+      routing.style.display = "block";
+      if (ov) ov.style.display = "none";
+      if (daily) daily.style.display = "none";
+      Array.prototype.slice.call(main.children).forEach(function (c) {
+        if (c !== routing) c.style.display = "none";
+      });
+      wbLoadRoutingData();
+      return;
+    }
+
     // official：两个注入视图都藏起来，恢复官方子节点
     wbOvTaskProgressStop();
     if (ov) ov.style.display = "none";
     if (daily) daily.style.display = "none";
+    var routingView = document.getElementById("wb-routing-view");
+    if (routingView) routingView.style.display = "none";
     Array.prototype.slice.call(main.children).forEach(function (c) {
-      if (c !== ov && c !== daily && c.style.display === "none") {
+      if (c !== ov && c !== daily && c !== routingView && c.style.display === "none") {
         c.style.display = "";
       }
     });
@@ -3992,20 +4253,23 @@ COLLAPSE_SCRIPT = r"""
       var isOv = a.id === WB_OVERVIEW_NAV_ID;
       var isDaily = a.id === "wb-nav-wb-daily";
       var isAccounts = a.id === WB_ACCOUNTS_NAV_ID;
+      var isRouting = a.id === WB_ROUTING_NAV_ID;
       var active = false;
       if (hash === "#/wb-overview") {
         active = isOv;                      // 概览视图：只高亮概览
       } else if (hash === "#/wb-daily") {
         active = isDaily;                   // 每日任务视图：只高亮它
+      } else if (hash === "#/routing") {
+        active = isRouting;                 // 智能路由视图：只高亮它
       } else if (hash === "#/accounts") {
         active = isAccounts;                // 账号管理：hash 后缀路由
       } else if (hash === "" || hash === "#/") {
         /* 无后缀：根路径 = 数据总览（默认主页），其余按官方路径匹配 */
         if (path === "/" || path === "") active = isOv;
-        else active = !isOv && !isDaily && !isAccounts && path === href;
+        else active = !isOv && !isDaily && !isAccounts && !isRouting && path === href;
       } else {
         // 普通路由页：path 精确匹配才算；hash 视图项一律不高亮
-        active = !isOv && !isDaily && !isAccounts && path === href;
+        active = !isOv && !isDaily && !isAccounts && !isRouting && path === href;
       }
       if (active) {
         a.classList.add("wb-nav-active");
@@ -10144,6 +10408,9 @@ COLLAPSE_SCRIPT = r"""
     injectWbOverview();
     wbUpdateOverviewView();
     wbBindOverviewActions();
+    // 智能路由（第 7 核心功能）：注入导航项 + 视图切换。复用概览/每日任务
+    // 同一套 hash 路由与顶栏适配，不新建路由体系。
+    injectWbRouting();
     // 主题已挪到顶栏右上角，设置页那个官方主题项要藏掉（重复入口）
     wbHideSettingsTheme();
     sanitizeMacUI();

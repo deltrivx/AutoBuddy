@@ -5,7 +5,7 @@
 本页是 **AutoBuddy 的版本索引**。GitHub Releases 侧栏按发布时间排序，本页按语义化版本号排序，
 避免后补的旧版本让版本顺序看起来错乱。
 
-**当前稳定版：** [v2.2.4](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.4)
+**当前稳定版：** [v2.3.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.3.0)
 
 > 本文件由 `scripts/gen_releases.py` 从 `CHANGELOG.md` 生成，修改请改 CHANGELOG 后重新生成。
 
@@ -13,6 +13,7 @@
 
 | Version | 日期 | 更新摘要 | 发布说明 |
 |---|---|---|---|
+| [v2.3.0](https://github.com/deltrivx/autobuddy/releases/tag/v2.3.0) | 2026-11-06 | 新增第 7 核心功能「智能路由」，对标 Magpie routing group，支持规则分流与路由组故障转移 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.3.0.md) |
 | [v2.2.4](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.4) | 2026-10-28 | 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.4.md) |
 | [v2.2.4](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.4) | 2026-10-28 | 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.4.md) |
 | [v2.2.3](https://github.com/deltrivx/autobuddy/releases/tag/v2.2.3) | 2026-10-28 | 对齐 freetier2api 消息与协议归一化管线，彻底消除 developer 角色导致的 11128 渠道拦截 | [详细说明](./docs/release-notes/RELEASE_NOTES_v2.2.3.md) |
@@ -245,7 +246,7 @@
 
 ```bash
 docker pull ghcr.io/deltrivx/autobuddy:latest   # 最新稳定版
-docker pull ghcr.io/deltrivx/autobuddy:2.2.4    # 锁定版本
+docker pull ghcr.io/deltrivx/autobuddy:2.3.0    # 锁定版本
 ```
 
 ## 部署产物

@@ -100,6 +100,13 @@ try:
 except ImportError:  # pragma: no cover - 取决于运行方式
     import fingerprint as _fingerprint  # type: ignore[no-redef]
 
+# 智能路由（第 7 核心功能，对标 Magpie routing group）。提供路由决策层，
+# 在选号前按规则收敛候选集；故障转移复用现有换号重试循环，不另起一套。
+try:
+    from gateway import routing
+except ImportError:  # pragma: no cover - 取决于运行方式
+    import routing  # type: ignore[no-redef]
+
 
 # ---------------------------------------------------------------------------
 # 版本号
@@ -115,7 +122,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.2.4"
+VERSION_DEFAULT = "2.3.0"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -140,6 +147,12 @@ async def lifespan(_app: FastAPI):
                   f"（账号总数 {_fp_stat['total']}）")
     except Exception as _e:
         print(f"[fingerprint] 启动预分配指纹失败（不影响网关启动）: {_e}")
+    # 智能路由（第 7 核心功能）建表：路由组与路由规则落到 SQLite，
+    # 与账号池/能力矩阵解耦，容器升级/重建数据不丢。
+    try:
+        routing.init_routing_db(_db.get_db_connection())
+    except Exception as _e:
+        print(f"[routing] 路由表初始化失败（不影响网关启动）: {_e}")
     task = asyncio.create_task(account_rotate_loop())
     health_task = asyncio.create_task(model_health_loop())
     upstream_task = asyncio.create_task(upstream_models_loop())
@@ -1889,12 +1902,16 @@ def _sticky_should_yield(bound_id: Optional[str], candidates: List[Dict[str, Any
 
 def select_account(requested_id: Optional[str] = None, model: Optional[str] = None,
                    session_key: Optional[str] = None,
-                   estimated_tokens: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                   estimated_tokens: Optional[int] = None,
+                   routing_ctx: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """为每一个 API 请求选择账号。
 
     - X-AutoBuddy-Account-Id / body.account_id 指定时：手动选指定账号；
     - manual 模式：固定使用配置的 manualAccountId；
-    - auto 模式：在 enabledAccountIds 中轮询，每个并发请求可拿到不同账号。
+    - auto 模式：在 enabledAccountIds 中轮询，每个并发请求可拿到不同账号；
+    - 智能路由（第 7 核心功能）：若 routing_ctx 携带命中规则，则按规则约束
+      收敛候选集（指定账号 / 指定组白名单 / 组内排序），组内故障转移由下方
+      换号重试循环天然承担。
 
     这里是「请求级并行」：一条对话请求仍由一个账号完成，但多个同时到达的
     独立请求会分摊到多个账号，不会把同一个请求拆成两份导致上下文/计费混乱。
@@ -1909,6 +1926,30 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
     accounts = _load_accounts()
     config = _load_pool_config()
     candidates = _enabled_accounts(accounts, config, model=model)
+    # 「智能路由」约束收敛：在模型级禁用之前先按路由组白名单/指定账号收窄。
+    # 这样路由组的「故障转移候选」与账号池原生候选取交集，既满足编排意图，
+    # 又不破坏模型可用性过滤。
+    _routing_decision = (routing_ctx or {}).get("decision")
+    _routing_error_fallback = False
+    if _routing_decision and _routing_decision.get("matched"):
+        _rt = _routing_decision.get("target_type")
+        if _rt == "account" and _routing_decision.get("forced_account_id"):
+            # 指定账号：直接走显式候选集（含停用，兼容“人点名要用它”语义）。
+            _faid = str(_routing_decision["forced_account_id"])
+            candidates = [a for a in candidates
+                          if str(_account_id(a)) == _faid]
+            if not candidates:
+                _explicit_pool = _enabled_accounts(accounts, config,
+                                                  include_disabled=True, model=model)
+                candidates = [a for a in _explicit_pool
+                              if str(_account_id(a)) == _faid]
+        elif _rt == "group" and _routing_decision.get("account_ids"):
+            candidates = routing.apply_group_ordering(
+                candidates, _routing_decision.get("account_ids"),
+                _routing_decision.get("group_mode") or "smart")
+            # 兜底为 error 时，组无可用成员就不应退回全局账号池。
+            if _routing_decision.get("fallback") == "error":
+                _routing_error_fallback = True
     # 「显式指定」与「手动模式」走**包含停用账号**的候选集：
     # 停用的语义是不参与自动轮询，而不是禁止调用。人明确点名要用它，
     # 就该照办 —— 否则用户为了临时兜底还得先去界面解一次停用。
@@ -2008,6 +2049,10 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
     # 让上游去返回真实错误，比在网关层编一个「无账号」更利于排查
     # （与模型级全禁用的处理保持一致）。
     if not candidates:
+        # 智能路由 fallback=error：组/指定账号无可用成员时不退回全局池 ——
+        # 严格按用户编排，宁可向上游返回真实错误也不偷偷绕到全局账号。
+        if _routing_error_fallback:
+            return None
         candidates = explicit_pool
     if not candidates:
         return None
@@ -3645,6 +3690,127 @@ def api_keys_config(payload: Dict[str, Any], user: str = Depends(require_user)):
     return {"ok": True, "status": api_keys_status()}
 
 
+# ---------------------------------------------------------------------------
+# 智能路由（第 7 核心功能，对标 Magpie routing group）
+#
+# 全部端点走 require_user 门（与账号池/密钥/巡检配置同一套鉴权）。
+# 仅做“编排”读写，真正的选号/换号/故障转移仍由 select_account 与
+# chat_completions 承担 —— 这里只是把约束条件存进库、按规则解析出来。
+# ---------------------------------------------------------------------------
+
+@app.get("/routing/groups")
+def routing_groups_list(user: str = Depends(require_user)):
+    return {"groups": routing.list_groups()}
+
+
+@app.post("/routing/groups")
+def routing_groups_create(payload: Dict[str, Any], user: str = Depends(require_user)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    members = payload.get("members")
+    if not isinstance(members, list):
+        members = []
+    # 成员归一化：每组元素 {id, type}；type 仅作展示（account/group），不影响选号。
+    norm_members = [
+        {"id": str(m.get("id")), "type": m.get("type", "account")}
+        for m in members if isinstance(m, dict) and m.get("id")
+    ]
+    grp = routing.create_group(
+        name=name,
+        mode=payload.get("mode", "smart"),
+        fallback=payload.get("fallback", "global_pool"),
+        members=norm_members,
+        priority=int(payload.get("priority", 0) or 0),
+    )
+    return {"ok": True, "group": grp}
+
+
+@app.put("/routing/groups/{group_id}")
+def routing_groups_update(group_id: str, payload: Dict[str, Any],
+                          user: str = Depends(require_user)):
+    fields: Dict[str, Any] = {}
+    for k in ("name", "mode", "fallback", "priority"):
+        if k in payload:
+            fields[k] = payload[k]
+    if "enabled" in payload:
+        fields["enabled"] = bool(payload["enabled"])
+    if "members" in payload and isinstance(payload["members"], list):
+        fields["members"] = [
+            {"id": str(m.get("id")), "type": m.get("type", "account")}
+            for m in payload["members"] if isinstance(m, dict) and m.get("id")
+        ]
+    grp = routing.update_group(group_id, **fields)
+    if not grp:
+        raise HTTPException(status_code=404, detail="group not found")
+    return {"ok": True, "group": grp}
+
+
+@app.delete("/routing/groups/{group_id}")
+def routing_groups_delete(group_id: str, user: str = Depends(require_user)):
+    if not routing.delete_group(group_id):
+        raise HTTPException(status_code=404, detail="group not found")
+    return {"ok": True}
+
+
+@app.get("/routing/rules")
+def routing_rules_list(user: str = Depends(require_user)):
+    # 顺带把组清单带上，前端下拉选择目标组时免一次往返。
+    return {"rules": routing.list_rules(), "groups": routing.list_groups()}
+
+
+@app.post("/routing/rules")
+def routing_rules_create(payload: Dict[str, Any], user: str = Depends(require_user)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    rule = routing.create_rule(
+        name=name,
+        match_field=payload.get("match_field", "model"),
+        match_op=payload.get("match_op", "eq"),
+        match_value=(payload.get("match_value") or ""),
+        target_type=payload.get("target_type", "group"),
+        target_id=payload.get("target_id"),
+        target_model=payload.get("target_model"),
+        priority=int(payload.get("priority", 0) or 0),
+    )
+    return {"ok": True, "rule": rule}
+
+
+@app.put("/routing/rules/{rule_id}")
+def routing_rules_update(rule_id: str, payload: Dict[str, Any],
+                         user: str = Depends(require_user)):
+    fields: Dict[str, Any] = {}
+    for k in ("name", "match_field", "match_op", "match_value",
+              "target_type", "target_id", "target_model", "priority"):
+        if k in payload:
+            fields[k] = payload[k]
+    if "enabled" in payload:
+        fields["enabled"] = bool(payload["enabled"])
+    rule = routing.update_rule(rule_id, **fields)
+    if not rule:
+        raise HTTPException(status_code=404, detail="rule not found")
+    return {"ok": True, "rule": rule}
+
+
+@app.delete("/routing/rules/{rule_id}")
+def routing_rules_delete(rule_id: str, user: str = Depends(require_user)):
+    if not routing.delete_rule(rule_id):
+        raise HTTPException(status_code=404, detail="rule not found")
+    return {"ok": True}
+
+
+@app.get("/routing/resolve")
+def routing_resolve(model: str = "", api_key: str = "", client_tag: str = "",
+                    user: str = Depends(require_user)):
+    """预览一次路由解析结果（不实际选号），供前端展示“这条请求会走到哪”。"""
+    decision = routing.resolve_routing(
+        model,
+        {"model": model, "api_key": api_key, "client_tag": client_tag},
+    )
+    return {"decision": decision}
+
+
 @app.get("/health")
 def health():
     """健康检查。**刻意不加会话门**（v1.0.18 安全修复中明确保留公开）。
@@ -3894,9 +4060,25 @@ async def chat_completions(request: Request):
 
     input_tokens = estimate_tokens(prompt_text)
 
+    # 智能路由（第 7 核心功能）：在选号前解析路由规则。
+    # routing_ctx 携带 model / api_key / client_tag 供规则匹配；
+    # 命中后 select_account 会按“指定账号 / 组白名单”收敛候选集。
+    _routing_ctx = {
+        "model": raw_model,
+        "api_key": gate.get("keyId") or "",
+        "client_tag": dict(request.headers).get("x-autobuddy-client")
+                       or dict(request.headers).get("user-agent") or "",
+    }
+    _routing_decision = routing.resolve_routing(raw_model, _routing_ctx)
+    # 路由规则指定了实际送出模型名（target_type=model）时，覆盖 target_model，
+    # 让下游按用户编排的模型名走；未指定则沿用别名解析结果。
+    if _routing_decision.get("matched") and _routing_decision.get("forced_model"):
+        target_model = _routing_decision["forced_model"]
+
     acc = select_account(requested_account_id, model=raw_model,
                          session_key=session_key,
-                         estimated_tokens=input_tokens)
+                         estimated_tokens=input_tokens,
+                         routing_ctx={"decision": _routing_decision})
     if not acc or not acc.get("access_token"):
         if requested_account_id:
             raise HTTPException(status_code=409, detail="Requested WorkBuddy account is disabled, expired, or unavailable.")

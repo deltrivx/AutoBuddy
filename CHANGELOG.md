@@ -20,6 +20,20 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.0] - 2026-11-06
+
+<!-- summary: 新增第 7 核心功能「智能路由」，对标 Magpie routing group，支持规则分流与路由组故障转移 -->
+
+### 新增
+
+- **智能路由（第 7 核心功能，对标 Magpie routing group）**：
+  - **路由规则**：按 `model` / `api_key` / `client_tag` 匹配请求，命中后分流到指定**路由组** / **指定账号** / **指定模型**（支持精确 `eq` 与子串 `contains`，大小写不敏感）。
+  - **路由组**：把多个账号编成有序成员列表，支持 `smart`（顺序故障转移）/ `round_robin`（组内轮转）/ `order` 三种模式，并配 `global_pool`（组内耗尽退回全局账号池）或 `error`（严格不绕过）两种兜底策略。
+  - **透明集成**：路由决策层在 `select_account` 选号前插入，复用既有换号重试、能力矩阵学习与可用性巡检，故障转移对调用方完全透明；未命中任何规则时照常走全局账号池，零侵入。
+  - **WebUI**：顶栏新增第四字选项卡「智能路由」，与概览/每日任务同一套 hash 视图与收纳面板机制，复用现有 1180px 居中容器与 CSS 变量主题；规则/组列表纯展示，不内联任何账号或密钥明文。
+  - **后端 API**：`/routing/groups`、`/routing/rules`（增删改查）、`/routing/resolve`（路由解析预览）全套管理端点，统一走 `require_user` 鉴权门。
+  - **持久化**：路由组与规则落 SQLite（`routing_groups` / `routing_rules` 表），随 `/data` 卷持久化，容器升级/重建数据不丢。
+
 ## [v2.2.4] - 2026-10-28
 
 <!-- summary: 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 -->
@@ -6258,7 +6272,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.4...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...HEAD
+[v2.3.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.4...v2.3.0
 [v2.2.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.3...v2.2.4
 [v2.2.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.2...v2.2.3
 [v2.2.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.1...v2.2.2
