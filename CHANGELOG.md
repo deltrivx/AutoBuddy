@@ -20,6 +20,19 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.1] - 2026-11-06
+
+<!-- summary: 修复智能路由页面加载失败与导航顺序，并支持从外部导入账号用于测试 -->
+
+### 修复
+
+- **智能路由页面加载失败（生产不可用）**：路由组数据此前由前端直连 `/routing/rules`，但该路径在 WebUI 代理（:18090）的 catch-all 下被转发到官方 Switch 后端（:57890），而路由端点实际注册在网关（:18091），导致「路由规则加载失败 / 路由组一直卡加载中」。新增 `/api/routing/*` 代理端点（groups / rules / resolve 的增删改查与预览），统一经 WebUI 代理反向代理到网关并透传登录态，前端改为调用 `/api/routing/rules`，彻底修复。
+- **智能路由导航顺序**：将顶栏「智能路由」选项从末尾移到「每日任务」之后、「系统设置」之前，符合预期布局。
+
+### 新增
+
+- **测试账号导入支持**：允许从外部 AutoBuddy 实例（如 Unraid）将指定账号（如「尘星途」）导入测试实例的 `accounts.json`，用于功能联调与回归验证，不影响生产账号池。
+
 ## [v2.3.0] - 2026-11-06
 
 <!-- summary: 新增第 7 核心功能「智能路由」，对标 Magpie routing group，支持规则分流与路由组故障转移 -->
@@ -4892,6 +4905,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ## [未发布]
 
+---
+
 ## [v2.2.4] - 2026-10-28
 
 <!-- summary: 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 -->
@@ -6272,7 +6287,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.1...HEAD
+[v2.3.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...v2.3.1
 [v2.3.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.4...v2.3.0
 [v2.2.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.3...v2.2.4
 [v2.2.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.2...v2.2.3

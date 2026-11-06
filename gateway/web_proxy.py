@@ -3877,7 +3877,8 @@ COLLAPSE_SCRIPT = r"""
     if (!link) {
       link = document.createElement("a");
       link.id = WB_ROUTING_NAV_ID;
-      link.href = window.location.pathname + "#/routing";
+      // 与每日任务同一套 hash 后缀机制（#/routing），背后复用根路径视图。
+      link.href = "#/routing";
       link.innerHTML =
         '<svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
         + '<circle cx="6" cy="6" r="2.4"></circle>'
@@ -3888,7 +3889,14 @@ COLLAPSE_SCRIPT = r"""
         + '</svg>'
         + '<span class="wb-nav-label">智能路由</span>';
       link.setAttribute("data-wb-label", "智能路由");
-      nav.appendChild(link);
+      // 排在「每日任务」之后、「系统设置」之前（用户 2026-11-06 要求）：
+      // 官方 SPA 的「系统设置」识别锚点是 href="/settings"，插到它前面即可。
+      var settingsA = nav.querySelector('a[href="/settings"]') || nav.lastElementChild;
+      if (settingsA) {
+        nav.insertBefore(link, settingsA);
+      } else {
+        nav.appendChild(link);
+      }
       link.addEventListener("click", function (e) {
         e.preventDefault();
         wbPushUrl(window.location.pathname + "#/routing");
@@ -4108,7 +4116,10 @@ COLLAPSE_SCRIPT = r"""
     var gBox = document.getElementById("wb-rt-groups");
     if (rBox) rBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
     if (gBox) gBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
-    wbJson("/routing/rules", 15000).then(function (res) {
+    /* 经 WebUI 代理（:18090）/api/routing/* 反向代理到网关（:18091），
+       复用登录态透传与 CORS 规避；直接打 /routing/* 会被 catch-all 转发到
+       官方 Switch 后端（:57890），那里没有路由端点，必然加载失败。 */
+    wbJson("/api/routing/rules", 15000).then(function (res) {
       if (res && res.rules) wbRenderRouting(res.rules || [], res.groups || []);
       else if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
     }).catch(function () {
@@ -13461,6 +13472,56 @@ async def wb_daily_health(user: "str" = Depends(require_user)):
     async with _wb_daily_client() as client:
         r = await client.get(f"{WB_DAILY_INTERNAL}/api/wb-daily/health")
         return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+# ---------------------------------------------------------------------------
+# 智能路由代理（第 7 核心功能，对标 Magpie routing group）。
+# 前端经 WebUI 代理（:18090）反向代理到网关（:18091），复用现有 _forward_gateway
+# 与登录态透传，避免跨源 / CORS 问题。路径统一挂在 /api/routing/* 下。
+# ---------------------------------------------------------------------------
+@app.get("/api/routing/groups")
+async def routing_groups_get(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", "/routing/groups", request=request)
+
+
+@app.post("/api/routing/groups")
+async def routing_groups_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/groups", await request.body(), request=request)
+
+
+@app.put("/api/routing/groups/{group_id}")
+async def routing_groups_put(group_id: str, request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("PUT", f"/routing/groups/{group_id}", await request.body(), request=request)
+
+
+@app.delete("/api/routing/groups/{group_id}")
+async def routing_groups_delete(group_id: str, request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("DELETE", f"/routing/groups/{group_id}", request=request)
+
+
+@app.get("/api/routing/rules")
+async def routing_rules_get(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", "/routing/rules", request=request)
+
+
+@app.post("/api/routing/rules")
+async def routing_rules_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/rules", await request.body(), request=request)
+
+
+@app.put("/api/routing/rules/{rule_id}")
+async def routing_rules_put(rule_id: str, request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("PUT", f"/routing/rules/{rule_id}", await request.body(), request=request)
+
+
+@app.delete("/api/routing/rules/{rule_id}")
+async def routing_rules_delete(rule_id: str, request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("DELETE", f"/routing/rules/{rule_id}", request=request)
+
+
+@app.get("/api/routing/resolve")
+async def routing_resolve_get(request: Request, model: str = "", api_key: str = "", client_tag: str = "", user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", f"/routing/resolve?model={model}&api_key={api_key}&client_tag={client_tag}", request=request)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
