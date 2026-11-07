@@ -1946,7 +1946,8 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
         elif _rt == "group" and _routing_decision.get("account_ids"):
             candidates = routing.apply_group_ordering(
                 candidates, _routing_decision.get("account_ids"),
-                _routing_decision.get("group_mode") or "smart")
+                _routing_decision.get("group_mode") or "smart",
+                _routing_decision.get("weights") or {})
             # 兜底为 error 时，组无可用成员就不应退回全局账号池。
             if _routing_decision.get("fallback") == "error":
                 _routing_error_fallback = True
@@ -1990,6 +1991,23 @@ def select_account(requested_id: Optional[str] = None, model: Optional[str] = No
             pass
 
     by_id = {str(_account_id(a)): a for a in candidates if _account_id(a)}
+
+    # 全局路由模式（对标 Magpie Routing：smart/order/rotate/weight）。
+    # 未命中任何规则时，按配置的全局模式对候选账号排序/分发——这是默认自动路由
+    # 的真实行为，不是只在“组”里才生效。命中规则时由 resolve_routing 的
+    # group_mode 决定（下方 apply_group_ordering 已处理），这里不重复。
+    if not (_routing_decision and _routing_decision.get("matched")):
+        try:
+            _rcfg = routing.get_routing_config()
+            _gmode = _rcfg.get("mode") or "smart"
+            if _gmode in ("order", "rotate", "weight"):
+                # 用全部候选的 id 顺序作为“组白名单”，复用分组排序逻辑。
+                _all_ids = [str(_account_id(a)) for a in candidates if _account_id(a)]
+                candidates = routing.apply_group_ordering(
+                    candidates, _all_ids, _gmode,
+                    _rcfg.get("weights") or {})
+        except Exception:
+            pass
 
     if requested_id:
         # 模型级禁用仍然拦得住显式指定（那是「这个账号这个模型不可用」的硬约束），
@@ -3722,6 +3740,15 @@ def routing_groups_create(payload: Dict[str, Any], user: str = Depends(require_u
         fallback=payload.get("fallback", "global_pool"),
         members=norm_members,
         priority=int(payload.get("priority", 0) or 0),
+        affinity=payload.get("affinity", "session"),
+        sink=bool(payload.get("sink", True)),
+        first_token=int(payload.get("first_token", 0) or 0),
+        patience=int(payload.get("patience", 0) or 0),
+        effort=payload.get("effort", ""),
+        levels=payload.get("levels"),
+        unlists=bool(payload.get("unlists", False)),
+        weights=payload.get("weights"),
+        pick=payload.get("pick", ""),
     )
     return {"ok": True, "group": grp}
 
@@ -3735,6 +3762,10 @@ def routing_groups_update(group_id: str, payload: Dict[str, Any],
             fields[k] = payload[k]
     if "enabled" in payload:
         fields["enabled"] = bool(payload["enabled"])
+    for k in ("affinity", "sink", "first_token", "patience", "effort",
+              "levels", "unlists", "weights", "pick"):
+        if k in payload:
+            fields[k] = payload[k]
     if "members" in payload and isinstance(payload["members"], list):
         fields["members"] = [
             {"id": str(m.get("id")), "type": m.get("type", "account")}
@@ -3773,6 +3804,7 @@ def routing_rules_create(payload: Dict[str, Any], user: str = Depends(require_us
         target_id=payload.get("target_id"),
         target_model=payload.get("target_model"),
         priority=int(payload.get("priority", 0) or 0),
+        match=payload.get("match"),
     )
     return {"ok": True, "rule": rule}
 
@@ -3787,6 +3819,8 @@ def routing_rules_update(rule_id: str, payload: Dict[str, Any],
             fields[k] = payload[k]
     if "enabled" in payload:
         fields["enabled"] = bool(payload["enabled"])
+    if "match" in payload and isinstance(payload["match"], dict):
+        fields["match"] = payload["match"]
     rule = routing.update_rule(rule_id, **fields)
     if not rule:
         raise HTTPException(status_code=404, detail="rule not found")
@@ -3809,6 +3843,163 @@ def routing_resolve(model: str = "", api_key: str = "", client_tag: str = "",
         {"model": model, "api_key": api_key, "client_tag": client_tag},
     )
     return {"decision": decision}
+
+
+@app.post("/routing/auto-generate")
+def routing_auto_generate(user: str = Depends(require_user)):
+    """从账号池自动推导一套默认路由组 + 分档规则（对标 Magpie 的自动 routing
+    group，用户不必手工逐个配）。详见 routing.auto_generate 的 docstring。"""
+    result = routing.auto_generate(_load_accounts(), _load_pool_config())
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("detail") or "生成失败")
+    return result
+
+
+@app.get("/routing/config")
+def routing_config_get(user: str = Depends(require_user)):
+    """读取全局路由配置（对标 Magpie 的 Routing / Stays / Rate-limited / Fallback）。"""
+    return {"config": routing.get_routing_config()}
+
+
+@app.put("/routing/config")
+def routing_config_set(payload: Dict[str, Any], user: str = Depends(require_user)):
+    """更新全局路由配置。"""
+    return {"config": routing.set_routing_config(payload)}
+
+
+@app.get("/routing/trace")
+def routing_trace_get(after: int = 0, limit: int = 60, user: str = Depends(require_user)):
+    """实时路由轨迹（对标 Magpie /api/gateway/trace 的增量协议 after=seq）。
+
+    每个请求在路由页实时演出来——谁被排第一、为什么、每次换号试了谁、最后谁答。
+    """
+    return routing.list_traces(after=after, limit=max(1, min(int(limit), 200)))
+
+
+@app.post("/routing/groups/share")
+def routing_group_share(payload: Dict[str, Any], user: str = Depends(require_user)):
+    """导出路由组为可分享文本（不含密钥）。"""
+    gid = payload.get("id") or payload.get("group_id") or ""
+    if not gid:
+        raise HTTPException(status_code=400, detail="missing id")
+    res = routing.share_group(gid)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("detail") or "not found")
+    return res
+
+
+@app.post("/routing/groups/import")
+def routing_group_import(payload: Dict[str, Any], user: str = Depends(require_user)):
+    """从分享文本导入路由组（不含密钥，只导入编排）。"""
+    text = payload.get("text") or ""
+    replace = bool(payload.get("replace"))
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="missing text")
+    res = routing.import_group(text, replace=replace)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("detail") or "import failed")
+    return res
+
+
+@app.post("/routing/groups/delete-many")
+def routing_group_delete_many(payload: Dict[str, Any], user: str = Depends(require_user)):
+    """批量删除路由组（对标 Magpie 的“选出几个组一起移除”）。"""
+    ids = payload.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="missing ids")
+    removed = 0
+    for gid in ids:
+        if routing.delete_group(gid):
+            removed += 1
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/routing/rules/share")
+def routing_rule_share(payload: Dict[str, Any], user: str = Depends(require_user)):
+    """导出路由规则为可分享文本（不含密钥）。"""
+    rid = payload.get("id") or payload.get("rule_id") or ""
+    if not rid:
+        raise HTTPException(status_code=400, detail="missing id")
+    rule = routing.get_rule(rid)
+    if not rule:
+        raise HTTPException(status_code=404, detail="not found")
+    return {"ok": True, "shared": json.dumps({"magpie": "routing-rule", "rule": rule}, ensure_ascii=False, indent=2)}
+
+
+@app.post("/routing/rules/import")
+def routing_rule_import(payload: Dict[str, Any], user: str = Depends(require_user)):
+    """从分享文本导入路由规则。"""
+    text = payload.get("text") or ""
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="missing text")
+    try:
+        x = json.loads(text)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid json: {e}")
+    r = (x or {}).get("rule")
+    if not isinstance(r, dict) or not r.get("name"):
+        raise HTTPException(status_code=400, detail="missing rule.name")
+    created = routing.create_rule(
+        name=r.get("name"), match_field=r.get("match_field", "model"),
+        match_op=r.get("match_op", "eq"), match_value=r.get("match_value", ""),
+        target_type=r.get("target_type", "group"), target_id=r.get("target_id"),
+        target_model=r.get("target_model"), priority=r.get("priority", 0),
+        match=r.get("match"))
+    return {"ok": True, "id": created["id"], "name": created["name"]}
+
+
+@app.get("/routing/pool")
+def routing_pool(user: str = Depends(require_user)):
+    """实时账号池状态（对标 Magpie statusline：打开路由页即见自动路由实况）。
+
+    不返回任何密钥/令牌明文，只给展示所需的派生信息：
+      · 每个账号的昵称 / variant（cn/ai/all）/ 域名 / 过期时间
+      · 是否启用、是否即将过期、是否已被封禁（health 标记）
+      · 当前自动路由是否生效（有 ≥1 个可用账号即视为已启用自动故障转移）
+    这样前端无需用户手工建组，也能直观看到“账号池正在自动路由 + 故障转移”。
+    """
+    accounts = _load_accounts() or []
+    pool_cfg = _load_pool_config() or {}
+    enabled_ids = set(str(x) for x in (pool_cfg.get("enabledAccountIds") or []))
+    disabled_ids: set = set()
+    try:
+        disabled_ids = account_policy.disabled_ids()
+    except Exception:
+        disabled_ids = set()
+    now_ms = int(__import__("time").time() * 1000)
+    items = []
+    for a in accounts:
+        aid = str(a.get("id") or a.get("account_id") or "")
+        if not aid:
+            continue
+        # 启用判定：池开启白名单时需在白名单；否则只要没被禁用/封禁即启用
+        enabled = aid not in disabled_ids
+        if enabled_ids:
+            enabled = enabled and (aid in enabled_ids)
+        exp = a.get("expiresAt") or a.get("refreshExpiresAt")
+        try:
+            exp_i = int(exp)
+        except (TypeError, ValueError):
+            exp_i = 0
+        expiring = bool(exp_i) and (exp_i - now_ms) < 3 * 86400 * 1000  # 3 天内过期
+        expired = bool(exp_i) and exp_i <= now_ms
+        items.append({
+            "id": aid,
+            "nickname": a.get("nickname") or a.get("email") or aid[:8],
+            "variant": a.get("variant") or "unknown",
+            "domain": a.get("domain") or "",
+            "enabled": enabled,
+            "expiring": expiring,
+            "expired": expired,
+            "expiresAt": exp_i,
+        })
+    usable = [i for i in items if i["enabled"] and not i["expired"]]
+    return {
+        "accounts": items,
+        "usable_count": len(usable),
+        "auto_routing": len(usable) > 0,  # 有可用账号即默认开启自动故障转移
+        "fallback": "global_pool" if len(usable) > 1 else "single",
+    }
 
 
 @app.get("/health")
@@ -4068,8 +4259,43 @@ async def chat_completions(request: Request):
         "api_key": gate.get("keyId") or "",
         "client_tag": dict(request.headers).get("x-autobuddy-client")
                        or dict(request.headers).get("user-agent") or "",
+        # 对齐 Magpie 轨迹：标记这次请求来自哪个 caller（客户端/应用）与上游供应商
+        "caller_key": gate.get("keyId") or dict(request.headers).get("x-autobuddy-client") or "local",
+        "caller_name": dict(request.headers).get("x-autobuddy-client")
+                        or (gate.get("name") if gate.get("name") else "gateway-local"),
+        "provider": "codebuddy",
+        "order": [],
     }
     _routing_decision = routing.resolve_routing(raw_model, _routing_ctx)
+    # 回填候选名单（对齐 Magpie 的 order[]：谁在被考虑、按什么顺序），让
+    # 实时路由舞台能把候选账号逐行列出（首/最终高亮）。必须在 trace_begin 之前完成。
+    try:
+        _acct_map = {str(_account_id(a)): a for a in (_load_accounts() or []) if _account_id(a)}
+        _cand = []
+        if _routing_decision.get("group_id"):
+            _grp = routing.get_group(_routing_decision["group_id"])
+            if _grp:
+                for _m in (_grp.get("members") or []):
+                    _aid = _m.get("id")
+                    if _aid:
+                        _aid = str(_aid)
+                        _an = _acct_map.get(_aid)
+                        _cand.append({"id": _aid, "name": _account_label(_an) if _an else _aid, "model": raw_model})
+        if not _cand:
+            for _a in (_load_accounts() or []):
+                if _a.get("enabled", True) is False:
+                    continue
+                _cand.append({"id": str(_account_id(_a)), "name": _account_label(_a), "model": raw_model})
+        _routing_ctx["order"] = _cand
+    except Exception:
+        pass
+    # 路由轨迹：登记本次请求的实时轨迹首条（对标 Magpie /api/gateway/trace）。
+    _trace_req_id = f"t{int(time.time()*1000)}-{os.getpid()}-{id(_routing_decision)%100000}"
+    _trace_tid = None
+    try:
+        _trace_tid = routing.trace_begin(_trace_req_id, _routing_ctx, _routing_decision)
+    except Exception:
+        _trace_tid = None
     # 路由规则指定了实际送出模型名（target_type=model）时，覆盖 target_model，
     # 让下游按用户编排的模型名走；未指定则沿用别名解析结果。
     if _routing_decision.get("matched") and _routing_decision.get("forced_model"):
@@ -4079,6 +4305,14 @@ async def chat_completions(request: Request):
                          session_key=session_key,
                          estimated_tokens=input_tokens,
                          routing_ctx={"decision": _routing_decision})
+    if _trace_tid is not None:
+        try:
+            if acc and acc.get("access_token"):
+                routing.trace_try(_trace_tid, _account_id(acc) or "", "first")
+            # 选号后回填真实 provider/variant，使轨迹记录与 Magpie 一致
+            _routing_ctx["provider"] = acc.get("variant") or "codebuddy"
+        except Exception:
+            pass
     if not acc or not acc.get("access_token"):
         if requested_account_id:
             raise HTTPException(status_code=409, detail="Requested WorkBuddy account is disabled, expired, or unavailable.")
@@ -4198,6 +4432,12 @@ async def chat_completions(request: Request):
                     session_sticky.unbind(session_key)
                 except Exception:
                     pass
+                if _trace_tid is not None:
+                    try:
+                        routing.trace_finish(_trace_tid, False, status=str(res.status_code),
+                                             error=(body_text or "")[:200])
+                    except Exception:
+                        pass
                 await client.aclose()
                 _release_account_slot(served_account_id, input_tokens)
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
@@ -4230,6 +4470,11 @@ async def chat_completions(request: Request):
             req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
             res = await client.send(req, stream=True)
             lprint("retry", f"换号重试第 {attempt} 次 -> {served_account_name}")
+            if _trace_tid is not None:
+                try:
+                    routing.trace_try(_trace_tid, served_account_id, "retry")
+                except Exception:
+                    pass
 
         async def stream_generator():
             # 逐块扫描而非缓冲：先 yield 把字节送出去，再解析这一块。
@@ -4287,6 +4532,17 @@ async def chat_completions(request: Request):
 
         # 成功：清零该账号的连续失败与软退避计数
         _note_upstream_result(served_account_id, 200, "")
+
+        # 路由轨迹：标记最终选定账号 + 成功收尾（对标 Magpie trace 的“谁答了”）。
+        if _trace_tid is not None:
+            try:
+                routing.trace_set_final(_trace_tid, served_account_id,
+                                        swapped=(len(tried_account_ids) > 1))
+                routing.trace_finish(_trace_tid, True, status=str(res.status_code),
+                                     tokens=input_tokens,
+                                     ms=int((time.time() - start_time) * 1000))
+            except Exception:
+                pass
 
         return StreamingResponse(
             stream_generator(),
@@ -4362,6 +4618,12 @@ async def chat_completions(request: Request):
             nxt = [a for a in _retry_candidates(raw_model, tried_account_ids) if a.get("access_token")]
             if not nxt or len(tried_account_ids) >= max_attempts:
                 await client.aclose()
+                if _trace_tid is not None:
+                    try:
+                        routing.trace_finish(_trace_tid, False, status=str(res.status_code),
+                                             error=(body_text or "")[:200])
+                    except Exception:
+                        pass
                 return Response(content=_friendly_upstream_body(res.status_code, body_text).encode("utf-8"),
                                 status_code=res.status_code,
                                 headers={"Content-Type": "application/json"})
@@ -4369,6 +4631,11 @@ async def chat_completions(request: Request):
             served_account_id = _account_id(acc2) or ""
             served_account_name = _account_label(acc2)
             tried_account_ids.add(served_account_id)
+            if _trace_tid is not None:
+                try:
+                    routing.trace_try(_trace_tid, served_account_id, "retry")
+                except Exception:
+                    pass
             variant = acc2.get("variant", "ai")
             base_url = _resolve_base_url(variant, target_model)
             headers = _desktop_headers(acc2['access_token'], acc2, body)
@@ -4472,6 +4739,16 @@ async def chat_completions(request: Request):
         # 非流式成功同样记账（成功清零失败计数）
         _note_upstream_result(served_account_id, 200, "")
         reqlog.done(rid, reqlog.OUTCOME_SUCCESS)
+
+        if _trace_tid is not None:
+            try:
+                routing.trace_set_final(_trace_tid, served_account_id,
+                                        swapped=(len(tried_account_ids) > 1))
+                routing.trace_finish(_trace_tid, True, status="200",
+                                     tokens=input_tokens,
+                                     ms=int((time.time() - start_time) * 1000))
+            except Exception:
+                pass
 
         return Response(
             content=json.dumps(result_payload, ensure_ascii=False),

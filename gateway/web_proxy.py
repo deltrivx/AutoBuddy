@@ -1772,6 +1772,14 @@ COLLAPSE_SCRIPT = r"""
     margin: 0 auto;
     padding: 36px 16px 40px;
   }
+  /* 智能路由 / 数据总览 / 每日任务 等注入视图激活时，强制收起官方页面内容。
+     用 !important 扛住 React 重渲染把官方子节点 display 复位成 '' 的竞态——
+     否则切到路由页时底层官方「账号管理」页仍叠在路由 UI 上，看起来就是
+     「顶部没收拢」（2026-11-06 实测：路由页 main 下同时挂着官方内容 h=749
+     与路由块 h=268，两者都可见）。注入视图本身排除在外，不被误隐藏。 */
+  main.wb-wbview-active > *:not(#wb-routing-view):not(#wb-overview-view):not(#wb-daily-view) {
+    display: none !important;
+  }
   .wb-rt-head {
     display: flex;
     align-items: flex-start;
@@ -1813,72 +1821,190 @@ COLLAPSE_SCRIPT = r"""
     border-color: var(--accent, #3b82f6);
     color: #fff;
   }
+  /* ============================================================
+     路由页样式 — 从 Magpie (internal/gui/assets/app.css) 1:1 移植
+     类名/主题变量沿用 Magpie 真实实现，非自创
+     ============================================================ */
+
+  /* 布局：两栏（对齐 Magpie 的 am-body 双列） */
   .wb-rt-cols {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
   }
   @media (max-width: 860px) { .wb-rt-cols { grid-template-columns: 1fr; } }
+
+  /* 卡片容器（对齐 Magpie 的 .pop.am-pop / .card） */
   .wb-rt-card {
-    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.16));
+    border: 1px solid var(--line-2, #ececf0);
     border-radius: 12px;
-    background: var(--card, #161922);
-    padding: 16px;
+    background: var(--card, #fff);
+    padding: 14px;
   }
   .wb-rt-card-title {
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
-    margin: 0 0 12px;
+    letter-spacing: -.01em;
+    color: var(--fg, #1c1c21);
+    margin: 0 0 10px;
   }
+  .wb-rt-sub2 { font-size: 12px; color: var(--muted, #85858d); line-height: 1.45; margin: 2px 0 10px; }
+
+  /* 分组区块（对齐 Magpie .am-g / .am-gh / .am-fold） */
+  .am-g { margin-bottom: 8px; }
+  .am-gh { display: flex; align-items: center; gap: 8px; margin: 6px 2px 0; }
+  .am-fold {
+    flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 10px; border: 0; border-radius: 8px;
+    background: none; color: var(--muted, #85858d); font: inherit; font-size: 12px;
+    text-align: left; cursor: pointer;
+  }
+  .am-fold .tw { display: inline-flex; width: 10px; color: var(--faint, #b9b9c2); }
+  .am-fold .gn { color: var(--fg-2, #4b4b53); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .am-fold .c { font-variant-numeric: tabular-nums; color: var(--faint, #b9b9c2); }
+  .am-g.shut .am-rows { display: none; }
+  .am-all { flex: none; height: 24px; margin-right: 6px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--accent, #4f46e5); font: inherit; font-size: 11.5px; cursor: pointer; }
+  .am-all:hover { background: var(--accent-soft, #eeedfd); }
+
+  /* 成员行（对齐 Magpie .am-mr） */
+  .am-mr {
+    display: flex; align-items: center; gap: 10px; width: calc(100% - 4px);
+    height: 32px; margin: 0 2px; padding: 0 12px; border: 0; border-radius: 8px;
+    background: none; color: var(--fg, #1c1c21); font: inherit; font-size: 13px;
+    text-align: left; cursor: pointer; transition: background-color .12s;
+  }
+  .am-mr:hover { background: var(--pill, #f1f1f4); }
+  .am-rows .am-mr { padding-left: 28px; }
+  .am-mr .lg { flex: none; min-width: 56px; justify-content: flex-start; color: var(--muted, #85858d); }
+  .am-mr .n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .am-mr .x { flex: none; font-size: 11.5px; color: var(--faint, #b9b9c2); font-variant-numeric: tabular-nums; }
+  .am-mr.off .n { color: var(--faint, #b9b9c2); }
+  .am-mr.off .lg { opacity: .45; }
+  .am-tag { margin-left: 6px; padding: 1px 6px; border-radius: 5px; background: var(--accent-soft, #eeedfd); color: var(--accent, #4f46e5); font-size: 10.5px; font-weight: 500; }
+
+  /* 分段控件（对齐 Magpie .am-seg） */
+  .am-seg { display: inline-flex; flex: none; padding: 2px; border-radius: 8px; background: var(--seg-track, #e6e6eb); }
+  .am-seg button { height: 24px; padding: 0 9px; border: 0; border-radius: 6px; background: none; color: var(--ctl-fg, #63636b); font: inherit; font-size: 12px; cursor: pointer; transition: background-color .15s, color .15s; }
+  .am-seg button.on { background: var(--seg-thumb, #fff); color: var(--fg, #1c1c21); box-shadow: var(--seg-edge, 0 1px 2px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.08)); }
+
+  /* 页脚（对齐 Magpie .am-foot） */
+  .am-foot { display: flex; align-items: center; gap: 8px; margin: 8px 8px 0; padding: 10px 6px 2px; border-top: 1px solid var(--line-2, #ececf0); font-size: 11.5px; color: var(--muted, #85858d); }
+  .am-foot .sp { flex: 1; }
+  .am-reset { border: 0; background: none; padding: 2px 4px; border-radius: 5px; color: var(--fg-2, #4b4b53); font: inherit; font-size: 11.5px; cursor: pointer; }
+  .am-reset:hover:not(:disabled) { color: var(--accent, #4f46e5); }
+  .am-reset:disabled { color: var(--faint, #b9b9c2); cursor: default; }
+  .am-dot { color: var(--faint, #b9b9c2); }
+
+  /* 实时路由轨迹（对齐 Magpie 的 route 行：who / name / provider / order[] / tries[]） */
+  .routes { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; }
+  .route-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+  .route {
+    border: 1px solid var(--line-2, #ececf0); border-radius: 10px; padding: 9px 11px;
+    background: var(--card, #fff); border-left: 3px solid var(--faint, #b9b9c2);
+  }
+  .route.ok { border-left-color: #4ade80; }
+  .route.err { border-left-color: #f87171; }
+  .route.run { border-left-color: #fbbf24; }
+  .route-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .route-who { font-weight: 600; font-size: 13.5px; color: var(--fg, #1c1c21); }
+  .route-name { font-size: 12.5px; color: var(--fg-2, #4b4b53); }
+  .route-prov { font-size: 11.5px; color: var(--muted, #85858d); }
+  .route-status { margin-left: auto; font-size: 12px; color: var(--muted, #85858d); }
+  .route-why { font-size: 12px; color: var(--muted, #85858d); margin-top: 3px; }
+  /* 候选串（对齐 Magpie 的 order[] 横排） */
+  .route-order { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+  .route-chip { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2, #ececf0); background: var(--pill, #f1f1f4); color: var(--muted, #85858d); }
+  .route-chip.on { background: var(--accent-soft, #eeedfd); border-color: var(--accent, #4f46e5); color: var(--accent, #4f46e5); }
+  .route-chip-sep { color: var(--faint, #b9b9c2); font-size: 11px; }
+  /* 每次尝试（对齐 Magpie 的 tries——谁 / 状态 / 耗时 / 错误） */
+  .route-tries { margin-top: 5px; padding-left: 4px; border-left: 2px solid var(--line-2, #ececf0); }
+  .route-step { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .route-step-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint, #b9b9c2); flex: 0 0 auto; }
+  .route-step-acc { font-weight: 600; color: var(--fg, #1c1c21); }
+  .route-step-st { font-weight: 600; }
+  .route-step-st.ok { color: #4ade80; }
+  .route-step-st.err { color: #f87171; }
+  .route-step-st.run { color: #fbbf24; }
+  .route-step-err { color: #f87171; font-size: 11.5px; }
+  .route-flow { font-size: 12.5px; margin-top: 4px; }
+  .route-flow b { color: var(--fg, #1c1c21); }
+  .route-meta { font-size: 12px; color: var(--muted, #85858d); margin-top: 2px; }
+
+  /* 统计条（对齐 Magpie 的 请求/改道/错误） */
+  .route-stats { display: flex; gap: 10px; margin-bottom: 10px; }
+  .route-stat { flex: 1; background: var(--pill, #f1f1f4); border: 1px solid var(--line-2, #ececf0); border-radius: 10px; padding: 8px 12px; text-align: center; }
+  .route-stat b { display: block; font-size: 20px; font-weight: 700; color: var(--fg, #1c1c21); }
+  .route-stat span { font-size: 11.5px; color: var(--muted, #85858d); }
+  .route-stat-err b { color: #f87171; }
+
+  /* 实时脉冲点（对齐 Magpie .am-dot 在线的写法） */
+  .route-live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint, #b9b9c2); margin-left: 6px; vertical-align: middle; }
+  .route-live.on { background: #4ade80; box-shadow: 0 0 6px #4ade80; animation: routePulse 1.6s ease-in-out infinite; }
+  @keyframes routePulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+  /* 账号池 / 供应商（对齐 Magpie 的 accounts / providers 列表） */
+  .wb-rt-pool-card { margin-bottom: 16px; }
+  .wb-rt-pool-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .wb-rt-pool-meta { font-size: 12.5px; color: var(--muted, #85858d); }
+  .wb-rt-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line-2, #ececf0); color: var(--muted, #85858d); white-space: nowrap; }
+  .wb-rt-badge.wb-rt-badge-src { background: var(--accent-soft, #eeedfd); color: var(--accent, #4f46e5); border-color: color-mix(in oklab, var(--accent, #4f46e5) 35%, transparent); }
+  .wb-rt-badge.wb-rt-badge-group { background: var(--accent-soft, #eeedfd); color: var(--accent, #4f46e5); border-color: color-mix(in oklab, var(--accent, #4f46e5) 35%, transparent); }
+  /* 路由组方式 / 故障转移 徽标（沿用 Magpie .am-tag 配色） */
+  .wb-rt-badge.wb-rt-badge-mode-smart, .wb-rt-badge.wb-rt-badge-mode-order { color: #a78bfa; border-color: rgba(167,139,250,.4); }
+  .wb-rt-badge.wb-rt-badge-mode-drain, .wb-rt-badge.wb-rt-badge-mode-rotate { color: #f472b6; border-color: rgba(244,114,182,.4); }
+  .wb-rt-badge.wb-rt-badge-mode-usage, .wb-rt-badge.wb-rt-badge-mode-pace, .wb-rt-badge.wb-rt-badge-mode-free, .wb-rt-badge.wb-rt-badge-mode-fast, .wb-rt-badge.wb-rt-badge-mode-weight { color: #38bdf8; border-color: rgba(56,189,248,.4); }
+  .wb-rt-badge.wb-rt-badge-mode-manual { color: #fbbf24; border-color: rgba(251,191,36,.4); }
+  .wb-rt-badge.wb-rt-badge-fb-global_pool { color: #22d3ee; border-color: rgba(34,211,238,.4); }
+  .wb-rt-badge.wb-rt-badge-fb-error { color: #f87171; border-color: rgba(248,113,113,.4); }
+  .wb-rt-badge-on { color: #4ade80; border-color: rgba(74,222,128,.45); background: rgba(74,222,128,.08); }
+  .wb-rt-badge-warn { color: #fbbf24; border-color: rgba(251,191,36,.45); background: rgba(251,191,36,.08); }
+  .wb-rt-badge-err { color: #f87171; border-color: rgba(248,113,113,.45); background: rgba(248,113,113,.08); }
+  .wb-rt-badge-variant-cn { color: #38bdf8; border-color: rgba(56,189,248,.4); }
+  .wb-rt-badge-variant-ai { color: #a78bfa; border-color: rgba(167,139,250,.4); }
+  .wb-rt-badge-variant-all { color: #4ade80; border-color: rgba(74,222,128,.4); }
+  .wb-rt-badge-variant-unknown { color: var(--muted, #85858d); border-color: var(--line-2, #ececf0); }
+
+  /* 路由策略配置（对齐 Magpie 的 Routing 分段行） */
+  .wb-rt-cfg-card { margin-bottom: 16px; }
+  .wb-rt-cfg-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line-2, #ececf0); }
+  .wb-rt-cfg-row:last-child { border-bottom: 0; }
+  .wb-rt-cfg-label { font-weight: 600; font-size: 14px; min-width: 72px; color: var(--fg, #1c1c21); }
+  .wb-rt-cfg-hint { font-size: 12px; color: var(--muted, #85858d); flex: 1 1 200px; }
+
   .wb-rt-list { display: flex; flex-direction: column; gap: 10px; }
-  .wb-rt-item {
-    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.14));
-    border-radius: 10px;
-    padding: 12px 14px;
-    background: var(--background, #0f1117);
-  }
+  .wb-rt-item { border: 1px solid var(--line-2, #ececf0); border-radius: 10px; padding: 12px 14px; background: var(--card, #fff); }
   .wb-rt-item-off { opacity: .55; }
-  .wb-rt-item-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 6px;
-  }
-  .wb-rt-item-name { font-weight: 600; font-size: 15px; }
-  .wb-rt-item-meta {
-    font-size: 12.5px;
-    color: var(--muted-foreground, #64748b);
-    line-height: 1.5;
-  }
-  .wb-rt-item-meta code {
-    background: color-mix(in oklab, var(--accent, #3b82f6) 16%, transparent);
-    padding: 1px 5px;
-    border-radius: 4px;
-    font-size: 12px;
-  }
-  .wb-rt-badge {
-    font-size: 11px;
-    padding: 1px 7px;
-    border-radius: 999px;
-    border: 1px solid var(--sidebar-border, rgba(120,120,120,0.2));
-    color: var(--muted-foreground, #64748b);
-    white-space: nowrap;
-  }
-  .wb-rt-badge-group { color: #38bdf8; border-color: rgba(56,189,248,.4); }
-  .wb-rt-badge-account { color: #34d399; border-color: rgba(52,211,153,.4); }
-  .wb-rt-badge-model { color: #fbbf24; border-color: rgba(251,191,36,.4); }
-  .wb-rt-badge-mode-smart, .wb-rt-badge-mode-order { color: #a78bfa; border-color: rgba(167,139,250,.4); }
-  .wb-rt-badge-mode-round_robin { color: #f472b6; border-color: rgba(244,114,182,.4); }
-  .wb-rt-badge-fb-error { color: #f87171; border-color: rgba(248,113,113,.4); }
-  .wb-rt-badge-fb-global_pool { color: #22d3ee; border-color: rgba(34,211,238,.4); }
-  .wb-rt-badge-off { color: #94a3b8; border-color: rgba(148,163,184,.4); }
-  .wb-rt-empty, .wb-rt-loading, .wb-rt-error {
-    font-size: 13px;
-    color: var(--muted-foreground, #64748b);
-    padding: 12px 4px;
-  }
+  .wb-rt-item-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .wb-rt-item-name { font-weight: 600; font-size: 15px; color: var(--fg, #1c1c21); }
+  .wb-rt-item-meta { font-size: 12.5px; color: var(--muted, #85858d); line-height: 1.5; }
+  .wb-rt-item-meta code { background: var(--accent-soft, #eeedfd); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--accent, #4f46e5); }
+
+  .wb-rt-empty, .wb-rt-loading, .wb-rt-error { font-size: 13px; color: var(--muted, #85858d); padding: 12px 4px; }
   .wb-rt-error { color: #f87171; }
+
+  /* 组/规则 行内动作 + 编辑器（沿用 Magpie .am-pop 视觉） */
+  .wb-rt-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .wb-rt-filter { flex: 1 1 140px; min-width: 120px; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line-2, #ececf0); background: var(--pill, #f1f1f4); color: var(--fg, #1c1c21); font-size: 13px; }
+  .wb-rt-item-acts { margin-top: 7px; display: flex; gap: 6px; }
+  .wb-rt-btn-sm { padding: 3px 9px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line-2, #ececf0); background: none; color: var(--fg-2, #4b4b53); cursor: pointer; }
+  .wb-rt-btn-sm:hover { background: var(--pill, #f1f1f4); }
+  .wb-rt-btn-danger { color: #f87171; border-color: rgba(248,113,113,.4); }
+  .wb-rt-editor-wrap { border: 1px solid var(--accent, #4f46e5); border-radius: 10px; padding: 12px; margin: 8px 0; background: var(--accent-soft, #eeedfd); }
+  .wb-rt-editor-wrap h3 { margin: 0 0 10px; font-size: 15px; color: var(--fg, #1c1c21); }
+  .wb-rt-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .wb-rt-efield { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+  .wb-rt-efield.wb-rt-efield-wide { grid-column: 1 / -1; }
+  .wb-rt-efield.wb-rt-efield-inline { flex-direction: row; align-items: center; gap: 6px; }
+  .wb-rt-efield.wb-rt-efield-dim { opacity: .5; }
+  .wb-rt-efield.wb-rt-efield-dim select { pointer-events: none; }
+  .wb-rt-efield label { color: var(--muted, #85858d); }
+  .wb-rt-efield input[type=text], .wb-rt-efield input[type=number], .wb-rt-efield select, .wb-rt-editor-wrap textarea {
+    padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line-2, #ececf0); background: var(--card, #fff); color: var(--fg, #1c1c21); font-size: 13px; font-family: inherit; width: 100%; box-sizing: border-box; }
+  .wb-rt-chks { display: flex; flex-wrap: wrap; gap: 6px 12px; max-height: 160px; overflow-y: auto; }
+  .wb-rt-chk { font-size: 12.5px; display: inline-flex; align-items: center; gap: 4px; }
+  .wb-rt-editor-acts { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 4px; }
+
+
   .wb-ov-head {
     display: flex;
     align-items: flex-start;
@@ -2335,6 +2461,122 @@ COLLAPSE_SCRIPT = r"""
     .wb-tb-grid nav a svg { width: 17px !important; height: 17px !important; }
     .wb-tb-grid > div:first-child span { width: 32px !important; height: 32px !important; }
   }
+  /* ===========================================================================
+     Magpie 实时路由页 1:1 移植块（从内部/gui/assets/plugins/routing/routing.css
+     + app.css 真实实现移植，非自创）。仅作用于 #wb-routing 作用域。
+     变量名沿用 Magpie 真实命名，通过下方映射对齐本页主题。
+     =========================================================================== */
+  #wb-routing-view {
+    --card: var(--card, #ffffff);
+    --card-2: color-mix(in srgb, var(--muted-foreground, #64748b) 8%, var(--card, #fff));
+    --line: var(--border, rgba(120,120,120,0.18));
+    --line-2: color-mix(in srgb, var(--muted-foreground, #64748b) 10%, transparent);
+    --fg: var(--foreground, #0f172a);
+    --fg-2: var(--muted-foreground, #475569);
+    --muted: var(--muted-foreground, #64748b);
+    --faint: color-mix(in srgb, var(--muted-foreground, #64748b) 60%, transparent);
+    --accent: var(--primary, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--primary, #4f46e5) 12%, transparent);
+    --green: #34d399;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --pill: color-mix(in srgb, var(--muted-foreground, #64748b) 8%, transparent);
+    --pill-hover: color-mix(in srgb, var(--muted-foreground, #64748b) 14%, transparent);
+    --code-font: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ease: cubic-bezier(.22,1,.36,1);
+    --x-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1 1l6 6M7 1l-6 6'/%3E%3C/svg%3E");
+  }
+  /* magpie 图标（#bird）—— Magpie 真实用 <use href="#bird">，这里给一个简版 path */
+  #wb-routing-view .rt-bird { width: 26px; height: 26px; }
+  #wb-routing-view .rt-bird use { display: none; }
+  #wb-routing-view .rt-hub .rt-bird { background: no-repeat center/contain
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Cpath fill='%234f46e5' d='M22 6c-7 0-12 5-12 12 0 4 2 7 5 9l-3 7 8-4c1 .2 2 .3 3 .3 8 0 13-6 13-14S30 6 22 6z'/%3E%3C/svg%3E");
+    width: 26px; height: 26px; display: inline-block; border-radius: 50%; }
+
+  /* ---- 舞台（Magpie .rt）---- */
+  #wb-routing-view .rt { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 12px; margin: 0 0 18px; }
+  #wb-routing-view .rt-top { display: flex; flex-direction: column; gap: 3px; }
+  #wb-routing-view .rt-what { font-size: 13px; color: var(--muted); }
+  #wb-routing-view .rt-what b { color: var(--fg); font-weight: 600; }
+  #wb-routing-view .rt-mode { margin: 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.45; }
+  #wb-routing-view .rt-stage { position: relative; display: grid; grid-template-columns: fit-content(max(124px, 15%)) fit-content(max(124px, 15%)) minmax(0, 1fr); column-gap: 56px; align-items: center; padding: 22px 2px; }
+  #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 124px; }
+  #wb-routing-view .rt-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  #wb-routing-view .rt-wires path { fill: none; stroke: var(--line); stroke-width: 1.5; transition: opacity .3s; }
+  #wb-routing-view .rt-wires path.lit { stroke: var(--agent, var(--muted)); }
+  #wb-routing-view .rt-wires path.rest { stroke-dasharray: 2 6; opacity: .45; }
+  #wb-routing-view .rt-flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; will-change: transform; }
+  #wb-routing-view .rt-sky { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  #wb-routing-view .rt-srcs { position: relative; z-index: 1; min-width: 0; display: grid; gap: 10px; }
+  #wb-routing-view .rt-node { position: relative; z-index: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; text-align: center; }
+  #wb-routing-view .rt-node .rt-ic .ic, #wb-routing-view .rt-node .rt-bird { width: 26px; height: 26px; margin-bottom: 3px; }
+  #wb-routing-view .rt-node b { font-size: 13px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #wb-routing-view .rt-node small { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #wb-routing-view .rt-hub { border-color: var(--fg); box-shadow: 0 0 0 4px var(--card-2); }
+  #wb-routing-view .rt-hub i { font-style: normal; font-size: 10.5px; font-weight: 560; margin-top: 5px; padding: 1px 8px; border-radius: 999px; background: var(--fg); color: var(--card); }
+  #wb-routing-view .rt-hub b { color: var(--fg); }
+  /* 账号行（Magpie .rt-accts li）---- */
+  #wb-routing-view .rt-accts { position: relative; z-index: 1; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; min-width: 0; }
+  #wb-routing-view .rt-accts li { position: relative; display: grid; grid-template-columns: 10px minmax(0, max-content) minmax(min(14em, 40%), 1fr); align-items: center; column-gap: 10px; row-gap: 6px; padding: 9px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; transition: opacity .3s, border-color .3s, transform .5s cubic-bezier(.2, .8, .2, 1); }
+  #wb-routing-view .rt-accts li { margin-left: calc(var(--depth, 0) * 18px); }
+  #wb-routing-view .rt-accts b { font-weight: 560; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #wb-routing-view .rt-accts b > span:not(.ic) { font-weight: 450; color: var(--muted); }
+  #wb-routing-view .rt-accts b > span.who { color: var(--fg); font-weight: 560; }
+  #wb-routing-view .rt-accts b code.mdl { font: 500 11px/1.5 var(--code-font); color: var(--fg-2); background: var(--card-2); border-radius: 5px; padding: 0 5px; margin-left: 7px; font-weight: 450; }
+  #wb-routing-view .rt-accts em { font-style: normal; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #wb-routing-view .rt-accts em .ses { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  #wb-routing-view .rt-accts .bar { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: var(--card-2); overflow: hidden; }
+  #wb-routing-view .rt-accts .bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--muted); transition: width .4s; }
+  #wb-routing-view .rt-accts li.on { border-color: var(--fg); }
+  #wb-routing-view .rt-accts li.on em { color: var(--fg); }
+  #wb-routing-view .rt-accts li.on .bar i { background: var(--fg); }
+  #wb-routing-view .rt-accts li.on .dot { background: var(--fg); border-color: var(--fg); }
+  #wb-routing-view .rt-accts .dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
+  #wb-routing-view .rt-accts li.now .dot { position: relative; background: var(--green); border-color: var(--green); }
+  #wb-routing-view .rt-accts li.now .dot::after { content: ""; position: absolute; inset: -1.5px; border-radius: 50%; background: color-mix(in srgb, var(--green) 40%, transparent); opacity: 0; pointer-events: none; animation: rtlive-dot 1.8s infinite; }
+  @keyframes rtlive-dot { 0% { transform: scale(1); opacity: 1; } 70%, 100% { transform: scale(2.5); opacity: 0; } }
+  #wb-routing-view .rt-accts li.hit { animation: rthit .45s; }
+  @keyframes rthit { 20% { translate: -5px; } 40% { translate: 4px; } 60% { translate: -2px; } 80% { translate: 1px; } }
+  #wb-routing-view .rt-accts li.new { animation: rtin .4s ease-out; }
+  @keyframes rtin { from { opacity: 0; transform: translateY(4px); } }
+  #wb-routing-view .rt-accts li.low em { color: var(--fg-2); }
+  #wb-routing-view .rt-accts li.rest { border-style: dashed; }
+  #wb-routing-view .rt-accts li.rest > :not(.tag) { opacity: .5; }
+  #wb-routing-view .rt-accts li.rest em { color: var(--red); opacity: .85; }
+  #wb-routing-view .rt-accts .tag { position: absolute; right: 10px; top: -10px; padding: 1px 7px; border-radius: 6px; background: var(--red); color: #fff; font: 600 10.5px/1.5 var(--code-font); opacity: 0; transform: translateY(4px) scale(.9); transition: opacity .25s, transform .25s; pointer-events: none; }
+  #wb-routing-view .rt-accts li.tagged .tag { opacity: 1; transform: none; }
+  /* 页脚（Magpie .rt-foot：实时脉冲 + 统计）---- */
+  #wb-routing-view .rt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px 20px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
+  #wb-routing-view .rt-cap { flex: 1 1 20em; margin: 0; min-height: 3em; display: flex; align-items: center; font-size: 13px; line-height: 1.45; color: var(--fg); }
+  #wb-routing-view .rt-cap.in { animation: rtin .4s ease-out; }
+  #wb-routing-view .rt-stats { display: flex; gap: 18px; font-size: 11px; color: var(--muted); }
+  #wb-routing-view .rt-stats > span { display: flex; flex-direction: column; }
+  #wb-routing-view .rt-stats b { font-size: 19px; line-height: 1.2; font-weight: 650; letter-spacing: -.02em; color: var(--fg); font-variant-numeric: tabular-nums; }
+  #wb-routing-view .rt-stats > span.rt-errs { cursor: pointer; }
+  #wb-routing-view .rt-stats > span.rt-errs:hover b { color: var(--red); }
+  /* 实时脉冲点（Magpie .rt-livedot）---- */
+  #wb-routing-view .rt-livedot { width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--green); --fg: var(--green); }
+  #wb-routing-view .rt-livedot.on { position: relative; }
+  #wb-routing-view .rt-livedot.on::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: color-mix(in srgb, var(--green) 40%, transparent); opacity: 0; pointer-events: none; animation: rtlive 1.8s infinite; }
+  @keyframes rtlive { 0% { transform: scale(1); opacity: 1; } 70%, 100% { transform: scale(3); opacity: 0; } }
+  /* 日志 / 步骤（Magpie .rt-log / .rt-steps）---- */
+  #wb-routing-view .rt-log { padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
+  #wb-routing-view .rt-log-head { display: flex; flex-wrap: wrap; align-items: center; row-gap: 2px; font-size: 12px; font-weight: 600; color: var(--fg); }
+  #wb-routing-view .rt-log-head .grow { flex: 1; }
+  #wb-routing-view .rt-steps { list-style: none; margin: 6px 0 0; padding: 0; display: grid; align-content: start; gap: 5px; counter-reset: rt; max-height: 220px; overflow-y: auto; }
+  #wb-routing-view .rt-steps li { position: relative; padding-left: 20px; font-size: 12.5px; line-height: 1.45; color: var(--fg-2); }
+  #wb-routing-view .rt-steps li::before { content: ""; position: absolute; left: 5px; top: .5em; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  #wb-routing-view .rt-steps li.why { color: var(--fg); }
+  #wb-routing-view .rt-steps li.why::before { background: var(--fg); }
+  #wb-routing-view .rt-steps li.aside { color: var(--muted); }
+  #wb-routing-view .rt-steps li.aside::before { background: none; border: 1px solid var(--muted); width: 4px; height: 4px; }
+  #wb-routing-view .rt-steps li.ok::before { background: var(--green); }
+  #wb-routing-view .rt-steps li.bad::before { background: var(--red); -webkit-mask: var(--x-mark) center / contain no-repeat; mask: var(--x-mark) center / contain no-repeat; border-radius: 0; transform: scale(1.5); }
+  #wb-routing-view .rt-steps li .kind { display: inline-block; vertical-align: 1px; font-size: 10.5px; line-height: 16px; padding: 0 5px; border-radius: 5px; color: var(--muted); background: var(--card-2); border: 1px solid var(--line); white-space: nowrap; }
+  #wb-routing-view .rt-steps li .swap { font-size: 10.5px; line-height: 16px; padding: 0 5px; border-radius: 5px; color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); white-space: nowrap; }
+  #wb-routing-view .rt-none { padding: 18px 4px; text-align: center; color: var(--muted); font-size: 13px; }
+  #wb-routing-view .rt-replay { display: none; }
+
 </style>
 <script>
 (function() {
@@ -3360,16 +3602,18 @@ COLLAPSE_SCRIPT = r"""
       };
       var ov = document.getElementById("wb-overview-view");
       var dl = document.getElementById("wb-daily-view");
+      var rt = document.getElementById("wb-routing-view");
       var wrap = null;
       if (vis(ov)) wrap = ov.querySelector(".wb-ov-wrap");
       else if (vis(dl)) wrap = dl.querySelector(".wb-daily-wrap");
+      else if (vis(rt)) wrap = rt.querySelector(".wb-rt-wrap");
       else {
         // 官方页：从 main 的可见子节点里找内容容器
         var main = document.querySelector("main");
         if (main) {
           var kids = Array.prototype.slice.call(main.children);
           for (var i = 0; i < kids.length; i++) {
-            if (kids[i] !== ov && kids[i] !== dl && vis(kids[i])) {
+            if (kids[i] !== ov && kids[i] !== dl && kids[i] !== rt && vis(kids[i])) {
               wrap = kids[i];
               break;
             }
@@ -4037,95 +4281,790 @@ COLLAPSE_SCRIPT = r"""
      实测「从概览点账号管理后概览视图仍可见、官方内容也同时可见」
      （DOM 里 #wb-overview-view 与官方容器 display 都是 block）。
      现在合成一个函数，任何状态变更都走同一条路径，杜绝竞态。 */
-  /* ---------- 智能路由视图（第 7 核心功能） ----------
+  /* ---------- 智能路由视图（第 7 核心功能，对齐 Magpie 自动路由） ----------
      复用概览/每日任务的 hash 视图切换机制。main 下挂一个 #wb-routing-view，
-     切到路由页时显示它、隐藏其它子节点。视图内容由 wbLoadRoutingData 从
-     后端 /routing/rules + /routing/groups 拉取并渲染。 */
+     切到路由页时显示它、隐藏其它子节点。
+     页面三段：
+       ① 自动路由状态（默认常开，对标 Magpie statusline）—— 账号池实时状态 +
+          自动故障转移说明，无需用户手工建任何东西打开即可见“正在自动路由”。
+       ② 路由规则（可选增强：按模型/客户端把请求分流到组）
+       ③ 路由组（可选增强：把多账号编成故障转移链）
+     默认行为：账号池存在但还没有组/规则时，自动跑一次 auto-generate，
+     让页面打开就有可用编排，而不是空荡荡的“暂无”。 */
   function wbCreateRoutingView() {
     var v = document.createElement("div");
     v.id = "wb-routing-view";
     v.style.display = "none";
     v.innerHTML =
       '<div class="wb-rt-wrap">' +
-        '<div class="wb-rt-head">' +
+        '<div class="am-head">' +
           '<div>' +
-            '<h1 class="wb-rt-h1">智能路由</h1>' +
-            '<p class="wb-rt-sub">对标 Magpie routing group：把账号/模型编成路由组，按规则分流，组内故障自动转移</p>' +
+            '<h1 class="am-t">智能路由</h1>' +
+            '<p class="am-d">请求实时演出来——谁被排第一、为什么、每次换号试了谁、最后谁答</p>' +
           '</div>' +
-          '<div class="wb-rt-actions">' +
-            '<button class="wb-rt-btn wb-rt-btn-primary" data-act="new-rule" type="button">+ 新建规则</button>' +
-            '<button class="wb-rt-btn" data-act="new-group" type="button">+ 新建路由组</button>' +
+          '<div class="am-tools">' +
+            '<button class="am-reset" data-act="auto-gen" type="button">⚡ 重新生成默认编排</button>' +
           '</div>' +
         '</div>' +
+        /* 实时路由轨迹 —— 1:1 移植 Magpie 的 .rt 舞台（不是我自写的卡片列表） */
+        '<section class="rt" id="rt">' +
+          '<div class="rt-top">' +
+            '<div class="rt-what"><b>实时</b> · 网关正在做的决定 <span class="rt-livedot on" id="wb-rt-livedot"></span></div>' +
+            '<p class="rt-mode" id="wb-rt-mode"></p>' +
+          '</div>' +
+          '<div class="rt-stage">' +
+            '<svg class="rt-wires" aria-hidden="true"></svg>' +
+            '<svg class="rt-flows" aria-hidden="true"></svg>' +
+            '<div class="rt-srcs" id="wb-rt-srcs"></div>' +
+            '<div class="rt-node rt-hub"><span class="rt-bird"></span><b>网关</b><small>magpie</small><i>网关</i></div>' +
+            '<ol class="rt-accts" id="wb-rt-accts"></ol>' +
+            '<svg class="rt-sky" aria-hidden="true"></svg>' +
+          '</div>' +
+          '<div class="rt-foot">' +
+            '<p class="rt-cap" id="wb-rt-cap" aria-live="polite"></p>' +
+            '<div class="rt-stats" id="wb-rt-trace-stats"></div>' +
+          '</div>' +
+          '<div class="rt-log">' +
+            '<div class="rt-steps" id="wb-rt-steps"></div>' +
+          '</div>' +
+          '<div class="rt-none rt-off" id="wb-rt-none" hidden=""></div>' +
+        '</section>'
+        /* 多账号 / 多 KEY（对齐 Magpie 的“各供应商在自己的账号或 Key 间路由”） */ +
+        '<section class="wb-rt-card wb-rt-prov-card">'
+          '<h2 class="wb-rt-card-title">多账号 / 多 KEY</h2>' +
+          '<p class="am-d">各供应商在自己的账号或 Key 间路由；下方为当前每个供应商的账号数与路由方式。</p>' +
+          '<div id="wb-rt-providers" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+        '</section>' +
+        '<section class="wb-rt-card wb-rt-cfg-card">' +
+          '<h2 class="wb-rt-card-title">路由策略</h2>' +
+          '<div id="wb-rt-config" class="wb-rt-config"><div class="wb-rt-loading">加载中…</div></div>' +
+        '</section>' +
+        '<section class="wb-rt-card wb-rt-pool-card">' +
+          '<h2 class="wb-rt-card-title">自动路由状态</h2>' +
+          '<div id="wb-rt-pool" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+        '</section>' +
         '<div class="wb-rt-cols">' +
           '<section class="wb-rt-card">' +
-            '<h2 class="wb-rt-card-title">路由规则</h2>' +
-            '<div id="wb-rt-rules" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+            '<h2 class="wb-rt-card-title">路由组</h2>' +
+            '<div class="wb-rt-row-head">' +
+              '<input class="wb-rt-filter" id="wb-rt-gfilter" type="search" placeholder="筛选路由组和成员" />' +
+              '<button class="am-reset" data-act="new-group" type="button">＋ 新建组</button>' +
+              '<button class="am-reset" data-act="import-group" type="button">导入</button>' +
+            '</div>' +
+            '<div id="wb-rt-groups" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
           '</section>' +
           '<section class="wb-rt-card">' +
-            '<h2 class="wb-rt-card-title">路由组</h2>' +
-            '<div id="wb-rt-groups" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+            '<h2 class="wb-rt-card-title">路由规则</h2>' +
+            '<div class="wb-rt-row-head">' +
+              '<button class="am-reset" data-act="new-rule" type="button">＋ 新建规则</button>' +
+              '<button class="am-reset" data-act="import-rule" type="button">导入</button>' +
+            '</div>' +
+            '<div id="wb-rt-rules" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
           '</section>' +
         '</div>' +
       '</div>';
     return v;
   }
 
-  /* 渲染路由规则与组。纯展示，不内联任何账号/密钥明文（诊断只记结构）。 */
-  function wbRenderRouting(rules, groups) {
-    var rBox = document.getElementById("wb-rt-rules");
-    var gBox = document.getElementById("wb-rt-groups");
-    if (!rBox || !gBox) return;
-    var gById = {};
-    (groups || []).forEach(function (g) { gById[g.id] = g; });
-    if (!rules || !rules.length) {
-      rBox.innerHTML = '<div class="wb-rt-empty">暂无规则。新建一条规则，按模型/密钥/客户端把请求分流到路由组。</div>';
-    } else {
-      rBox.innerHTML = rules.map(function (r) {
-        var tgtName = "-";
-        if (r.target_type === "group" && r.target_id) tgtName = (gById[r.target_id] || {}).name || r.target_id;
-        else if (r.target_type === "account") tgtName = "指定账号 " + (r.target_id || "-");
-        else if (r.target_type === "model") tgtName = "改模型 " + (r.target_model || r.target_id || "-");
-        var mv = (r.match_value || "").replace(/[<>&]/g, "");
-        return '<div class="wb-rt-item' + (r.enabled ? "" : " wb-rt-item-off") + '">' +
-          '<div class="wb-rt-item-top"><span class="wb-rt-item-name">' + (r.name || "").replace(/[<>&]/g, "") + '</span>' +
-          '<span class="wb-rt-badge wb-rt-badge-' + r.target_type + '">' + r.target_type + '</span>' +
-          (r.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') + '</div>' +
-          '<div class="wb-rt-item-meta">当 ' + r.match_field + ' ' + r.match_op + ' <code>' + mv + '</code> → ' + tgtName + '</div>' +
-          '</div>';
-      }).join("");
+  /* 渲染全局路由配置（对标 Magpie 的 Routing / Stays / Rate-limited 分段的真实功能旋钮）。
+     mode: smart/order/rotate/weight —— 请求在账号池里的分发方式
+     affinity: none/session —— 同会话是否粘同一账号（Stays）
+     sink: bool —— 被限流账号自动后排（Rate-limited）
+     改动即时 PUT 到后端，select_account 会据此真实分发。 */
+  function wbRenderConfig(cfg) {
+    var box = document.getElementById("wb-rt-config");
+    if (!box) return;
+    cfg = cfg || {};
+    var mode = cfg.mode || "smart";
+    var aff = cfg.affinity || "session";
+    var sink = cfg.sink !== false;
+    // 对齐 Magpie ROUTE_OPTS / AFF_OPTS / SINK_OPTS（真实功能旋钮）
+    var MODES = [["smart","智能"],["order","顺序"],["drain","用尽为止"],["rotate","轮转"],
+                ["usage","最少使用优先"],["pace","到期前先用"],["free","免费优先"],
+                ["fast","速度优先"],["weight","按权重"],["manual","手动"]];
+    var AFFS = [["session","会话"],["turn","回合内"],["none","关闭"],["strict","严格"]];
+    function segs(name, cur, opts, onPick) {
+      return '<div class="am-seg" data-seg="' + name + '">' +
+        opts.map(function (o) {
+          return '<button type="button"' + (o[0]===cur?' class="on"':'') + ' data-val="' + o[0] + '">' + o[1] + '</button>';
+        }).join("") +
+      '</div>';
     }
-    if (!groups || !groups.length) {
-      gBox.innerHTML = '<div class="wb-rt-empty">暂无路由组。新建一个路由组，把多个账号编成故障转移链。</div>';
-    } else {
-      gBox.innerHTML = groups.map(function (g) {
-        var members = (g.members || []).map(function (m) { return m.id; }).join(" → ") || "-";
-        return '<div class="wb-rt-item' + (g.enabled ? "" : " wb-rt-item-off") + '">' +
-          '<div class="wb-rt-item-top"><span class="wb-rt-item-name">' + (g.name || "").replace(/[<>&]/g, "") + '</span>' +
-          '<span class="wb-rt-badge wb-rt-badge-mode-' + g.mode + '">' + g.mode + '</span>' +
-          '<span class="wb-rt-badge wb-rt-badge-fb-' + g.fallback + '">' + g.fallback + '</span>' +
-          (g.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') + '</div>' +
-          '<div class="wb-rt-item-meta">成员(' + (g.members || []).length + ')：' + members.replace(/[<>&]/g, "") + '</div>' +
-          '</div>';
-      }).join("");
-    }
+    box.innerHTML =
+      '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">分发模式</span>' +
+        segs("mode", mode, MODES) +
+        '<span class="wb-rt-cfg-hint">请求在账号池里怎么分配</span></div>' +
+      '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">会话粘连</span>' +
+        segs("affinity", aff, AFFS) +
+        '<span class="wb-rt-cfg-hint">同会话复用同一账号</span></div>' +
+      '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">限流后排</span>' +
+        segs("sink", sink?'on':'off', [['on','开'],['off','关']]) +
+        '<span class="wb-rt-cfg-hint">被限流/降速的账号自动排到其余之后</span></div>';
+    box.querySelectorAll(".am-seg").forEach(function (grp) {
+      grp.addEventListener("click", function (ev) {
+        var b = ev.target.closest("button");
+        if (!b) return;
+        var name = grp.getAttribute("data-seg");
+        var val = b.getAttribute("data-val");
+        var payload = {};
+        payload[name] = (name === "sink") ? (val === "on") : val;
+        fetch("/api/routing/config", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.config) { wbRenderConfig(d.config); wbToast("路由策略已更新", "ok"); }
+            else wbToast("更新失败", "err");
+          })
+          .catch(function () { wbToast("更新失败，请重试", "err"); });
+      });
+    });
   }
 
+  /* 渲染自动路由状态（账号池实时卡片，对标 Magpie statusline）。
+     只展示派生信息，绝不内联任何令牌/密钥明文。 */
+  function wbRenderPool(pool) {
+    var box = document.getElementById("wb-rt-pool");
+    if (!box) return;
+    pool = pool || {};
+    var accts = pool.accounts || [];
+    var auto = pool.auto_routing;
+    var head =
+      '<div class="wb-rt-pool-summary">' +
+        '<span class="wb-rt-badge ' + (auto ? 'wb-rt-badge-on' : 'wb-rt-badge-off') + '">' +
+          (auto ? '自动路由已启用' : '账号池为空') + '</span>' +
+        '<span class="wb-rt-pool-meta">可用账号 ' + (pool.usable_count || 0) + ' / ' + accts.length +
+          ' · 故障转移：' + (pool.fallback === 'single' ? '单账号' : '全局池自动切换') + '</span>' +
+      '</div>';
+    if (!accts.length) {
+      box.innerHTML = head + '<div class="wb-rt-empty">账号池还没有账号。先去「账号管理」导入 WorkBuddy 账号，路由页会自动把它们编成故障转移池。</div>';
+      return;
+    }
+    var cards = accts.map(function (a) {
+      var tags = '';
+      if (!a.enabled) tags += '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>';
+      if (a.expired) tags += '<span class="wb-rt-badge wb-rt-badge-err">已过期</span>';
+      else if (a.expiring) tags += '<span class="wb-rt-badge wb-rt-badge-warn">即将过期</span>';
+      var variantLabel = { cn: '国内版', ai: '国际版', all: '全量', unknown: '未知' }[a.variant] || a.variant;
+      return '<div class="wb-rt-item' + (a.enabled && !a.expired ? '' : ' wb-rt-item-off') + '">' +
+        '<div class="wb-rt-item-top">' +
+          '<span class="wb-rt-item-name">' + (a.nickname || '').replace(/[<>&]/g, '') + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-variant-' + a.variant + '">' + variantLabel + '</span>' +
+          tags +
+        '</div>' +
+        '<div class="wb-rt-item-meta">' + (a.domain || '').replace(/[<>&]/g, '') + '</div>' +
+      '</div>';
+    }).join("");
+    box.innerHTML = head + cards;
+  }
+
+  /* 多账号/多KEY：对齐 Magpie 的“各供应商在自己的账号或 Key 间路由”。
+     按 variant 把账号聚合成供应商卡片（如 CodeBuddy CN · 2 个账号），
+     每个供应商下列出可用的路由方式（与全局路由策略共用同一套 mode/affinity/sink）。 */
+  function wbRenderProviderRouting(pool, cfg) {
+    var box = document.getElementById("wb-rt-providers");
+    if (!box) return;
+    pool = pool || {};
+    cfg = cfg || {};
+    var accts = pool.accounts || [];
+    if (!accts.length) { box.innerHTML = '<div class="wb-rt-empty">还没有账号，无法做多账号路由。</div>'; return; }
+    // 按 variant 聚合
+    var provMap = {};
+    accts.forEach(function (a) {
+      var v = a.variant || "unknown";
+      if (!provMap[v]) provMap[v] = { variant: v, label: ({cn:"CodeBuddy 国内版",ai:"CodeBuddy 国际版",all:"全量",unknown:"未知供应商"}[v] || v), accounts: [] };
+      provMap[v].accounts.push(a);
+    });
+    var provs = Object.keys(provMap).map(function (k) { return provMap[k]; });
+    var mode = cfg.mode || "smart";
+    var aff = cfg.affinity || "session";
+    var sink = cfg.sink !== false;
+    var MODES = [["smart","智能"],["order","按顺序"],["drain","用完再换"],["rotate","轮流"],["usage","最少使用"],["pace","到期前用完"],["free","免费优先"],["fast","速度优先"],["weight","按权重"]];
+    var AFFS = [["auto","自动"],["session","整个会话"],["turn","一轮之内"],["none","关闭"],["strict","严格"]];
+    function segs(name, cur, opts, grp) {
+      return '<div class="am-seg" data-seg="' + name + '" data-grp="' + grp + '">' +
+        opts.map(function (o) { return '<button type="button"' + (o[0]===cur?' class="on"':'') + ' data-val="' + o[0] + '">' + o[1] + '</button>'; }).join("") + '</div>';
+    }
+    function wire(boxEl) {
+      boxEl.querySelectorAll(".am-seg").forEach(function (g) {
+        g.addEventListener("click", function (ev) {
+          var b = ev.target.closest("button"); if (!b) return;
+          var name = g.getAttribute("data-seg");
+          var val = b.getAttribute("data-val");
+          var payload = {}; payload[name] = (name==="sink") ? (val==="on") : val;
+          fetch("/api/routing/config", { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload) })
+            .then(function(r){return r.json();}).then(function(d){ if(d&&d.config){ wbRenderConfig(d.config); wbRenderProviderRouting(pool, d.config); wbToast("路由策略已更新","ok"); } else wbToast("更新失败","err"); })
+            .catch(function(){ wbToast("更新失败，请重试","err"); });
+        });
+      });
+    }
+    var html = provs.map(function (p) {
+      return '<div class="am-g">' +
+        '<div class="am-gh"><button type="button" class="am-fold"><span class="gn">' + wbRtEsc(p.label) + '</span><span class="c">' + p.accounts.length + ' 个账号</span></button>' +
+          '<button type="button" class="am-all" data-act="prov-routing">路由</button></div>' +
+        '<div class="am-rows" id="wb-rt-prov-' + wbRtEsc(p.variant) + '">' +
+          '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">方式</span>' + segs("mode", mode, MODES, p.variant) + '</div>' +
+          '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">会话保持</span>' + segs("affinity", aff, AFFS, p.variant) + '</div>' +
+          '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">被限流时</span>' + segs("sink", sink?'on':'off', [['on','排到最后'],['off','保持原位']], p.variant) + '</div>' +
+        '</div></div>';
+    }).join("");
+    box.innerHTML = html;
+    wire(box);
+  }
+
+  /* ============ 路由组 / 规则 编辑器（对标 Magpie 真实功能） ============ */
+  var WB_RT_MODE_LABELS = {
+    smart:"智能", order:"顺序", drain:"用尽为止", rotate:"轮转", usage:"最少使用优先",
+    pace:"到期前先用", free:"免费优先", fast:"速度优先", weight:"按权重", manual:"手动"
+  };
+  var WB_RT_AFF_LABELS = { none:"关闭", session:"会话", turn:"回合内", strict:"严格" };
+  var WB_RT_FB_LABELS = { global_pool:"退回全局池", error:"报错透传" };
+
+  function wbRtEsc(s) { return String(s == null ? "" : s).replace(/[<>&]/g, function (c) { return {"<":"&lt;",">":"&gt;","&":"&amp;"}[c]; }); }
+
+  function wbRenderGroups(groups) {
+    var gBox = document.getElementById("wb-rt-groups");
+    if (!gBox) return;
+    groups = groups || [];
+    if (!groups.length) {
+      gBox.innerHTML = '<div class="wb-rt-empty">暂无路由组。点「新建组」把多个账号编成故障转移链；或点上方「重新生成默认编排」自动建。</div>';
+      return;
+    }
+    gBox.innerHTML = groups.map(function (g) {
+      var members = (g.members || []).map(function (m) { return wbRtName(m.id); });
+      var line = (members.length ? members.join(" → ") : "-");
+      return '<div class="wb-rt-item' + (g.enabled ? "" : " wb-rt-item-off") + '" data-gid="' + wbRtEsc(g.id) + '">' +
+        '<div class="wb-rt-item-top">' +
+          '<span class="wb-rt-item-name">' + wbRtEsc(g.name) + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-mode-' + g.mode + '">' + (WB_RT_MODE_LABELS[g.mode] || g.mode) + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-fb-' + g.fallback + '">' + (WB_RT_FB_LABELS[g.fallback] || g.fallback) + '</span>' +
+          (g.affinity && g.affinity !== "session" ? '<span class="wb-rt-badge">粘:' + (WB_RT_AFF_LABELS[g.affinity] || g.affinity) + '</span>' : '') +
+          (g.sink ? '' : '<span class="wb-rt-badge">不下沉</span>') +
+          (g.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') +
+        '</div>' +
+        '<div class="wb-rt-item-meta">成员(' + members.length + ')：' + wbRtEsc(line) + '</div>' +
+        '<div class="wb-rt-item-acts">' +
+          '<button class="wb-rt-btn wb-rt-btn-sm" data-gact="edit" data-gid="' + wbRtEsc(g.id) + '">编辑</button>' +
+          '<button class="wb-rt-btn wb-rt-btn-sm" data-gact="share" data-gid="' + wbRtEsc(g.id) + '">分享</button>' +
+          '<button class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-gact="del" data-gid="' + wbRtEsc(g.id) + '">删除</button>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }
+
+  function wbRenderRules(rules, groups) {
+    var rBox = document.getElementById("wb-rt-rules");
+    if (!rBox) return;
+    rules = rules || [];
+    var gById = {}; (groups || []).forEach(function (g) { gById[g.id] = g; });
+    if (!rules.length) {
+      rBox.innerHTML = '<div class="wb-rt-empty">暂无规则。点「新建规则」按模型/客户端/令牌把请求分流到指定路由组。</div>';
+      return;
+    }
+    rBox.innerHTML = rules.map(function (r) {
+      var tgtName = "-";
+      if (r.target_type === "group" && r.target_id) tgtName = (gById[r.target_id] || {}).name || r.target_id;
+      else if (r.target_type === "account") tgtName = "指定账号 " + wbRtName(r.target_id || "-");
+      else if (r.target_type === "model") tgtName = "改模型 " + (r.target_model || r.target_id || "-");
+      var cond = [];
+      if (r.match_value) cond.push(r.match_field + ' ' + r.match_op + ' <code>' + wbRtEsc(r.match_value) + '</code>');
+      var m = r.match || {};
+      if (m.tokens) cond.push('≥' + m.tokens + ' tokens');
+      if (m.images) cond.push('有图');
+      if (m.effort) cond.push('reasoning ' + wbRtEsc(m.effort));
+      if (m.agents && m.agents.length) cond.push('agent ' + wbRtEsc(m.agents.join('/')));
+      if (m.intent) cond.push('意图「' + wbRtEsc(m.intent) + '」');
+      if (m.compact) cond.push('压缩中');
+      var condStr = cond.length ? cond.join(' · ') : '始终';
+      return '<div class="wb-rt-item' + (r.enabled ? "" : " wb-rt-item-off") + '" data-rid="' + wbRtEsc(r.id) + '">' +
+        '<div class="wb-rt-item-top">' +
+          '<span class="wb-rt-item-name">' + wbRtEsc(r.name) + '</span>' +
+          '<span class="wb-rt-badge wb-rt-badge-' + r.target_type + '">' + r.target_type + '</span>' +
+          (r.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') +
+        '</div>' +
+        '<div class="wb-rt-item-meta">当 ' + condStr + ' → ' + wbRtEsc(tgtName) + '</div>' +
+        '<div class="wb-rt-item-acts">' +
+          '<button class="wb-rt-btn wb-rt-btn-sm" data-ract="edit" data-rid="' + wbRtEsc(r.id) + '">编辑</button>' +
+          '<button class="wb-rt-btn wb-rt-btn-sm" data-ract="share" data-rid="' + wbRtEsc(r.id) + '">分享</button>' +
+          '<button class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-ract="del" data-rid="' + wbRtEsc(r.id) + '">删除</button>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }
+
+  /* 路由组编辑器（对标 Magpie 的 groupEditor：模式/粘性/下沉/首token/耐心/权重） */
+  function wbGroupEditForm(g, groups, accounts) {
+    g = g || { name:"", mode:"smart", fallback:"global_pool", members:[], affinity:"session",
+               sink:true, first_token:0, patience:0, effort:"", levels:[], unlists:false, weights:{}, pick:"" };
+    var accOpts = (accounts || []).map(function (a) {
+      var id = a.id || a.account_id; var on = (g.members||[]).some(function (m) { return m.id === id; });
+      return '<label class="wb-rt-chk"><input type="checkbox" data-acc="' + wbRtEsc(id) + '"' + (on?' checked':'') + '/> ' + wbRtEsc(a.nickname || id) + '</label>';
+    }).join("");
+    var modeOpts = Object.keys(WB_RT_MODE_LABELS).map(function (k) {
+      return '<option value="' + k + '"' + (g.mode===k?' selected':'') + '>' + WB_RT_MODE_LABELS[k] + '</option>';
+    }).join("");
+    var affOpts = Object.keys(WB_RT_AFF_LABELS).map(function (k) {
+      return '<option value="' + k + '"' + ((g.affinity||"session")===k?' selected':'') + '>' + WB_RT_AFF_LABELS[k] + '</option>';
+    }).join("");
+    var fbOpts = Object.keys(WB_RT_FB_LABELS).map(function (k) {
+      return '<option value="' + k + '"' + (g.fallback===k?' selected':'') + '>' + WB_RT_FB_LABELS[k] + '</option>';
+    }).join("");
+    var pickOpts = '<option value="">' + (WB_RT_MODE_LABELS[g.mode]||g.mode) + '</option>' + (accounts||[]).map(function (a) {
+      var id = a.id || a.account_id; return '<option value="' + wbRtEsc(id) + '"' + (g.pick===id?' selected':'') + '>' + wbRtEsc(a.nickname||id) + '</option>';
+    }).join("");
+    return '' +
+      '<div class="wb-rt-editor">' +
+        '<div class="wb-rt-efield"><label>名称</label><input type="text" id="wb-ge-name" value="' + wbRtEsc(g.name) + '" /></div>' +
+        '<div class="wb-rt-efield"><label>分发模式</label><select id="wb-ge-mode">' + modeOpts + '</select></div>' +
+        '<div class="wb-rt-efield"><label>兜底</label><select id="wb-ge-fb">' + fbOpts + '</select></div>' +
+        '<div class="wb-rt-efield"><label>会话粘连</label><select id="wb-ge-aff">' + affOpts + '</select></div>' +
+        '<div class="wb-rt-efield wb-rt-efield-inline"><label>限流后排（下沉）</label><input type="checkbox" id="wb-ge-sink"' + (g.sink!==false?' checked':'') + ' /></div>' +
+        '<div class="wb-rt-efield"><label>首 token 等待(秒)</label><input type="number" id="wb-ge-ft" value="' + (g.first_token||0) + '" min="0" step="30" /></div>' +
+        '<div class="wb-rt-efield"><label>耐心(秒,-1关)</label><input type="number" id="wb-ge-pat" value="' + (g.patience||0) + '" min="-1" step="60" /></div>' +
+        '<div class="wb-rt-efield' + (g.mode!=='manual'?' wb-rt-efield-dim':'') + '"><label>手动固定账号</label><select id="wb-ge-pick">' + pickOpts + '</select></div>' +
+        '<div class="wb-rt-efield wb-rt-efield-wide"><label>成员账号</label><div class="wb-rt-chks">' + (accOpts || '<span class="wb-rt-empty">没有可用账号</span>') + '</div></div>' +
+        '<div class="wb-rt-editor-acts">' +
+          '<button class="wb-rt-btn wb-rt-btn-primary" data-ge="save" type="button">保存</button>' +
+          '<button class="wb-rt-btn" data-ge="cancel" type="button">取消</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function wbRuleEditForm(r, groups) {
+    r = r || { name:"", match_field:"model", match_op:"contains", match_value:"",
+               target_type:"group", target_id:"", target_model:"", match:{} };
+    var m = r.match || {};
+    var fieldOpts = ["api_key","model","client_tag"].map(function (f) { return '<option value="' + f + '"' + (r.match_field===f?' selected':'') + '>' + f + '</option>'; }).join("");
+    var opOpts = ["eq","contains"].map(function (f) { return '<option value="' + f + '"' + (r.match_op===f?' selected':'') + '>' + f + '</option>'; }).join("");
+    var ttOpts = ["group","account","model"].map(function (f) { return '<option value="' + f + '"' + (r.target_type===f?' selected':'') + '>' + f + '</option>'; }).join("");
+    var gOpts = '<option value="">—</option>' + (groups||[]).map(function (g) { return '<option value="' + wbRtEsc(g.id) + '"' + (r.target_id===g.id?' selected':'') + '>' + wbRtEsc(g.name) + '</option>'; }).join("");
+    return '' +
+      '<div class="wb-rt-editor">' +
+        '<div class="wb-rt-efield"><label>名称</label><input type="text" id="wb-re-name" value="' + wbRtEsc(r.name) + '" /></div>' +
+        '<div class="wb-rt-efield"><label>基础匹配字段</label><select id="wb-re-field">' + fieldOpts + '</select></div>' +
+        '<div class="wb-rt-efield"><label>运算符</label><select id="wb-re-op">' + opOpts + '</select></div>' +
+        '<div class="wb-rt-efield"><label>匹配值</label><input type="text" id="wb-re-value" value="' + wbRtEsc(r.match_value) + '" placeholder="如 cn / hy3" /></div>' +
+        '<div class="wb-rt-efield"><label>目标类型</label><select id="wb-re-tt">' + ttOpts + '</select></div>' +
+        '<div class="wb-rt-efield"><label>目标组</label><select id="wb-re-gid">' + gOpts + '</select></div>' +
+        '<div class="wb-rt-efield"><label>目标模型(改模型)</label><input type="text" id="wb-re-tm" value="' + wbRtEsc(r.target_model) + '" placeholder="仅 target_type=model 时填" /></div>' +
+        '<div class="wb-rt-efield wb-rt-efield-inline"><label>≥ tokens</label><input type="number" id="wb-re-tokens" value="' + (m.tokens||"") + '" placeholder="可选" /></div>' +
+        '<div class="wb-rt-efield wb-rt-efield-inline"><label>有图</label><input type="checkbox" id="wb-re-img"' + (m.images?' checked':'') + ' /></div>' +
+        '<div class="wb-rt-efield"><label>reasoning</label><input type="text" id="wb-re-eff" value="' + wbRtEsc(m.effort||"") + '" placeholder="on 或 high / &gt;=medium" /></div>' +
+        '<div class="wb-rt-efield"><label>agent 关键词</label><input type="text" id="wb-re-agents" value="' + wbRtEsc((m.agents||[]).join(" ")) + '" placeholder="空格分隔" /></div>' +
+        '<div class="wb-rt-efield"><label>意图关键词</label><input type="text" id="wb-re-intent" value="' + wbRtEsc(m.intent||"") + '" placeholder="出现在 prompt 中" /></div>' +
+        '<div class="wb-rt-efield wb-rt-efield-inline"><label>压缩中</label><input type="checkbox" id="wb-re-compact"' + (m.compact?' checked':'') + ' /></div>' +
+        '<div class="wb-rt-editor-acts">' +
+          '<button class="wb-rt-btn wb-rt-btn-primary" data-re="save" type="button">保存</button>' +
+          '<button class="wb-rt-btn" data-re="cancel" type="button">取消</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  /* 实时路由轨迹渲染（对标 Magpie 的 trace 列表：谁先、为什么、试了谁、谁答） */
+  /* 实时路由轨迹渲染（对齐 Magpie 实时路由：平滑滑入、动态更新） */
+  // 账号 id -> 昵称（只显示名字，不显示一长串编码）
+  function wbRtName(id) {
+    if (id == null) return "-";
+    var m = window.__wbRtAccNames || {};
+    if (m[String(id)]) return m[String(id)];
+    // 兜底：从缓存的账号池直接查（渲染时序导致 map 未就绪时）
+    var pool = window.__wbRtPool || {};
+    var accts = pool.accounts || [];
+    for (var i = 0; i < accts.length; i++) {
+      if (String(accts[i].id) === String(id)) return accts[i].nickname || String(id);
+    }
+    return String(id);
+  }
+  // 增量渲染：只把新到达的轨迹行插入顶部并播放 Magpie 式淡入+上移动画，不整块重渲染、不闪。
+  var _wbRtSeen = {};
+  // 增量渲染：只把新到达的轨迹行插入顶部并播放 Magpie 式淡入动画，不整块重渲染、不闪。
+  var _wbRtSeen = {};
+  function wbRenderTrace(data) {
+    var traces = (data && data.traces) || [];
+    var totals = (data && data.totals) || {};
+    var statBox = document.getElementById("wb-rt-trace-stats");
+    if (statBox) {
+      statBox.innerHTML =
+        '<span><b>' + (totals.requests||0) + '</b><span>请求</span></span>' +
+        '<span><b>' + (totals.rerouted||0) + '</b><span>改道</span></span>' +
+        '<span class="rt-errs"><b>' + (totals.errors||0) + '</b><span>Agent 收到的错误</span></span>';
+    }
+    var noneEl = document.getElementById("wb-rt-none");
+    if (!traces.length) {
+      if (noneEl) { noneEl.hidden = false; noneEl.textContent = "还没有请求经过路由。发一条请求即可看到网关正在做的决定。"; }
+      _wbRtSeen = {}; return;
+    }
+    if (noneEl) noneEl.hidden = true;
+
+    // 取最新一条作为“当前正在演”的声部
+    var cur = traces[traces.length - 1];
+    // —— 模式行（Magpie .rt-mode：这次请求走了哪种路由）——
+    var modeEl = document.getElementById("wb-rt-mode");
+    if (modeEl) {
+      var modetxt = cur.matched_rule
+        ? "命中规则：" + cur.matched_rule
+        : (cur.routed ? "默认全局池（智能路由）" : "默认全局池");
+      modeEl.textContent = modetxt;
+    }
+    // —— 说明文案（Magpie .rt-cap：这次请求网关做了什么）——
+    var cap = document.getElementById("wb-rt-cap");
+    if (cap) {
+      var _orderById = {}; (cur.order || []).forEach(function (o) { if (o && o.id != null) _orderById[String(o.id)] = o.name || o.id; });
+      function _nameOf(id) { return _orderById[String(id)] || wbRtName(id); }
+      var firstName = cur.first_account || "-";
+      var finalName = cur.final_account || firstName;
+      var why = cur.why || (cur.routed ? "命中规则路由" : "默认全局池");
+      var parts = [];
+      parts.push("从 " + _nameOf(firstName) + " 起，");
+      if (cur.order && cur.order.length > 1) {
+        parts.push("依次试过 " + cur.order.map(function (o) { return wbRtName(o.name || o.id || o); }).join("、") + "，");
+      }
+      parts.push("最终由 " + _nameOf(finalName) + " 应答。" + why);
+      var txt = parts.join("") + (cur.done ? (cur.error ? "（失败）" : "") : "（进行中…）");
+      if (cap.textContent !== txt) { cap.textContent = txt; cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); }
+    }
+    // —— 来源节点（Magpie .rt-srcs：这一次请求的 caller / agent）——
+    var srcs = document.getElementById("wb-rt-srcs");
+    if (srcs) {
+      var src = cur.caller_name || cur.caller_key || "你的 Agent";
+      srcs.innerHTML = '<div class="rt-node rt-src"><b>' + wbRtEsc(src) + '</b><small>请求来源</small></div>';
+    }
+    // —— 账号行（Magpie .rt-accts li：候选账号 + 试过/最终状态）——
+    var listEl = document.getElementById("wb-rt-accts");
+    if (listEl) {
+      var order = cur.order || [];
+      var finalId = String(cur.final_account || "");
+      var firstId = String(cur.first_account || "");
+      var triedIds = {};
+      (cur.tries || []).forEach(function (x) { if (x.account) triedIds[String(x.account)] = x; });
+      if (!listEl.firstChild || Object.keys(_wbRtSeen).length === 0 || listEl.getAttribute("data-tid") !== String(cur.id)) {
+        listEl.setAttribute("data-tid", String(cur.id));
+        listEl.innerHTML = order.map(function (o, i) {
+          var id = String(o.id != null ? o.id : o);
+          var nm = o.name || o.id || o;
+          var isFinal = id === finalId;
+          var isFirst = id === firstId;
+          var tr = triedIds[id];
+          var cls = "rt-acct";
+          if (isFinal) cls += " on";
+          if (tr) cls += " tried";
+          if (tr && (tr.status && String(tr.status)[0] !== '2') && !isFinal) cls += " rest";
+          if (isFirst && !cur.done) cls += " now";
+          if (i === 0) cls += " new";
+          var dot = '<span class="dot"></span>';
+          var who = '<b><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span></b>';
+          var mdl = (o.model ? '<code class="mdl">' + wbRtEsc(o.model) + '</code>' : '');
+          var st = tr ? (' <em>' + (tr.status ? wbRtEsc(String(tr.status)) : (tr.error ? wbRtEsc(tr.error) : (isFinal ? '应答' : '试过'))) + (tr.ms ? ' · ' + Math.round(tr.ms) + 'ms' : '') + '</em>') : (isFinal ? '<em>应答</em>' : (i > 0 ? '<em>候选</em>' : '<em>首选</em>'));
+          return '<li class="' + cls + '">' + dot + who + mdl + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
+        }).join("");
+      }
+    }
+    // —— 步骤列表（Magpie .rt-steps：每次尝试一行）——
+    var steps = document.getElementById("wb-rt-steps");
+    if (steps) {
+      var rows = (cur.tries || []).map(function (x) {
+        var acc = wbRtName(x.account || x.label || "尝试");
+        var st = x.status ? ('<span class="' + (String(x.status)[0] === '2' ? 'ok' : 'bad') + '"></span>') : '';
+        var m = x.ms ? (Math.round(x.ms) + 'ms') : '';
+        var e = x.error ? (' · ' + wbRtEsc(String(x.error))) : '';
+        var cls = x.status ? (String(x.status)[0] === '2' ? 'ok' : 'bad') : 'aside';
+        return '<li class="' + cls + '"><span class="kind">试</span> ' + wbRtEsc(acc) + (m ? ' · ' + m : '') + e + '</li>';
+      });
+      var lead = '<li class="why"><span class="kind">决定</span> ' + wbRtEsc(cur.why || (cur.routed ? "命中规则路由" : "默认全局池")) + '</li>';
+      steps.innerHTML = lead + rows.join("");
+    }
+    // —— 实时脉冲点 ——
+    var dot = document.getElementById("wb-rt-livedot");
+    if (dot) dot.classList.add("on");
+    _wbRtSeen = {};
+  }
   function wbLoadRoutingData() {
     var rBox = document.getElementById("wb-rt-rules");
     var gBox = document.getElementById("wb-rt-groups");
+    var pBox = document.getElementById("wb-rt-pool");
+    var cBox = document.getElementById("wb-rt-config");
+    var tBox = document.getElementById("wb-rt-accts");
     if (rBox) rBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
     if (gBox) gBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
-    /* 经 WebUI 代理（:18090）/api/routing/* 反向代理到网关（:18091），
-       复用登录态透传与 CORS 规避；直接打 /routing/* 会被 catch-all 转发到
-       官方 Switch 后端（:57890），那里没有路由端点，必然加载失败。 */
+    if (pBox) pBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
+    if (cBox) cBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
+    if (tBox) tBox.innerHTML = '<li class="rt-none">加载中…</li>';
+
+    // 当前帐户池（供组编辑器勾选成员）
+    var _accounts = [];
+    wbJson("/api/accounts", 15000).then(function (res) {
+      _accounts = (res && res.accounts) || [];
+    }).catch(function () {});
+
+    // 实时轨迹轮询序列号
+    var _traceSeq = 0;
+    function refreshTrace(after) {
+      wbJson("/api/routing/trace?after=" + (after||0) + "&limit=40", 15000).then(function (res) {
+        if (res && res.traces) {
+          _traceSeq = res.seq || _traceSeq;
+          wbRenderTrace(res);
+          var dot = document.getElementById("wb-rt-livedot");
+          if (dot) dot.classList.add("on");
+        }
+      }).catch(function () {});
+    }
+    function pollTrace() {
+      wbJson("/api/routing/trace?after=" + _traceSeq + "&limit=40", 20000).then(function (res) {
+        if (res && res.traces && res.traces.length) {
+          _traceSeq = res.seq || _traceSeq;
+          wbRenderTrace(res);
+        }
+      }).catch(function () {}).then(function () {
+        if (window.__wbRtPolling) setTimeout(pollTrace, 2500);
+      });
+    }
+
+  function refreshRulesGroups() {
+    // 确保昵称映射已就绪（账号池可能晚于组加载）
+    var pool = window.__wbRtPool || {};
+    var am = window.__wbRtAccNames || {};
+    (pool.accounts || []).forEach(function (a) { if (a.id) am[String(a.id)] = a.nickname || a.id; });
+    window.__wbRtAccNames = am;
     wbJson("/api/routing/rules", 15000).then(function (res) {
-      if (res && res.rules) wbRenderRouting(res.rules || [], res.groups || []);
-      else if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
-    }).catch(function () {
-      if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
-    });
+        if (res && res.rules) { window.__wbRtGroups = res.groups || []; wbRenderRules(res.rules || [], res.groups || []); wbRenderGroups(res.groups || []); }
+        else if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
+      }).catch(function () { if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>'; });
+    }
+    function refreshPool() {
+      wbJson("/api/routing/pool", 15000).then(function (res) {
+        if (res && res.accounts) {
+          window.__wbRtPool = res; wbRenderPool(res); wbRenderProviderRouting(res, window.__wbRtCfg);
+          // 账号 id -> 昵称 映射（轨迹/组只显示名字，不显示一长串编码）
+          var m = {};
+          (res.accounts || []).forEach(function (a) { if (a.id) m[String(a.id)] = a.nickname || a.id; });
+          window.__wbRtAccNames = m;
+        }
+        else if (pBox) pBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
+      }).catch(function () { if (pBox) pBox.innerHTML = '<div class="wb-rt-error">加载失败</div>'; });
+    }
+    function refreshConfig() {
+      wbJson("/api/routing/config", 15000).then(function (res) {
+        if (res && res.config) { window.__wbRtCfg = res.config; wbRenderConfig(res.config); wbRenderProviderRouting(window.__wbRtPool, res.config); }
+        else if (cBox) cBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
+      }).catch(function () { if (cBox) cBox.innerHTML = '<div class="wb-rt-error">加载失败</div>'; });
+    }
+    refreshPool(); refreshRulesGroups(); refreshConfig(); refreshTrace(0);
+
+    /* 默认行为（对齐 Magpie 自动路由）：账号池可用但还没有任何组/规则时，
+       自动跑一次 auto-generate，让页面打开就有可用编排。仅在首次进入触发一次。 */
+    if (!window.__wbRtAutoRan) {
+      window.__wbRtAutoRan = true;
+      wbJson("/api/routing/rules", 15000).then(function (res) {
+        var has = res && ((res.rules && res.rules.length) || (res.groups && res.groups.length));
+        if (has) return;
+        return fetch("/api/routing/auto-generate", { method: "POST" })
+          .then(function () { refreshRulesGroups(); }).catch(function () {});
+      }).catch(function () {});
+    }
+
+    // 开启轨迹轮询（离开路由页由 wbApplyMainView 关闭）
+    window.__wbRtPolling = true;
+    setTimeout(pollTrace, 1500);
+
+    var view = document.getElementById("wb-routing-view");
+    if (view && !view.__wbRtBound) {
+      view.__wbRtBound = true;
+      view.addEventListener("click", function (ev) {
+        var t = ev.target;
+        if (!t || !t.closest) return;
+        // 顶栏动作（自动生成 / 新建 / 导入）
+        var actBtn = t.closest("[data-act]");
+        if (actBtn) {
+          var act = actBtn.getAttribute("data-act");
+          if (act === "auto-gen") {
+            actBtn.disabled = true; actBtn.textContent = "生成中…";
+            fetch("/api/routing/auto-generate", { method: "POST" }).then(function (r) { return r.json(); })
+              .then(function (d) { wbToast(d && d.ok ? "已重新生成默认路由编排" : ((d&&d.detail)||"生成失败"), d&&d.ok?"ok":"err"); refreshRulesGroups(); refreshPool(); })
+              .catch(function () { wbToast("自动生成失败，请重试", "err"); })
+              .then(function () { actBtn.disabled = false; actBtn.textContent = "⚡ 重新生成默认编排"; });
+            return;
+          }
+          if (act === "new-group") { openGroupEditor(null); return; }
+          if (act === "new-rule") { openRuleEditor(null); return; }
+          if (act === "import-group" || act === "import-rule") { openImportBox(act === "import-group" ? "group" : "rule"); return; }
+        }
+        // 组内动作（编辑/分享/删除）
+        var gBtn = t.closest("[data-gact]");
+        if (gBtn) {
+          var gid = gBtn.getAttribute("data-gid");
+          var gact = gBtn.getAttribute("data-gact");
+          if (gact === "edit") { openGroupEditor(gid); return; }
+          if (gact === "del") {
+            if (!confirm("删除该路由组？")) return;
+            fetch("/api/routing/groups/" + gid, { method: "DELETE" }).then(function () { wbToast("已删除", "ok"); refreshRulesGroups(); });
+            return;
+          }
+          if (gact === "share") {
+            fetch("/api/routing/groups/share", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: gid }) })
+              .then(function (r) { return r.json(); }).then(function (d) { if (d && d.shared) wbCopyText(d.shared); });
+            return;
+          }
+        }
+        // 规则内动作
+        var rBtn = t.closest("[data-ract]");
+        if (rBtn) {
+          var rid = rBtn.getAttribute("data-rid");
+          var ract = rBtn.getAttribute("data-ract");
+          if (ract === "edit") { openRuleEditor(rid); return; }
+          if (ract === "del") {
+            if (!confirm("删除该路由规则？")) return;
+            fetch("/api/routing/rules/" + rid, { method: "DELETE" }).then(function () { wbToast("已删除", "ok"); refreshRulesGroups(); });
+            return;
+          }
+          if (ract === "share") {
+            fetch("/api/routing/rules/share", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: rid }) })
+              .then(function (r) { return r.json(); }).then(function (d) { if (d && d.shared) wbCopyText(d.shared); });
+            return;
+          }
+        }
+        // 编辑器内保存/取消
+        var geBtn = t.closest("[data-ge]");
+        if (geBtn) {
+          var ge = geBtn.getAttribute("data-ge");
+          if (ge === "cancel") { closeEditor(); return; }
+          if (ge === "save") { saveGroupEditor(); return; }
+        }
+        var reBtn = t.closest("[data-re]");
+        if (reBtn) {
+          var re = reBtn.getAttribute("data-re");
+          if (re === "cancel") { closeEditor(); return; }
+          if (re === "save") { saveRuleEditor(); return; }
+        }
+        // 导入框操作
+        var impBtn = t.closest("[data-imp]");
+        if (impBtn) {
+          var imp = impBtn.getAttribute("data-imp");
+          if (imp === "do") { doImport(); return; }
+          if (imp === "cancel") { closeImportBox(); return; }
+        }
+      });
+    }
   }
+
+  // 编辑器/导入框的打开与保存实现
+  function closeEditor() { var e = document.getElementById("wb-rt-editor"); if (e) e.remove(); }
+  function openGroupEditor(gid) {
+    closeEditor();
+    var g = null; var groups = window.__wbRtGroups || [];
+    if (gid) { for (var i=0;i<groups.length;i++) if (groups[i].id===gid) g = groups[i]; }
+    var host = document.getElementById("wb-rt-groups");
+    var div = document.createElement("div"); div.id = "wb-rt-editor"; div.className = "wb-rt-editor-wrap";
+    div.innerHTML = '<h3>' + (gid ? '编辑路由组' : '新建路由组') + '</h3>' + wbGroupEditForm(g, groups, window.__wbRtAccounts || []);
+    if (host) host.parentNode.insertBefore(div, host);
+    div.__gid = gid || "";
+    window.__wbRtEditor = div;
+  }
+  function openRuleEditor(rid) {
+    closeEditor();
+    var r = null; var rules = window.__wbRtRules || [];
+    if (rid) { for (var i=0;i<rules.length;i++) if (rules[i].id===rid) r = rules[i]; }
+    var host = document.getElementById("wb-rt-rules");
+    var div = document.createElement("div"); div.id = "wb-rt-editor"; div.className = "wb-rt-editor-wrap";
+    div.innerHTML = '<h3>' + (rid ? '编辑路由规则' : '新建路由规则') + '</h3>' + wbRuleEditForm(r, window.__wbRtGroups || []);
+    if (host) host.parentNode.insertBefore(div, host);
+    div.__rid = rid || "";
+    window.__wbRtEditor = div;
+  }
+  function saveGroupEditor() {
+    var div = window.__wbRtEditor; if (!div) return;
+    var gid = div.__gid || "";
+    var members = [];
+    div.querySelectorAll('input[data-acc]').forEach(function (c) { if (c.checked) members.push({ id: c.getAttribute('data-acc'), type: 'account' }); });
+    var body = {
+      name: (div.querySelector('#wb-ge-name')||{}).value || '未命名组',
+      mode: (div.querySelector('#wb-ge-mode')||{}).value,
+      fallback: (div.querySelector('#wb-ge-fb')||{}).value,
+      affinity: (div.querySelector('#wb-ge-aff')||{}).value,
+      sink: !!(div.querySelector('#wb-ge-sink')||{}).checked,
+      first_token: parseInt((div.querySelector('#wb-ge-ft')||{}).value||'0',10)||0,
+      patience: parseInt((div.querySelector('#wb-ge-pat')||{}).value||'0',10)||0,
+      pick: (div.querySelector('#wb-ge-pick')||{}).value || ''
+    };
+    var url = gid ? ('/api/routing/groups/' + gid) : '/api/routing/groups';
+    var method = gid ? 'PUT' : 'POST';
+    if (members.length || gid) body.members = members;
+    fetch(url, { method: method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.ok !== false) { wbToast("已保存", "ok"); closeEditor(); refreshRulesGroups(); } else wbToast("保存失败", "err"); })
+      .catch(function () { wbToast("保存失败", "err"); });
+  }
+  function saveRuleEditor() {
+    var div = window.__wbRtEditor; if (!div) return;
+    var rid = div.__rid || "";
+    var match = {};
+    var tokens = parseInt((div.querySelector('#wb-re-tokens')||{}).value||'',10);
+    if (!isNaN(tokens)) match.tokens = tokens;
+    if ((div.querySelector('#wb-re-img')||{}).checked) match.images = true;
+    var eff = (div.querySelector('#wb-re-eff')||{}).value || '';
+    if (eff) match.effort = eff;
+    var agents = (div.querySelector('#wb-re-agents')||{}).value || '';
+    if (agents.trim()) match.agents = agents.trim().split(/\s+/);
+    var intent = (div.querySelector('#wb-re-intent')||{}).value || '';
+    if (intent.trim()) match.intent = intent.trim();
+    if ((div.querySelector('#wb-re-compact')||{}).checked) match.compact = true;
+    var body = {
+      name: (div.querySelector('#wb-re-name')||{}).value || '未命名规则',
+      match_field: (div.querySelector('#wb-re-field')||{}).value,
+      match_op: (div.querySelector('#wb-re-op')||{}).value,
+      match_value: (div.querySelector('#wb-re-value')||{}).value || '',
+      target_type: (div.querySelector('#wb-re-tt')||{}).value,
+      target_id: (div.querySelector('#wb-re-gid')||{}).value || '',
+      target_model: (div.querySelector('#wb-re-tm')||{}).value || '',
+      match: match
+    };
+    var url = rid ? ('/api/routing/rules/' + rid) : '/api/routing/rules';
+    var method = rid ? 'PUT' : 'POST';
+    fetch(url, { method: method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.ok !== false) { wbToast("已保存", "ok"); closeEditor(); refreshRulesGroups(); } else wbToast("保存失败", "err"); })
+      .catch(function () { wbToast("保存失败", "err"); });
+  }
+  function openImportBox(kind) {
+    closeImportBox();
+    var host = document.getElementById(kind === 'group' ? 'wb-rt-groups' : 'wb-rt-rules');
+    var div = document.createElement("div"); div.id = "wb-rt-import"; div.className = "wb-rt-editor-wrap";
+    div.innerHTML = '<h3>导入' + (kind==='group'?'路由组':'路由规则') + '</h3>' +
+      '<textarea id="wb-imp-text" rows="5" placeholder="粘贴分享文本（不含密钥）"></textarea>' +
+      '<label class="wb-rt-chk"><input type="checkbox" id="wb-imp-replace" /> 覆盖同名</label>' +
+      '<div class="wb-rt-editor-acts"><button class="wb-rt-btn wb-rt-btn-primary" data-imp="do" type="button">导入</button>' +
+      '<button class="wb-rt-btn" data-imp="cancel" type="button">取消</button></div>';
+    if (host) host.parentNode.insertBefore(div, host);
+    div.__kind = kind;
+    window.__wbRtImport = div;
+  }
+  function closeImportBox() { var e = document.getElementById("wb-rt-import"); if (e) e.remove(); }
+  function doImport() {
+    var div = window.__wbRtImport; if (!div) return;
+    var kind = div.__kind;
+    var text = (div.querySelector('#wb-imp-text')||{}).value || '';
+    var replace = !!(div.querySelector('#wb-imp-replace')||{}).checked;
+    if (!text.trim()) { wbToast("请粘贴分享文本", "err"); return; }
+    var url = kind === 'group' ? '/api/routing/groups/import' : '/api/routing/rules/import';
+    fetch(url, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ text: text, replace: replace }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.ok) { wbToast("导入成功", "ok"); closeImportBox(); refreshRulesGroups(); } else wbToast(d&&d.detail||"导入失败", "err"); })
+      .catch(function () { wbToast("导入失败", "err"); });
+  }
+  // 缓存 accounts/rules 供编辑器使用
+  function wbRtCacheAccounts() { wbJson("/api/accounts", 15000).then(function (res) { window.__wbRtAccounts = (res&&res.accounts)||[]; }).catch(function(){}); }
+  function wbRtCacheRules() { wbJson("/api/routing/rules", 15000).then(function (res) { window.__wbRtRules = res&&res.rules||[]; window.__wbRtGroups = res&&res.groups||[]; }).catch(function(){}); }
+  wbRtCacheAccounts(); wbRtCacheRules();
+  // 复制文本到剪贴板并提示（对标 Magpie Copy to share）
+  function wbCopyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { wbToast("已复制分享文本到剪贴板", "ok"); }, function () { wbToast("复制失败，请手动复制", "err"); });
+      } else {
+        var ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); wbToast("已复制分享文本到剪贴板", "ok"); } catch (e) { wbToast("复制失败，请手动复制", "err"); }
+        document.body.removeChild(ta);
+      }
+    } catch (e) { wbToast("复制失败，请手动复制", "err"); }
+  }
+
 
   function wbApplyMainView() {
     var main = document.querySelector("main");
@@ -4162,6 +5101,12 @@ COLLAPSE_SCRIPT = r"""
       // 无后缀：根路径才是数据总览；停在别的官方路径上时照常显示那一页
       mode = (path === "/" || path === "") ? "overview" : "official";
     }
+
+    // 注入视图（路由/概览/每日任务）激活时给 main 打状态类，CSS 强制收起官方内容。
+    if (main) main.classList.toggle(
+      "wb-wbview-active",
+      mode === "routing" || mode === "overview" || mode === "daily"
+    );
 
     if (mode === "accounts") {
       /* 账号管理的背后是官方 "/" 页面。SPA 停在别的路由时先把它推回去，
@@ -4232,6 +5177,7 @@ COLLAPSE_SCRIPT = r"""
     if (daily) daily.style.display = "none";
     var routingView = document.getElementById("wb-routing-view");
     if (routingView) routingView.style.display = "none";
+    window.__wbRtPolling = false;  // 离开路由页即停轨迹轮询，避免后台空转
     Array.prototype.slice.call(main.children).forEach(function (c) {
       if (c !== ov && c !== daily && c !== routingView && c.style.display === "none") {
         c.style.display = "";
@@ -13522,6 +14468,59 @@ async def routing_rules_delete(rule_id: str, request: Request, user: "str" = Dep
 @app.get("/api/routing/resolve")
 async def routing_resolve_get(request: Request, model: str = "", api_key: str = "", client_tag: str = "", user: "str" = Depends(require_user)):
     return await _forward_gateway("GET", f"/routing/resolve?model={model}&api_key={api_key}&client_tag={client_tag}", request=request)
+
+
+@app.post("/api/routing/auto-generate")
+async def routing_auto_generate_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/auto-generate", request=request)
+
+
+@app.get("/api/routing/pool")
+async def routing_pool_get(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", "/routing/pool", request=request)
+
+
+@app.get("/api/routing/config")
+async def routing_config_get(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", "/routing/config", request=request)
+
+
+@app.put("/api/routing/config")
+async def routing_config_set(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("PUT", "/routing/config", await request.body(), request=request)
+
+
+# 实时路由轨迹（Magpie 招牌的“请求实时演剧”）：谁被排第一、为什么、每次换号试了谁、最后谁答。
+@app.get("/api/routing/trace")
+async def routing_trace_get(request: Request, after: int = 0, limit: int = 60, user: "str" = Depends(require_user)):
+    return await _forward_gateway("GET", f"/routing/trace?after={after}&limit={limit}", request=request)
+
+
+# 路由组分享 / 导入 / 批量删除（对标 Magpie Copy to share / Import）。
+@app.post("/api/routing/groups/share")
+async def routing_group_share_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/groups/share", await request.body(), request=request)
+
+
+@app.post("/api/routing/groups/import")
+async def routing_group_import_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/groups/import", await request.body(), request=request)
+
+
+@app.post("/api/routing/groups/delete-many")
+async def routing_group_delete_many_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/groups/delete-many", await request.body(), request=request)
+
+
+# 路由规则分享 / 导入。
+@app.post("/api/routing/rules/share")
+async def routing_rule_share_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/rules/share", await request.body(), request=request)
+
+
+@app.post("/api/routing/rules/import")
+async def routing_rule_import_post(request: Request, user: "str" = Depends(require_user)):
+    return await _forward_gateway("POST", "/routing/rules/import", await request.body(), request=request)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
