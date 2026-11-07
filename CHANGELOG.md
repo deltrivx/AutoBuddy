@@ -6528,4 +6528,11 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 [v0.3.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.1.2...v0.2.0
 [v0.1.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.1.0...v0.1.2
-[v0.1.0]: https://github.com/deltrivx/AutoBuddy/releases/tag/v0.1.0
+[v0.1.0]: https://github.com/deltrivx/AutoBuddy/releases/tag/v0.1.## [2.3.3] - 2026-11-07
+
+<!-- summary: 修复智能路由页在已打开会话内通过 hash 切换无法选中（SPA 内视图未重建），现在每次进入 #/routing 强制重建路由视图 -->
+
+### 修复
+- **智能路由页 SPA 内 hash 切换无法选中**：原先进入 `#/routing` 仅在视图不存在时创建一次，之后仅切换 `display`，导致在已打开的会话里从其它页切回路由页时视图残留失效状态、选择器点不动。改为每次进入都销毁旧视图并重新 `wbCreateRoutingView()`（走 innerHTML + 事件委托，重建无副作用）。整页加载（新标签页）本就正常，此修复补齐会话内切换路径。
+
+0
