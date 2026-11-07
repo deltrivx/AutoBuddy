@@ -5169,11 +5169,14 @@ COLLAPSE_SCRIPT = r"""
     }
 
     if (mode === "routing") {
-      var routing = document.getElementById("wb-routing-view");
-      if (!routing) {
-        routing = wbCreateRoutingView();
-        main.appendChild(routing);
-      }
+      /* 每次进入都强制重建路由视图（而非仅 display 切换）：
+         SPA 内从其它页 hash 切回 #/routing 时，旧视图可能残留失效的
+         全局状态/轮询句柄，导致“首屏(整页加载)能选、会话内切换点不动”。
+         wbCreateRoutingView 走 innerHTML + 事件委托，重建无副作用。 */
+      var oldRouting = document.getElementById("wb-routing-view");
+      if (oldRouting) oldRouting.remove();
+      var routing = wbCreateRoutingView();
+      main.appendChild(routing);
       routing.style.display = "block";
       if (ov) ov.style.display = "none";
       if (daily) daily.style.display = "none";
