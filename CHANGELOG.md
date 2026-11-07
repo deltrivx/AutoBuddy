@@ -6313,7 +6313,7 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...HEAD
 [v2.3.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...v2.3.3
 [v2.3.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.1...v2.3.2
 [v2.3.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...v2.3.1
