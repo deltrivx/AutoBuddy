@@ -539,6 +539,10 @@ def _rule_matches(rule: Dict[str, Any], ctx: Dict[str, Any]) -> bool:
     match = rule.get("match") or {}
     if not isinstance(match, dict):
         return True if value else False
+    # 空 match_value 且无任何富条件 → 规则不完整，永不命中（守卫）
+    if not value and not any(k in match for k in (
+        "tokens", "images", "effort", "agents", "intent", "compact", "time", "folders")):
+        return False
 
     # tokens ≥ N
     if match.get("tokens"):
