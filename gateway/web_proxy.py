@@ -1840,6 +1840,8 @@ COLLAPSE_SCRIPT = r"""
     border-radius: 12px;
     background: var(--card, #fff);
     padding: 14px;
+    overflow: hidden;
+    min-width: 0;
   }
   .wb-rt-card-title {
     font-size: 14px;
@@ -1882,10 +1884,21 @@ COLLAPSE_SCRIPT = r"""
   .am-mr.off .lg { opacity: .45; }
   .am-tag { margin-left: 6px; padding: 1px 6px; border-radius: 5px; background: var(--accent-soft, #eeedfd); color: var(--accent, #4f46e5); font-size: 10.5px; font-weight: 500; }
 
-  /* 分段控件（对齐 Magpie .am-seg） */
-  .am-seg { display: inline-flex; flex: none; padding: 2px; border-radius: 8px; background: var(--seg-track, #e6e6eb); }
+  /* 分段控件（对齐 Magpie .am-seg / .segs：窄屏必须换行且不超过容器宽） */
+  .am-seg { display: inline-flex; flex: none; flex-wrap: wrap; max-width: 100%; padding: 2px; border-radius: 8px; background: var(--seg-track, #e6e6eb); }
   .am-seg button { height: 24px; padding: 0 9px; border: 0; border-radius: 6px; background: none; color: var(--ctl-fg, #63636b); font: inherit; font-size: 12px; cursor: pointer; transition: background-color .15s, color .15s; }
   .am-seg button.on { background: var(--seg-thumb, #fff); color: var(--fg, #1c1c21); box-shadow: var(--seg-edge, 0 1px 2px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.08)); }
+
+  /* 窄屏（手机）：分段控件换行且占满，标签与控件纵向堆叠（移植 Magpie body.web 窄屏规则） */
+  @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+    .wb-rt-cfg-row { flex-direction: column; align-items: stretch; gap: 6px; }
+    .wb-rt-cfg-hint { flex-basis: 100%; }
+    .am-seg { display: flex; width: 100%; flex: 1 1 auto; min-width: 0; gap: 2px; }
+    .am-seg button { flex: 0 1 auto; }
+    .wb-rt-pool-summary { gap: 8px; }
+    .route-stats { flex-wrap: wrap; gap: 10px; }
+    .route-stat { flex: 1 1 calc(33% - 10px); }
+  }
 
   /* 页脚（对齐 Magpie .am-foot） */
   .am-foot { display: flex; align-items: center; gap: 8px; margin: 8px 8px 0; padding: 10px 6px 2px; border-top: 1px solid var(--line-2, #ececf0); font-size: 11.5px; color: var(--muted, #85858d); }
@@ -4330,7 +4343,7 @@ COLLAPSE_SCRIPT = r"""
           '<div class="rt-none rt-off" id="wb-rt-none" hidden=""></div>' +
         '</section>'
         /* 多账号 / 多 KEY（对齐 Magpie 的“各供应商在自己的账号或 Key 间路由”） */ +
-        '<section class="wb-rt-card wb-rt-prov-card">'
+        '<section class="wb-rt-card wb-rt-prov-card">' +
           '<h2 class="wb-rt-card-title">多账号 / 多 KEY</h2>' +
           '<p class="am-d">各供应商在自己的账号或 Key 间路由；下方为当前每个供应商的账号数与路由方式。</p>' +
           '<div id="wb-rt-providers" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +

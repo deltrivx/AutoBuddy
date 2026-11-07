@@ -20,6 +20,15 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.2] - 2026-11-07
+
+<!-- summary: 修复智能路由页两处缺陷——拼接字符串漏写加号导致多账号/路由策略/状态/组/规则整段缺失（PC 端无法选智能路由）、分段控件不换行撑破卡片引发移动端横向错位，已对齐 Magpie 窄屏规则重构为可换行的响应式布局 -->
+
+### 修复
+
+- **智能路由页面整段缺失（PC 端无法选择智能路由）**：`wbCreateRoutingView()` 拼接字符串时 `'<section class="wb-rt-card wb-rt-prov-card">'`（多账号/多 KEY）行末尾漏写 `+`，JavaScript 拼接中该行之后的整段视图（多账号 / 路由策略 / 自动路由状态 / 路由组 / 路由规则）被静默丢弃，仅渲染出半截模板。补回 `+` 后，五大区块恢复正常渲染，config 与 providers 两处「智能路由」模式选择器均可点击并写回（经 `/api/routing/config` PUT，返回 200）。
+- **移动端路由页错位（横向滚动）**：路由页分段控件 `.am-seg` 原本 `display:inline-flex; flex:none` 不换行、不限宽，10 个模式宽约 592px 撑破卡片引发横向滚动。移植 Magpie 的窄屏规则，改为 `@media (max-width: 760px)` 下 `display:flex; width:100%; flex-wrap:wrap`，卡片加 `overflow:hidden; min-width:0`，标签行在窄屏纵向堆叠。修复后移动端无横向溢出（新开浏览器上下文实测 `docOverflow:0`、各卡片无溢出）。
+
 ## [v2.3.1] - 2026-11-07
 
 <!-- summary: 智能路由从「页面壳」升级为与 Magpie 账号间路由 1:1 对齐——10 种分发模式全部落地真实逻辑、实时路由轨迹对齐 Magpie「演剧」样式、账号只显示昵称、顶栏与官方页收拢对齐 -->
@@ -6296,7 +6305,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.1...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...HEAD
+[v2.3.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.1...v2.3.2
 [v2.3.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...v2.3.1
 [v2.3.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.4...v2.3.0
 [v2.2.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.3...v2.2.4
