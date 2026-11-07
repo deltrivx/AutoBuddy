@@ -20,6 +20,14 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.3] - 2026-11-07
+
+<!-- summary: 修复智能路由页在已打开会话内通过 hash 切换无法选中（SPA 内视图未重建），改为每次进入 #/routing 强制重建路由视图 -->
+
+### 修复
+
+- **智能路由页 SPA 内 hash 切换无法选中**：原先进入 `#/routing` 仅在视图不存在时创建一次，之后仅切换 `display`，导致在已打开的会话里从其它页切回路由页时视图残留失效状态、选择器点不动（整页加载/新标签页正常）。改为每次进入都销毁旧视图并重新 `wbCreateRoutingView()`（走 innerHTML + 事件委托，重建无副作用），补齐会话内切换路径。
+
 ## [v2.3.2] - 2026-11-07
 
 <!-- summary: 修复智能路由页两处缺陷——拼接字符串漏写加号导致多账号/路由策略/状态/组/规则整段缺失（PC 端无法选智能路由）、分段控件不换行撑破卡片引发移动端横向错位，已对齐 Magpie 窄屏规则重构为可换行的响应式布局 -->
@@ -6306,6 +6314,7 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 <!-- 链接区 -->
 
 [未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...HEAD
+[v2.3.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...v2.3.3
 [v2.3.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.1...v2.3.2
 [v2.3.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...v2.3.1
 [v2.3.0]: https://github.com/deltrivx/AutoBuddy/compare/v2.2.4...v2.3.0
@@ -6528,7 +6537,7 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 [v0.3.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/deltrivx/AutoBuddy/compare/v0.1.2...v0.2.0
 [v0.1.2]: https://github.com/deltrivx/AutoBuddy/compare/v0.1.0...v0.1.2
-[v0.1.0]: https://github.com/deltrivx/AutoBuddy/releases/tag/v0.1.## [2.3.3] - 2026-11-07
+[v0.1.0]: https://github.com/deltrivx/AutoBuddy/releases/tag/v0.1.0
 
 <!-- summary: 修复智能路由页在已打开会话内通过 hash 切换无法选中（SPA 内视图未重建），现在每次进入 #/routing 强制重建路由视图 -->
 
