@@ -4542,9 +4542,9 @@ COLLAPSE_SCRIPT = r"""
         '</div>' +
         '<div class="wb-rt-item-meta">成员(' + members.length + ')：' + wbRtEsc(line) + '</div>' +
         '<div class="wb-rt-item-acts">' +
-          '<button class="wb-rt-btn wb-rt-btn-sm" data-gact="edit" data-gid="' + wbRtEsc(g.id) + '">编辑</button>' +
-          '<button class="wb-rt-btn wb-rt-btn-sm" data-gact="share" data-gid="' + wbRtEsc(g.id) + '">分享</button>' +
-          '<button class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-gact="del" data-gid="' + wbRtEsc(g.id) + '">删除</button>' +
+          '<button type="button" class="wb-rt-btn wb-rt-btn-sm" data-gact="edit" data-gid="' + wbRtEsc(g.id) + '">编辑</button>' +
+          '<button type="button" class="wb-rt-btn wb-rt-btn-sm" data-gact="share" data-gid="' + wbRtEsc(g.id) + '">分享</button>' +
+          '<button type="button" class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-gact="del" data-gid="' + wbRtEsc(g.id) + '">删除</button>' +
         '</div>' +
       '</div>';
     }).join("");
@@ -4582,9 +4582,9 @@ COLLAPSE_SCRIPT = r"""
         '</div>' +
         '<div class="wb-rt-item-meta">当 ' + condStr + ' → ' + wbRtEsc(tgtName) + '</div>' +
         '<div class="wb-rt-item-acts">' +
-          '<button class="wb-rt-btn wb-rt-btn-sm" data-ract="edit" data-rid="' + wbRtEsc(r.id) + '">编辑</button>' +
-          '<button class="wb-rt-btn wb-rt-btn-sm" data-ract="share" data-rid="' + wbRtEsc(r.id) + '">分享</button>' +
-          '<button class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-ract="del" data-rid="' + wbRtEsc(r.id) + '">删除</button>' +
+          '<button type="button" class="wb-rt-btn wb-rt-btn-sm" data-ract="edit" data-rid="' + wbRtEsc(r.id) + '">编辑</button>' +
+          '<button type="button" class="wb-rt-btn wb-rt-btn-sm" data-ract="share" data-rid="' + wbRtEsc(r.id) + '">分享</button>' +
+          '<button type="button" class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-ract="del" data-rid="' + wbRtEsc(r.id) + '">删除</button>' +
         '</div>' +
       '</div>';
     }).join("");
