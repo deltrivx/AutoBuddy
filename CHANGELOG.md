@@ -20,6 +20,18 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.4] - 2026-11-08
+
+> 对比基准：[v2.3.3](https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...v2.3.4)
+
+<!-- summary: 智能路由页视觉风格完全照搬 Magpie（硬编码 rgb 设计令牌 / dashed 虚线账号卡片 / 10px 圆角 / 统计数字移至舞台右上角 / 连线连续修复），并用多模态视觉模型逐屏比对验收，视觉一致度 8/10 -->
+
+### 变更
+
+- **智能路由页视觉风格完全对齐 Magpie**：原先路由页沿用全局主题（oklch 现代卡片风），与 Magpie 的浅色 rgb 设计语言差异明显。现于 `#wb-routing-view` 作用域硬编码 Magpie 真实设计令牌（`--background #f4f4f6`、`--foreground #1c1c21`、`--card #fff`、`--border #e3e3e8`、`--primary #4f46e5`、`--muted #85858d`、`--green #189a58`、`--red #d64545`、`--font -apple-system…`、`color-scheme: light`），账号卡片边框由 `solid` 改为 Magpie 招牌的 `dashed` 虚线，卡片/节点圆角统一收敛到 `10px`，统计数字从页面底部移到舞台右上角（Magpie 同款位置），并对齐卡片内边距与字体族。
+- **实时轨迹连线修复**：选中账号的紫色高亮连线原先用 `stroke-dasharray` 虚线被误判断开，改为实线并在底层加浅色光晕，保证任意背景下连续可见；舞台节点间距收窄、连线加粗加深。
+- **移动端响应式收敛**：卡片圆角与嵌套边框收敛、标题区 padding/副标题精简，移动端无横向溢出（DOM `scrollW=winW` + 视觉确认）。
+
 ## [v2.3.3] - 2026-11-07
 
 <!-- summary: 修复智能路由页在已打开会话内通过 hash 切换无法选中（SPA 内视图未重建），改为每次进入 #/routing 强制重建路由视图 -->
@@ -4933,6 +4945,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ---
 
+> 对比基准：[v2.3.4](https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...HEAD)
+
 ## [v2.2.4] - 2026-10-28
 
 <!-- summary: 二分实测锁定 DSH 文件引用指纹特征并清洗，彻底根除真实长会话 11128 拦截 -->
@@ -6313,7 +6327,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...HEAD
+[v2.3.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...v2.3.4
 [v2.3.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...v2.3.3
 [v2.3.2]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.1...v2.3.2
 [v2.3.1]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.0...v2.3.1
