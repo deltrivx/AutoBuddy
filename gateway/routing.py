@@ -36,7 +36,7 @@ from db import get_db_connection
 # ---------------------------------------------------------------------------
 
 # 匹配字段：基础字段（与请求头/模型直接对应）。
-VALID_MATCH_FIELDS = ("api_key", "model", "client_tag")
+VALID_MATCH_FIELDS = ("api_key", "model", "client_tag", "variant")
 VALID_MATCH_OPS = ("eq", "contains")
 VALID_TARGET_TYPES = ("group", "account", "model")
 # 路由组分发模式 —— 对齐 Magpie 的 ROUTE_OPTS / GROUP_ROUTE_OPTS：
@@ -524,16 +524,31 @@ def _rule_matches(rule: Dict[str, Any], ctx: Dict[str, Any]) -> bool:
     """
     # 1) 基础字段匹配
     field = rule["match_field"]
-    target = (ctx.get(field) or "").strip()
-    value = (rule.get("match_value") or "").strip()
-    if value:
-        op = rule["match_op"]
-        if op == "contains":
-            if value.lower() not in target.lower():
-                return False
-        else:
-            if target.lower() != value.lower():
-                return False
+    if field == "variant":
+        # variant 是请求模型实际归属的上游变体（cn / ai），由网关按模型目录解析后填入
+        # routing_ctx；这是真正能区分国内/国际版账号的信号，不再用 client_tag 的
+        # 子串匹配（旧逻辑 "ai" 会误命中 "OpenAI" 的 user-agent，导致每条请求都错判）。
+        target = (ctx.get("variant") or "").strip().lower()
+        value = (rule.get("match_value") or "").strip().lower()
+        if value:
+            op = rule["match_op"]
+            if op == "contains":
+                if value not in target:
+                    return False
+            else:
+                if target != value:
+                    return False
+    else:
+        target = (ctx.get(field) or "").strip()
+        value = (rule.get("match_value") or "").strip()
+        if value:
+            op = rule["match_op"]
+            if op == "contains":
+                if value.lower() not in target.lower():
+                    return False
+            else:
+                if target.lower() != value.lower():
+                    return False
 
     # 2) 富规则条件（match 块）
     match = rule.get("match") or {}
@@ -878,16 +893,28 @@ def auto_generate(accounts: List[Dict[str, Any]], pool_config: Dict[str, Any]) -
         update_group(grp["id"], members=merged)
         grp = get_group(grp["id"])
 
+    # 清理历史遗留的坏规则：旧 auto_generate 用 client_tag 子串匹配
+    # （"ai" 会误命中 "OpenAI" 的 user-agent），导致每条请求都错判为“国际版”。
+    # 重新生成时先把这类 client_tag 匹配的规则删掉，再建正确的 variant 规则。
+    for old in list_rules():
+        if old.get("match_field") == "client_tag":
+            try:
+                delete_rule(old["id"])
+            except Exception:
+                pass
+
     routing_mode = str(pool_config.get("callRouting") or "all").strip().lower()
     rule_specs = []
     if routing_mode == "cn":
-        rule_specs.append(("国内版请求分流", "client_tag", "contains", "cn", grp["id"]))
+        rule_specs.append(("国内版请求分流", "variant", "eq", "cn", grp["id"]))
     elif routing_mode == "ai":
-        rule_specs.append(("国际版请求分流", "client_tag", "contains", "ai", grp["id"]))
+        rule_specs.append(("国际版请求分流", "variant", "eq", "ai", grp["id"]))
     else:
-        # all：按账号 variant 拆两条，覆盖国内/国际分流
-        rule_specs.append(("国内版账号分流", "client_tag", "contains", "cn", grp["id"]))
-        rule_specs.append(("国际版账号分流", "client_tag", "contains", "ai", grp["id"]))
+        # all：按模型实际归属的上游变体拆两条，覆盖国内/国际分流。
+        # 用 variant（cn/ai）而非 client_tag——client_tag 是 user-agent 字符串，
+        # 旧逻辑 ai 会误命中 OpenAI，导致每条请求都错判为国际版。
+        rule_specs.append(("国内版账号分流", "variant", "eq", "cn", grp["id"]))
+        rule_specs.append(("国际版账号分流", "variant", "eq", "ai", grp["id"]))
 
     created_rules = []
     existing_rules = list_rules()
@@ -947,6 +974,7 @@ def trace_begin(req_id: str, ctx: Dict[str, Any],
         "model": ctx.get("model") or "",
         "client_tag": ctx.get("client_tag") or "",
         "api_key": ctx.get("api_key") or "",
+        "key_name": ctx.get("key_name") or "",
         # Magpie 等价字段：这次请求从哪个 caller（客户端/应用）进来
         "caller_key": ctx.get("caller_key") or "",
         "caller_name": ctx.get("caller_name") or "",

@@ -122,7 +122,7 @@ except ImportError:  # pragma: no cover - 取决于运行方式
 # 那条线没有对齐的必要。存量 v1.0.10 及更早全部沿用三位制。
 # `AB_VERSION` 环境变量可覆盖（自建镜像 / fork 用得上）。
 # ---------------------------------------------------------------------------
-VERSION_DEFAULT = "2.3.8"
+VERSION_DEFAULT = "2.3.9"
 GATEWAY_VERSION = (os.getenv("AB_VERSION") or "").strip() or VERSION_DEFAULT
 
 
@@ -645,6 +645,26 @@ def infer_owner(model_id: str) -> str:
         if lowered.startswith(prefix):
             return owner
     return "workbuddy"
+
+
+# 国内版上游（tencent-codebuddy / 腾讯 copilot）归类为 cn，其余一律 ai。
+# 这是真正能区分“国内版账号 / 国际版账号”的信号，供路由规则按 variant 分流。
+_CN_OWNERS = frozenset({"tencent-codebuddy"})
+
+
+def _model_variant(model: Optional[str]) -> str:
+    """解析某模型实际归属的上游变体（cn / ai）。
+
+    依据模型目录里的 owned_by：tencent-codebuddy 系为国内版（cn），
+    其余（openai / deepseek / moonshot / google / zhipu …）为国际版（ai）。
+    未知模型默认 ai，避免把明确走国内的请求错判。
+    """
+    if not model:
+        return "ai"
+    m = str(model).strip()
+    target = MODEL_ALIAS_MAP.get(m, m)
+    owner = infer_owner(target) or infer_owner(m)
+    return "cn" if owner in _CN_OWNERS else "ai"
 
 
 def _discover_from_official_usage() -> List[str]:
@@ -4257,6 +4277,7 @@ async def chat_completions(request: Request):
     _routing_ctx = {
         "model": raw_model,
         "api_key": gate.get("keyId") or "",
+        "key_name": gate.get("keyName") or gate.get("name") or "",
         "client_tag": dict(request.headers).get("x-autobuddy-client")
                        or dict(request.headers).get("user-agent") or "",
         # 对齐 Magpie 轨迹：标记这次请求来自哪个 caller（客户端/应用）与上游供应商
@@ -4264,6 +4285,9 @@ async def chat_completions(request: Request):
         "caller_name": dict(request.headers).get("x-autobuddy-client")
                         or (gate.get("name") if gate.get("name") else "gateway-local"),
         "provider": "codebuddy",
+        # 请求模型实际归属的上游变体（cn / ai）—— 路由规则按 variant 分流的真正依据，
+        # 不再用 client_tag 子串匹配（旧逻辑 "ai" 会误命中 "OpenAI" 的 user-agent）。
+        "variant": _model_variant(target_model),
         "order": [],
     }
     _routing_decision = routing.resolve_routing(raw_model, _routing_ctx)

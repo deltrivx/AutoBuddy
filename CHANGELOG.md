@@ -20,6 +20,27 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.9] - 2026-11-08
+
+> 对比基准：[v2.3.8](https://github.com/deltrivx/AutoBuddy/compare/v2.3.8...v2.3.9)
+
+<!-- summary: 恢复「路由规则」卡片并修复分流错判——按请求模型变体(variant=cn/ai)而非 user-agent 子串匹配；移除路由页残留的「magpie」移植标识改为 AutoBuddy；实时网关左侧显示真实智能体(OpenClaw/DeepSeek等)、右侧显示「API名:模型」；移动端顶端居中与多账号/多KEY 留白修复 -->
+
+### 新增
+
+- **「路由规则」卡片恢复**：用户确认路由规则有实际价值，恢复前端 `id="wb-rt-rules"` 整段展示、`new-rule`/`import-rule` 按钮与 `data-ract`/`data-re` 规则编辑器事件分支，并还原 `wbRenderRules`/`wbRuleEditForm`/`openRuleEditor`/`saveRuleEditor` 函数。
+
+### 修复
+
+- **路由分流错判（关键）**：旧自动生成规则按 `client_tag contains "ai"`/`"cn"` 匹配，而 `client_tag` 是客户端 user-agent（如 `OpenAI/JS 7.28.0`），`"ai"` 是 `"OpenAI"` 的子串，导致**每条请求都误命中「国际版账号分流」**，国内版账号却显示命中国际版规则。现改为按请求模型的真实上游变体 `variant`（cn/ai）做 `eq` 匹配（`main.py` 新增 `_model_variant()` 按模型目录 `owned_by` 解析：tencent-codebuddy 系为 cn，其余为 ai），`routing._rule_matches` 新增 `match_field="variant"` 支持，`auto_generate` 重新生成时清理历史遗留的 `client_tag` 坏规则。
+- **实时网关左右两侧标识失真**：左侧来源节点 `_wbRtRawCaller` 在 `caller_name=="gateway-local"`（客户端未带 `x-autobuddy-client` 头）时回退到真实 `client_tag`（user-agent）并归一化显示真实智能体（OpenClaw/DeepSeek/ZCode 等）；右侧焦点框改为显示「API 名：模型」（新增 `key_name` 字段，后端从 `gate.get("keyName")` 取密钥可读名，前端 `api` 优先用 `key_name`）。
+- **路由页残留「magpie」移植标识**：网关 hub 节点 `<small>magpie</small>` 改为 `<small>AutoBuddy</small>`。
+
+### 变更
+
+- **移动端路由页顶端居中**：`@media (max-width:760px)` 下 `.am-head` 改为纵向居中、`.rt-top`/`.rt-stage` 居中堆叠，修复移植 Magpie 且取消连线后顶部未居中的违和感。
+- **移动端多账号 / 多 KEY 留白**：`.wb-rt-prov-card` 标题与分组头居中、`.am-g`/`.am-gh`/`.wb-rt-cfg-row`/`.am-seg` 窄屏居中堆叠，消除右侧大片空白。
+
 ## [v2.3.8] - 2026-11-08
 
 > 对比基准：[v2.3.7](https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...v2.3.8)
@@ -6383,9 +6404,10 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.8...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.9...HEAD
 [v2.3.7]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...v2.3.7
 [v2.3.8]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...v2.3.8
+[v2.3.9]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.8...v2.3.9
 [v2.3.6]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6
 [v2.3.5]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...v2.3.5
 [v2.3.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...v2.3.4
