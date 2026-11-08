@@ -2672,8 +2672,8 @@ COLLAPSE_SCRIPT = r"""
   @keyframes rtlive-dot { 0% { transform: scale(1); opacity: 1; } 70%, 100% { transform: scale(2.5); opacity: 0; } }
   #wb-routing-view .rt-accts li.hit { animation: rthit .45s; }
   @keyframes rthit { 20% { translate: -5px; } 40% { translate: 4px; } 60% { translate: -2px; } 80% { translate: 1px; } }
-  #wb-routing-view .rt-accts li.new { animation: rtin .4s ease-out; }
-  @keyframes rtin { from { opacity: 0; transform: translateY(4px); } }
+  /* “首选”是轮询顺序中的首位角色标签，稳定显示、不再每次轮询重播进入动画（避免闪烁） */
+  #wb-routing-view .rt-accts li.new { animation: none; }
   #wb-routing-view .rt-accts li.low em { color: var(--fg-2); }
   #wb-routing-view .rt-accts li.rest { border-style: dashed; }
   #wb-routing-view .rt-accts li.rest > :not(.tag) { opacity: .5; }
@@ -5196,9 +5196,13 @@ COLLAPSE_SCRIPT = r"""
         // 右侧焦点框改为：API 名称：模型1 + 模型2 + ……（同 API 多模型合并为一框，不再并列多框）。
         var acctUsed = {}; // acctId -> { apiLabel: [models] }
         Object.keys(_wbRtAll).map(function (id) { return _wbRtAll[id]; }).sort(function (a, b) { return Number(a.ts || 0) - Number(b.ts || 0); }).forEach(function (t) {
-          // 右侧 API 名：用密钥自带名字（key_name）或 id→名 映射；没有再回退到 caller/智能体
-          var api = (t.key_name && t.key_name !== "gateway-local") ? t.key_name
-                  : (t.api_key ? wbRtKeyName(t.api_key) : ((t.caller_name && t.caller_name !== "gateway-local") ? t.caller_name : "未知API"));
+          // 右侧 API 名：统一按 API Key 的真实可读身份显示。
+          // 优先 api_key，其次 caller_key（生产网关转发时携带的是 caller_key）；
+          // 二者都能经 wbRtKeyName 解析成 key_name / id→名 映射。
+          // 不再回退“未知API”——只要带了密钥就一定能解析出可读名。
+          var api = (t.api_key || t.caller_key)
+                  ? wbRtKeyName(t.api_key || t.caller_key)
+                  : ((t.key_name && t.key_name !== "gateway-local") ? t.key_name : ((t.caller_name && t.caller_name !== "gateway-local") ? t.caller_name : "未知API"));
           var ml = t.model;
           function feed(aid) { var k = String(aid); (acctUsed[k] = acctUsed[k] || {}); (acctUsed[k][api] = acctUsed[k][api] || []); if (ml && acctUsed[k][api].indexOf(ml) < 0) acctUsed[k][api].push(ml); }
           (t.order || []).forEach(function (o) { feed(o && o.id != null ? o.id : o); });
