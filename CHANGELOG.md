@@ -33,8 +33,8 @@
 ### 修复
 
 - **「首选」标签在智能路由界面反复闪烁**：根因是 `wbRenderTrace` 末尾把增量标记 `_wbRtSeen` 重置为空，导致每次 2.5s 轮询都重新整块渲染账号列表、`首选` 的进入动画（`.new`）反复播放。改为仅在“当前选中轨迹 id”变化时才重渲染账号列表。
-- **模型窗口大小显示「未知」**：请求详情面板的上下文窗口原本硬编码“未知”，改为读取后端 `context_window` 字段（有则显示真实 token 数，无则回退“未知”）。
-- **实时路由右侧同一 API 调用多个模型显示多个焦点框**：改为按 API Key 聚合，同一 API 多个模型合并为一框，文案形如 `DeltrivX: hy4 + hy3`（按出现顺序去重）。
+- **模型窗口大小显示「未知」**：后端 `routing.trace_begin` 现按 `model` 解析上下文窗口（`routing.model_context_window()`，内置权威模型表，未知回退 None），轨迹详情面板读取 `cur.context_window` 显示真实 token 数（如 `200000 token`），无则回退“未知”。
+- **实时路由右侧同一 API 调用多个模型显示多个焦点框**：改为按 API Key 聚合，同一 API 多个模型合并为一框，文案形如 `DeltrivX: hy4 + hy3`（按出现顺序去重）。同时修正：聚合仅统计携带真实 API Key（`api_key`/`caller_key`）的轨迹，不再混入网关内部合成轨迹导致的“未知API”重复焦点框。
 - **移动端统计文案（请求/改道/Agent 错误）居中不一致**：窄屏下 `.rt-stats` 改为 `justify-content:flex-start`（与 PC 端对齐，左对齐统一板块样式），并将“Agent 收到的错误”缩为“Agent 错误”以适配窄屏。
 - **移动端多账号/多KEY 板块按钮强制铺满整行、文案旁大片留白**：窄屏下 `.am-tools .am-reset` 不再 `width:100%`，`.am-gh` 分组头与「路由」按钮改为 `justify-content:flex-start` 且按钮 `flex:0 0 auto`（自然宽度，不再拉伸占满）。
 
