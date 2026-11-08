@@ -20,6 +20,19 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.6] - 2026-11-08
+
+> 对比基准：[v2.3.5](https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6)
+
+<!-- summary: 修复 v2.3.5 路由页「按 API 分类」实际未生效（wbRtKeyName 作用域 bug 导致来源区 innerHTML 赋值抛错始终为空）+ 移动端账号行 API 标签与状态文字重叠 -->
+
+### 修复
+
+- **路由页来源区「按 API 分类」从未真正渲染（v2.3.5 功能失效根因）**：`wbRtKeyName` 原先定义在 `wbLoadRoutingData` 函数**内部**，却被平级函数 `wbRenderTrace` 调用，跨函数作用域不可见，渲染来源节点时抛 `ReferenceError`，导致 `srcs.innerHTML` 赋值失败（保持空）、而前面的 `classList.toggle("many")` 已执行——表现为「`.many` 类在但内容空」。现把 `wbRtKeyName` 提升为全局函数，来源区正确显示 Default / iOS-App / Web-Client 等多个 API 名字节点。
+- **移动端账号行 API 标签与状态文字重叠**：账号行原用 `grid` 只定义 3 列却生成 5 个子节点，窄屏下 API 标签（`rt-api-tag`）与状态文字（`首选/候选/应答`）挤在同一格内重叠。现改用 `flex` 布局 + `.rt-acct-main` 包裹「名字+标签+模型」，状态独立成行并 `flex-wrap` 自动换行，移动端不再重叠。
+
+```
+
 ## [v2.3.5] - 2026-11-08
 
 > 对比基准：[v2.3.4](https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...v2.3.5)
@@ -4959,7 +4972,7 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ---
 
-> 对比基准：[v2.3.4](https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...HEAD)
+> 对比基准：[v2.3.6](https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...HEAD)
 
 ## [v2.2.4] - 2026-10-28
 
@@ -6341,7 +6354,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...HEAD
+[v2.3.6]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6
 [v2.3.5]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...v2.3.5
 [v2.3.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...v2.3.4
 [v2.3.3]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.2...v2.3.3
