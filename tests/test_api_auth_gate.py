@@ -30,7 +30,9 @@ AUTHED = lambda defline: "require_user" in defline or "get_current_user" in defl
 PUBLIC = {
     ("POST", "/api/auth/login"), ("POST", "/api/auth/logout"),
     ("GET", "/api/auth/status"), ("GET", "/api/auth/avatar"),
-    ("GET", "/favicon.ico"),
+    ("GET", "/favicon.ico"), ("GET", "/icon.png"),
+    # 上游智能体图标：公开静态资源，前端路由页按需加载，无需会话鉴权
+    ("GET", "/icons/{name}"),
     ("GET", "/api/notify/wecom/callback/{path}"), ("POST", "/api/notify/wecom/callback/{path}"),
     ("GET", "/api/gateway-info"),
 }
