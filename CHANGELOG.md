@@ -20,6 +20,23 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.8] - 2026-11-08
+
+> 对比基准：[v2.3.7](https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...v2.3.8)
+
+<!-- summary: 上游智能体名字归一化（deepseek* 统一显示 DeepSeek + deepseek 图标）、移动端连接线与路由页留白修复、移除「路由规则」卡片（无实际收益）、补全常见智能体图标并清理规则编辑器死代码 -->
+
+### 变更
+
+- **上游智能体名字归一化**：`wbRtCallerLabel` 对以 `deepseek` 开头的调用方（如 `deepseek-harness`、`DeepSeek-API`、`deepseek/api`）统一显示为 **DeepSeek**，`wbRtCallerIcon` 同步前缀匹配返回 `deepseek.png`，解决「deepseek harness 名字不符合预期」的问题。
+- **移动端连接线残留移除**：`@media (max-width:760px)` 中 `.rt-sky, .rt-wires, .rt-flows` 设为 `display:none !important`，移动端不再显示来源→hub 的舞台连线。
+- **移动端路由页底部留白修复**：`.rt-tools` 由 `width:100%; justify-content:flex-end` 改为 `width:auto; flex:0 0 auto` 内联到标题区，并补全 `.wb-rt-card / .wb-rt-row-head / .wb-rt-cols / .rt-reqs-tabs / .rt-tab` 窄屏适配，消除「路由页面后面按钮未适配导致大面积留白」。
+- **补全常见智能体图标**：`gateway/icons/` 新增智谱(zhipu/glm)、腾讯混元(hunyuan)、MiniMax(minimax)、百度文心(baidu/ernie)、百川(baichuan)、Ollama(ollama)、Perplexity(perplexity)、Poe(poe)、Mistral(mistral)、讯飞星火(spark) 等官方/品牌图标，未知客户端统一回退 `generic-app.svg`；`manifest.json` 与前端 `wbRtCallerIcon` 映射表同步更新。
+
+### 移除
+
+- **「路由规则」卡片**：用户确认该卡片无实际收益、未展示任何有价值信息，移除前端 `id="wb-rt-rules"` 整段展示、`refreshGroups` 改为仅拉取 `/api/routing/groups`、删除 `new-rule`/`import-rule` 顶层按钮与 `data-ract`/`data-re` 规则编辑器事件分支，并清理 `wbRenderRules`/`wbRuleEditForm`/`openRuleEditor`/`saveRuleEditor` 等死代码（后端 `routing_rules` 表与分流逻辑保留，不影响网关分流）。
+
 ## [v2.3.7] - 2026-11-08
 
 > 对比基准：[v2.3.6](https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...v2.3.7)

@@ -1833,10 +1833,10 @@ COLLAPSE_SCRIPT = r"""
      类名/主题变量沿用 Magpie 真实实现，非自创
      ============================================================ */
 
-  /* 布局：两栏（对齐 Magpie 的 am-body 双列） */
+  /* 布局：路由组单栏（已移除路由规则卡片，避免无意义留白） */
   .wb-rt-cols {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
   @media (max-width: 860px) { .wb-rt-cols { grid-template-columns: 1fr; } }
@@ -2572,24 +2572,33 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 124px; }
   /* 移动端：舞台改为竖排（source→hub→accounts 自上而下），与 Magpie 窄屏一致，避免横向溢出 */
   @media (max-width: 760px) {
-    #wb-routing-view .rt-stage { grid-template-columns: 1fr; row-gap: 6px; column-gap: 0; padding: 8px 2px 8px 18px; }
-    #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 0; width: 100%; max-width: 300px; margin: 0 auto; }
+    #wb-routing-view .rt-stage { grid-template-columns: 1fr; row-gap: 6px; column-gap: 0; padding: 8px 2px 8px 14px; }
+    #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 0; width: 100%; max-width: 340px; margin: 0 auto; }
     #wb-routing-view .rt-srcs { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-    #wb-routing-view .rt-accts { width: 100%; max-width: 500px; margin: 0 auto; gap: 5px; }
+    #wb-routing-view .rt-accts { width: 100%; max-width: 560px; margin: 0 auto; gap: 5px; }
     #wb-routing-view .rt-accts li { padding: 5px 10px; }
     #wb-routing-view .rt-accts .rt-used { gap: 4px; margin-top: 3px; }
     #wb-routing-view .rt-accts .rt-used-chip { font-size: 11px; padding: 1px 7px; }
-    #wb-routing-view .rt-node { max-width: 300px; margin: 0 auto; }
-    /* 移动端保留动态连线（竖排时几何坐标自动变成上下走向）；隐藏纯装饰的 sky 层 */
-    #wb-routing-view .rt-sky { display: none; }
-    /* 移动端连线用实线，避免长竖线上流动虚线间隙被误读为碎片；高亮的那条保留流动 */
-    #wb-routing-view .rt-wires path.hl { stroke-dasharray: none; }
-    #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke-dasharray: 4 5; }
+    #wb-routing-view .rt-node { max-width: 340px; margin: 0 auto; }
+    /* 移动端不再画动态连接线（此前方案收益不大且易乱），直接隐藏连线层，避免残留 */
+    #wb-routing-view .rt-sky,
+    #wb-routing-view .rt-wires,
+    #wb-routing-view .rt-flows { display: none !important; }
+    /* 顶部工具（路由组 / 账号打码）内联进 .rt-top，不独占一行，避免大面积留白 */
+    #wb-routing-view .rt-top { align-items: flex-start; }
+    #wb-routing-view .rt-tools { width: auto; flex: 0 0 auto; justify-content: flex-start; margin: 2px 0 0; }
+    #wb-routing-view .rt-tools button { height: 26px; padding: 0 8px; font-size: 11.5px; }
     #wb-routing-view .rt-reqs li { grid-template-columns: 52px 1fr auto; }
     #wb-routing-view .rt-reqs li .rt-req-time { display: none; }
     #wb-routing-view .rt-reqs li .rt-req-act { grid-column: 2 / 4; justify-self: start; margin-top: 2px; }
     #wb-routing-view .rt-detail { padding: 12px; }
-    #wb-routing-view .rt-tools { width: 100%; justify-content: flex-end; }
+    /* 窄屏：卡片与行头堆叠，按钮不挤成留白 */
+    #wb-routing-view .wb-rt-card { padding: 12px; }
+    #wb-routing-view .wb-rt-row-head { flex-wrap: wrap; gap: 6px; }
+    #wb-routing-view .wb-rt-row-head .wb-rt-filter { flex: 1 1 100%; width: 100%; }
+    #wb-routing-view .wb-rt-cols { grid-template-columns: 1fr; gap: 12px; }
+    #wb-routing-view .rt-reqs-tabs { gap: 5px; }
+    #wb-routing-view .rt-tab { height: 24px; padding: 0 9px; font-size: 11.5px; }
   }
   #wb-routing-view .rt-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
   #wb-routing-view .rt-flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; will-change: transform; }
@@ -4544,14 +4553,6 @@ COLLAPSE_SCRIPT = r"""
             '</div>' +
             '<div id="wb-rt-groups" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
           '</section>' +
-          '<section class="wb-rt-card">' +
-            '<h2 class="wb-rt-card-title">路由规则</h2>' +
-            '<div class="wb-rt-row-head">' +
-              '<button class="am-reset" data-act="new-rule" type="button">＋ 新建规则</button>' +
-              '<button class="am-reset" data-act="import-rule" type="button">导入</button>' +
-            '</div>' +
-            '<div id="wb-rt-rules" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
-          '</section>' +
         '</div>' +
       '</div>';
     return v;
@@ -4741,46 +4742,6 @@ COLLAPSE_SCRIPT = r"""
     }).join("");
   }
 
-  function wbRenderRules(rules, groups) {
-    var rBox = document.getElementById("wb-rt-rules");
-    if (!rBox) return;
-    rules = rules || [];
-    var gById = {}; (groups || []).forEach(function (g) { gById[g.id] = g; });
-    if (!rules.length) {
-      rBox.innerHTML = '<div class="wb-rt-empty">暂无规则。点「新建规则」按模型/客户端/令牌把请求分流到指定路由组。</div>';
-      return;
-    }
-    rBox.innerHTML = rules.map(function (r) {
-      var tgtName = "-";
-      if (r.target_type === "group" && r.target_id) tgtName = (gById[r.target_id] || {}).name || r.target_id;
-      else if (r.target_type === "account") tgtName = "指定账号 " + wbRtName(r.target_id || "-");
-      else if (r.target_type === "model") tgtName = "改模型 " + (r.target_model || r.target_id || "-");
-      var cond = [];
-      if (r.match_value) cond.push(r.match_field + ' ' + r.match_op + ' <code>' + wbRtEsc(r.match_value) + '</code>');
-      var m = r.match || {};
-      if (m.tokens) cond.push('≥' + m.tokens + ' tokens');
-      if (m.images) cond.push('有图');
-      if (m.effort) cond.push('reasoning ' + wbRtEsc(m.effort));
-      if (m.agents && m.agents.length) cond.push('agent ' + wbRtEsc(m.agents.join('/')));
-      if (m.intent) cond.push('意图「' + wbRtEsc(m.intent) + '」');
-      if (m.compact) cond.push('压缩中');
-      var condStr = cond.length ? cond.join(' · ') : '始终';
-      return '<div class="wb-rt-item' + (r.enabled ? "" : " wb-rt-item-off") + '" data-rid="' + wbRtEsc(r.id) + '">' +
-        '<div class="wb-rt-item-top">' +
-          '<span class="wb-rt-item-name">' + wbRtEsc(r.name) + '</span>' +
-          '<span class="wb-rt-badge wb-rt-badge-' + r.target_type + '">' + r.target_type + '</span>' +
-          (r.enabled ? "" : '<span class="wb-rt-badge wb-rt-badge-off">已停用</span>') +
-        '</div>' +
-        '<div class="wb-rt-item-meta">当 ' + condStr + ' → ' + wbRtEsc(tgtName) + '</div>' +
-        '<div class="wb-rt-item-acts">' +
-          '<button type="button" class="wb-rt-btn wb-rt-btn-sm" data-ract="edit" data-rid="' + wbRtEsc(r.id) + '">编辑</button>' +
-          '<button type="button" class="wb-rt-btn wb-rt-btn-sm" data-ract="share" data-rid="' + wbRtEsc(r.id) + '">分享</button>' +
-          '<button type="button" class="wb-rt-btn wb-rt-btn-sm wb-rt-btn-danger" data-ract="del" data-rid="' + wbRtEsc(r.id) + '">删除</button>' +
-        '</div>' +
-      '</div>';
-    }).join("");
-  }
-
   /* 路由组编辑器（对标 Magpie 的 groupEditor：模式/粘性/下沉/首token/耐心/权重） */
   function wbGroupEditForm(g, groups, accounts) {
     g = g || { name:"", mode:"smart", fallback:"global_pool", members:[], affinity:"session",
@@ -4815,36 +4776,6 @@ COLLAPSE_SCRIPT = r"""
         '<div class="wb-rt-editor-acts">' +
           '<button class="wb-rt-btn wb-rt-btn-primary" data-ge="save" type="button">保存</button>' +
           '<button class="wb-rt-btn" data-ge="cancel" type="button">取消</button>' +
-        '</div>' +
-      '</div>';
-  }
-
-  function wbRuleEditForm(r, groups) {
-    r = r || { name:"", match_field:"model", match_op:"contains", match_value:"",
-               target_type:"group", target_id:"", target_model:"", match:{} };
-    var m = r.match || {};
-    var fieldOpts = ["api_key","model","client_tag"].map(function (f) { return '<option value="' + f + '"' + (r.match_field===f?' selected':'') + '>' + f + '</option>'; }).join("");
-    var opOpts = ["eq","contains"].map(function (f) { return '<option value="' + f + '"' + (r.match_op===f?' selected':'') + '>' + f + '</option>'; }).join("");
-    var ttOpts = ["group","account","model"].map(function (f) { return '<option value="' + f + '"' + (r.target_type===f?' selected':'') + '>' + f + '</option>'; }).join("");
-    var gOpts = '<option value="">—</option>' + (groups||[]).map(function (g) { return '<option value="' + wbRtEsc(g.id) + '"' + (r.target_id===g.id?' selected':'') + '>' + wbRtEsc(g.name) + '</option>'; }).join("");
-    return '' +
-      '<div class="wb-rt-editor">' +
-        '<div class="wb-rt-efield"><label>名称</label><input type="text" id="wb-re-name" value="' + wbRtEsc(r.name) + '" /></div>' +
-        '<div class="wb-rt-efield"><label>基础匹配字段</label><select id="wb-re-field">' + fieldOpts + '</select></div>' +
-        '<div class="wb-rt-efield"><label>运算符</label><select id="wb-re-op">' + opOpts + '</select></div>' +
-        '<div class="wb-rt-efield"><label>匹配值</label><input type="text" id="wb-re-value" value="' + wbRtEsc(r.match_value) + '" placeholder="如 cn / hy3" /></div>' +
-        '<div class="wb-rt-efield"><label>目标类型</label><select id="wb-re-tt">' + ttOpts + '</select></div>' +
-        '<div class="wb-rt-efield"><label>目标组</label><select id="wb-re-gid">' + gOpts + '</select></div>' +
-        '<div class="wb-rt-efield"><label>目标模型(改模型)</label><input type="text" id="wb-re-tm" value="' + wbRtEsc(r.target_model) + '" placeholder="仅 target_type=model 时填" /></div>' +
-        '<div class="wb-rt-efield wb-rt-efield-inline"><label>≥ tokens</label><input type="number" id="wb-re-tokens" value="' + (m.tokens||"") + '" placeholder="可选" /></div>' +
-        '<div class="wb-rt-efield wb-rt-efield-inline"><label>有图</label><input type="checkbox" id="wb-re-img"' + (m.images?' checked':'') + ' /></div>' +
-        '<div class="wb-rt-efield"><label>reasoning</label><input type="text" id="wb-re-eff" value="' + wbRtEsc(m.effort||"") + '" placeholder="on 或 high / &gt;=medium" /></div>' +
-        '<div class="wb-rt-efield"><label>agent 关键词</label><input type="text" id="wb-re-agents" value="' + wbRtEsc((m.agents||[]).join(" ")) + '" placeholder="空格分隔" /></div>' +
-        '<div class="wb-rt-efield"><label>意图关键词</label><input type="text" id="wb-re-intent" value="' + wbRtEsc(m.intent||"") + '" placeholder="出现在 prompt 中" /></div>' +
-        '<div class="wb-rt-efield wb-rt-efield-inline"><label>压缩中</label><input type="checkbox" id="wb-re-compact"' + (m.compact?' checked':'') + ' /></div>' +
-        '<div class="wb-rt-editor-acts">' +
-          '<button class="wb-rt-btn wb-rt-btn-primary" data-re="save" type="button">保存</button>' +
-          '<button class="wb-rt-btn" data-re="cancel" type="button">取消</button>' +
         '</div>' +
       '</div>';
   }
@@ -5146,9 +5077,10 @@ COLLAPSE_SCRIPT = r"""
       srcs.innerHTML = callerList.map(function (c) {
         var isCur = cur && _wbRtRawCaller(cur) && _wbRtRawCaller(cur) === c;
         var icon = wbRtCallerIcon(c);
+        var label = wbRtCallerLabel(c);
         return '<div class="rt-node rt-src' + (isCur ? ' on' : '') + '">' +
           '<img class="rt-src-icon" src="' + icon + '" alt="" />' +
-          '<b>' + wbRtEsc(c) + '</b></div>';
+          '<b>' + wbRtEsc(label) + '</b></div>';
       }).join("");
     }
     // —— 账号行（Magpie .rt-accts li：候选账号 + 试过/最终状态；可点选查看详情）——
@@ -5231,10 +5163,9 @@ COLLAPSE_SCRIPT = r"""
     if (dot) dot.classList.add("on");
     _wbRtSeen = {};
   }
-  // 密钥 id → 名字 映射（全局；wbRenderTrace 与 wbLoadRoutingData 共用）
+  // 上游智能体图标 + 显示名：归一化（小写、去「/版本」或「 版本」后缀）后查前端映射表，
+  // 无匹配回退 generic-app。映射表与 backend gateway/icons/manifest.json 保持一致。
   function wbRtCallerIcon(c) {
-    // 上游智能体图标：归一化（小写、去「/版本」或「 版本」后缀）后查前端映射表，
-    // 无匹配回退 generic-app。映射表与 backend gateway/icons/manifest.json 保持一致。
     var _map = {
       "openclaw": "openclaw.svg", "deltrivx": "deltrivx.png", "deltrivx-app": "deltrivx.png",
       "deltrix": "deltrivx.png", "wechat": "wechat.png", "wechat-bot": "wechat.png",
@@ -5243,14 +5174,27 @@ COLLAPSE_SCRIPT = r"""
       "anthropic": "anthropic.svg", "gemini": "gemini.png", "google": "gemini.png",
       "deepseek": "deepseek.png", "qwen": "qwen.svg", "doubao": "doubao.png", "kimi": "kimi.svg",
       "grok": "grok.svg", "feishu": "feishu.png", "lark": "feishu.png", "discord": "discord.png",
-      "slack": "slack.png", "ios": "generic-app.svg", "ios-app": "generic-app.svg",
+      "slack": "slack.png", "zhipu": "zhipu.png", "glm": "glm.svg", "qingyan": "zhipu.png",
+      "hunyuan": "hunyuan.svg", "minimax": "minimax.svg", "baidu": "baidu.png", "ernie": "ernie.svg",
+      "baichuan": "baichuan.svg", "ollama": "ollama.png", "llama": "ollama.png",
+      "perplexity": "perplexity.svg", "poe": "poe.svg", "mistral": "mistral.svg", "spark": "spark.svg",
+      "ios": "generic-app.svg", "ios-app": "generic-app.svg",
       "android": "generic-app.svg", "curl": "terminal.png", "wget": "terminal.png",
       "terminal": "terminal.png", "web": "web.png", "web-client": "web.png",
       "open-webui": "web.png", "browser": "web.png", "app": "generic-app.svg"
     };
     var n = String(c || "").toLowerCase().replace(/[\\/\s].*$/, "");
-    var f = _map[n] || "generic-app.svg";
+    var f;
+    if (n.indexOf("deepseek") === 0) f = "deepseek.png";
+    else f = _map[n] || "generic-app.svg";
     return "/icons/" + f;
+  }
+  // deepseek 系（deepseek-harness / deepseek-api / deepseek 等）统一显示名 "DeepSeek"
+  function wbRtCallerLabel(c) {
+    var raw = String(c || "");
+    var n = raw.toLowerCase().replace(/[\\/\s].*$/, "");
+    if (n.indexOf("deepseek") === 0) return "DeepSeek";
+    return raw;
   }
   function wbRtKeyName(id) {
     if (!id) return null;
@@ -5258,12 +5202,10 @@ COLLAPSE_SCRIPT = r"""
     return (window.__wbRtKeyNames && window.__wbRtKeyNames[s]) || s.slice(0, 8);
   }
   function wbLoadRoutingData() {
-    var rBox = document.getElementById("wb-rt-rules");
     var gBox = document.getElementById("wb-rt-groups");
     var pBox = document.getElementById("wb-rt-pool");
     var cBox = document.getElementById("wb-rt-config");
     var tBox = document.getElementById("wb-rt-accts");
-    if (rBox) rBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
     if (gBox) gBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
     if (pBox) pBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
     if (cBox) cBox.innerHTML = '<div class="wb-rt-loading">加载中…</div>';
@@ -5309,16 +5251,15 @@ COLLAPSE_SCRIPT = r"""
       });
     }
 
-  function refreshRulesGroups() {
+  function refreshGroups() {
     // 确保昵称映射已就绪（账号池可能晚于组加载）
     var pool = window.__wbRtPool || {};
     var am = window.__wbRtAccNames || {};
     (pool.accounts || []).forEach(function (a) { if (a.id) am[String(a.id)] = a.nickname || a.id; });
     window.__wbRtAccNames = am;
-    wbJson("/api/routing/rules", 15000).then(function (res) {
-        if (res && res.rules) { window.__wbRtGroups = res.groups || []; wbRenderRules(res.rules || [], res.groups || []); wbRenderGroups(res.groups || []); }
-        else if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
-      }).catch(function () { if (rBox) rBox.innerHTML = '<div class="wb-rt-error">加载失败</div>'; });
+    wbJson("/api/routing/groups", 15000).then(function (res) {
+        if (res && res.groups) { window.__wbRtGroups = res.groups || []; wbRenderGroups(res.groups || []); }
+      }).catch(function () {});
     }
     function refreshPool() {
       wbJson("/api/routing/pool", 15000).then(function (res) {
@@ -5338,7 +5279,7 @@ COLLAPSE_SCRIPT = r"""
         else if (cBox) cBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
       }).catch(function () { if (cBox) cBox.innerHTML = '<div class="wb-rt-error">加载失败</div>'; });
     }
-    refreshPool(); refreshRulesGroups(); refreshConfig(); refreshTrace(0);
+    refreshPool(); refreshGroups(); refreshConfig(); refreshTrace(0);
 
     /* 默认行为（对齐 Magpie 自动路由）：账号池可用但还没有任何组/规则时，
        自动跑一次 auto-generate，让页面打开就有可用编排。仅在首次进入触发一次。 */
@@ -5348,7 +5289,7 @@ COLLAPSE_SCRIPT = r"""
         var has = res && ((res.rules && res.rules.length) || (res.groups && res.groups.length));
         if (has) return;
         return fetch("/api/routing/auto-generate", { method: "POST" })
-          .then(function () { refreshRulesGroups(); }).catch(function () {});
+          .then(function () { refreshGroups(); }).catch(function () {});
       }).catch(function () {});
     }
 
@@ -5369,14 +5310,13 @@ COLLAPSE_SCRIPT = r"""
           if (act === "auto-gen") {
             actBtn.disabled = true; actBtn.textContent = "生成中…";
             fetch("/api/routing/auto-generate", { method: "POST" }).then(function (r) { return r.json(); })
-              .then(function (d) { wbToast(d && d.ok ? "已重新生成默认路由编排" : ((d&&d.detail)||"生成失败"), d&&d.ok?"ok":"err"); refreshRulesGroups(); refreshPool(); })
+              .then(function (d) { wbToast(d && d.ok ? "已重新生成默认路由编排" : ((d&&d.detail)||"生成失败"), d&&d.ok?"ok":"err"); refreshGroups(); refreshPool(); })
               .catch(function () { wbToast("自动生成失败，请重试", "err"); })
               .then(function () { actBtn.disabled = false; actBtn.textContent = "⚡ 重新生成默认编排"; });
             return;
           }
           if (act === "new-group") { openGroupEditor(null); return; }
-          if (act === "new-rule") { openRuleEditor(null); return; }
-          if (act === "import-group" || act === "import-rule") { openImportBox(act === "import-group" ? "group" : "rule"); return; }
+          if (act === "import-group") { openImportBox("group"); return; }
         }
         // 组内动作（编辑/分享/删除）
         var gBtn = t.closest("[data-gact]");
@@ -5386,28 +5326,11 @@ COLLAPSE_SCRIPT = r"""
           if (gact === "edit") { openGroupEditor(gid); return; }
           if (gact === "del") {
             if (!confirm("删除该路由组？")) return;
-            fetch("/api/routing/groups/" + gid, { method: "DELETE" }).then(function () { wbToast("已删除", "ok"); refreshRulesGroups(); });
+            fetch("/api/routing/groups/" + gid, { method: "DELETE" }).then(function () { wbToast("已删除", "ok"); refreshGroups(); });
             return;
           }
           if (gact === "share") {
             fetch("/api/routing/groups/share", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: gid }) })
-              .then(function (r) { return r.json(); }).then(function (d) { if (d && d.shared) wbCopyText(d.shared); });
-            return;
-          }
-        }
-        // 规则内动作
-        var rBtn = t.closest("[data-ract]");
-        if (rBtn) {
-          var rid = rBtn.getAttribute("data-rid");
-          var ract = rBtn.getAttribute("data-ract");
-          if (ract === "edit") { openRuleEditor(rid); return; }
-          if (ract === "del") {
-            if (!confirm("删除该路由规则？")) return;
-            fetch("/api/routing/rules/" + rid, { method: "DELETE" }).then(function () { wbToast("已删除", "ok"); refreshRulesGroups(); });
-            return;
-          }
-          if (ract === "share") {
-            fetch("/api/routing/rules/share", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: rid }) })
               .then(function (r) { return r.json(); }).then(function (d) { if (d && d.shared) wbCopyText(d.shared); });
             return;
           }
@@ -5418,12 +5341,6 @@ COLLAPSE_SCRIPT = r"""
           var ge = geBtn.getAttribute("data-ge");
           if (ge === "cancel") { closeEditor(); return; }
           if (ge === "save") { saveGroupEditor(); return; }
-        }
-        var reBtn = t.closest("[data-re]");
-        if (reBtn) {
-          var re = reBtn.getAttribute("data-re");
-          if (re === "cancel") { closeEditor(); return; }
-          if (re === "save") { saveRuleEditor(); return; }
         }
         // 导入框操作
         var impBtn = t.closest("[data-imp]");
@@ -5496,17 +5413,6 @@ COLLAPSE_SCRIPT = r"""
     div.__gid = gid || "";
     window.__wbRtEditor = div;
   }
-  function openRuleEditor(rid) {
-    closeEditor();
-    var r = null; var rules = window.__wbRtRules || [];
-    if (rid) { for (var i=0;i<rules.length;i++) if (rules[i].id===rid) r = rules[i]; }
-    var host = document.getElementById("wb-rt-rules");
-    var div = document.createElement("div"); div.id = "wb-rt-editor"; div.className = "wb-rt-editor-wrap";
-    div.innerHTML = '<h3>' + (rid ? '编辑路由规则' : '新建路由规则') + '</h3>' + wbRuleEditForm(r, window.__wbRtGroups || []);
-    if (host) host.parentNode.insertBefore(div, host);
-    div.__rid = rid || "";
-    window.__wbRtEditor = div;
-  }
   function saveGroupEditor() {
     var div = window.__wbRtEditor; if (!div) return;
     var gid = div.__gid || "";
@@ -5527,43 +5433,12 @@ COLLAPSE_SCRIPT = r"""
     if (members.length || gid) body.members = members;
     fetch(url, { method: method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d && d.ok !== false) { wbToast("已保存", "ok"); closeEditor(); refreshRulesGroups(); } else wbToast("保存失败", "err"); })
-      .catch(function () { wbToast("保存失败", "err"); });
-  }
-  function saveRuleEditor() {
-    var div = window.__wbRtEditor; if (!div) return;
-    var rid = div.__rid || "";
-    var match = {};
-    var tokens = parseInt((div.querySelector('#wb-re-tokens')||{}).value||'',10);
-    if (!isNaN(tokens)) match.tokens = tokens;
-    if ((div.querySelector('#wb-re-img')||{}).checked) match.images = true;
-    var eff = (div.querySelector('#wb-re-eff')||{}).value || '';
-    if (eff) match.effort = eff;
-    var agents = (div.querySelector('#wb-re-agents')||{}).value || '';
-    if (agents.trim()) match.agents = agents.trim().split(/\s+/);
-    var intent = (div.querySelector('#wb-re-intent')||{}).value || '';
-    if (intent.trim()) match.intent = intent.trim();
-    if ((div.querySelector('#wb-re-compact')||{}).checked) match.compact = true;
-    var body = {
-      name: (div.querySelector('#wb-re-name')||{}).value || '未命名规则',
-      match_field: (div.querySelector('#wb-re-field')||{}).value,
-      match_op: (div.querySelector('#wb-re-op')||{}).value,
-      match_value: (div.querySelector('#wb-re-value')||{}).value || '',
-      target_type: (div.querySelector('#wb-re-tt')||{}).value,
-      target_id: (div.querySelector('#wb-re-gid')||{}).value || '',
-      target_model: (div.querySelector('#wb-re-tm')||{}).value || '',
-      match: match
-    };
-    var url = rid ? ('/api/routing/rules/' + rid) : '/api/routing/rules';
-    var method = rid ? 'PUT' : 'POST';
-    fetch(url, { method: method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { if (d && d.ok !== false) { wbToast("已保存", "ok"); closeEditor(); refreshRulesGroups(); } else wbToast("保存失败", "err"); })
+      .then(function (d) { if (d && d.ok !== false) { wbToast("已保存", "ok"); closeEditor(); refreshGroups(); } else wbToast("保存失败", "err"); })
       .catch(function () { wbToast("保存失败", "err"); });
   }
   function openImportBox(kind) {
     closeImportBox();
-    var host = document.getElementById(kind === 'group' ? 'wb-rt-groups' : 'wb-rt-rules');
+    var host = document.getElementById('wb-rt-groups');
     var div = document.createElement("div"); div.id = "wb-rt-import"; div.className = "wb-rt-editor-wrap";
     div.innerHTML = '<h3>导入' + (kind==='group'?'路由组':'路由规则') + '</h3>' +
       '<textarea id="wb-imp-text" rows="5" placeholder="粘贴分享文本（不含密钥）"></textarea>' +
@@ -5584,7 +5459,7 @@ COLLAPSE_SCRIPT = r"""
     var url = kind === 'group' ? '/api/routing/groups/import' : '/api/routing/rules/import';
     fetch(url, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ text: text, replace: replace }) })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d && d.ok) { wbToast("导入成功", "ok"); closeImportBox(); refreshRulesGroups(); } else wbToast(d&&d.detail||"导入失败", "err"); })
+      .then(function (d) { if (d && d.ok) { wbToast("导入成功", "ok"); closeImportBox(); refreshGroups(); } else wbToast(d&&d.detail||"导入失败", "err"); })
       .catch(function () { wbToast("导入失败", "err"); });
   }
   // 缓存 accounts/rules 供编辑器使用
