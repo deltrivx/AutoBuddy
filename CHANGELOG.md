@@ -20,6 +20,22 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.10] - 2026-11-08
+
+> 对比基准：[v2.3.9](https://github.com/deltrivx/AutoBuddy/compare/v2.3.9...v2.3.10)
+
+<!-- summary: 智能路由页三项回归修复——左侧智能体按 API Key 真实身份分离(不再坍缩为通用 OpenAI UA)；点击「设置→智能路由」跳转修正为与系统设置同级的根路径 hash 视图(/#/routing)；移动端供应商配置行改为居中纵向堆叠，与同卡片分组头风格一致，消除标题居中但行内左对齐的违和留白。已用 CDP 注入实测：390px 宽零横向溢出、配置行/分组头统一居中、__wbRtKeyNames 映射在线可用 -->
+
+### 修复
+
+- **左侧智能体在 Unraid 生产环境坍缩为「OpenAI」**：v2.3.9 的 `_wbRtRawCaller` 在 `caller_name=="gateway-local"` 时优先回退 `client_tag`（user-agent），而生产所有请求经统一网关转发，user-agent 千篇一律为通用 SDK 探测串（`OpenAI/JS 7.28.0` 等），导致真实来源全部坍缩成同一个「OpenAI」。修正为：当 `client_tag` 命中 `GENERIC_UA` 正则（openai/curl/python-requests/node/go-http 等通用探测器）或仍是 `gateway-local` 时，**回退到 API Key 的真实可读身份**（`wbRtKeyName(api_key)`，由 `/api/api-keys` 的 `id→name` 映射支撑）。FNAS 测试容器能分离出 OpenClaw/DeepSeek 等真实智能体，是因为测试客户端显式带了 `x-autobuddy-client`/`distinct client_tag`；生产统一网关不携带这些信息，故以 API Key 为区分信号。
+- **点击「设置→智能路由」链接异常**：导航项点击处理器原为 `wbPushUrl(window.location.pathname + "#/routing")`，在 `/settings` 页点击会生成 `/settings#/routing`（与系统设置嵌套而非同级）。改为 `wbPushUrl("/#/routing")`，与 accounts/overview 等注入视图一致，统一推到根路径 hash 视图，与系统设置并列同级。
+- **移动端供应商配置行与分组头风格不一致**：`.wb-rt-cfg-row` 此前仅 `justify-content:center` 且 `text-align` 默认左对齐，导致「标题/分组头居中、但配置行内标签左对齐」的违和留白。窄屏改为 `flex-direction:column; align-items:center; text-align:center`，标签与分段控件整行居中堆叠，与同卡片 `.am-gh` 分组头风格统一。
+
+### 变更
+
+- **移动端路由页对齐复核**：通过 CDP（Chrome DevTools Protocol）注入待测 CSS 对真实生产数据进行几何探针验证——390px 视口下路由视图**零横向溢出**，顶端标题/返回键、实时轨迹统计、配置行、分组头、账号行全部居中一致，左侧来源节点宽度自适应不溢出。
+
 ## [v2.3.9] - 2026-11-08
 
 > 对比基准：[v2.3.8](https://github.com/deltrivx/AutoBuddy/compare/v2.3.8...v2.3.9)

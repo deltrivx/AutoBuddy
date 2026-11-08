@@ -2618,9 +2618,13 @@ COLLAPSE_SCRIPT = r"""
     #wb-routing-view .am-gh { flex-wrap: wrap; justify-content: center; gap: 6px; margin: 8px 0 0; }
     #wb-routing-view .am-gh .am-fold { flex: 1 1 auto; min-width: 0; justify-content: center; }
     #wb-routing-view .am-rows { padding: 0 2px; }
-    #wb-routing-view .wb-rt-cfg-row { justify-content: center; gap: 8px; padding: 8px 0; }
-    #wb-routing-view .wb-rt-cfg-label { flex: 0 0 auto; }
-    #wb-routing-view .am-seg { justify-content: center; flex: 1 1 100%; }
+    /* 配置行：窄屏改为居中纵向堆叠（标签一行居中、分段控件整行居中），
+       与同卡片内 .am-gh 分组头的居中风格一致，消除“标题居中但行内左对齐”的违和留白 */
+    #wb-routing-view .wb-rt-cfg-row { flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px 0; text-align: center; }
+    #wb-routing-view .wb-rt-cfg-label { flex: 0 0 auto; text-align: center; }
+    #wb-routing-view .wb-rt-cfg-hint { flex: 0 1 auto; text-align: center; }
+    #wb-routing-view .am-seg { justify-content: center; flex: 0 1 auto; max-width: 100%; }
+    #wb-routing-view .am-seg .seg-btn { flex: 1 1 auto; justify-content: center; }
     /* 账号打码按钮等工具：窄屏纵排居中，避免右侧大片空白 */
     #wb-routing-view .rt-tools { flex-direction: row; justify-content: center; width: 100%; gap: 8px; }
   }
@@ -4351,7 +4355,10 @@ COLLAPSE_SCRIPT = r"""
       }
       link.addEventListener("click", function (e) {
         e.preventDefault();
-        wbPushUrl(window.location.pathname + "#/routing");
+        // 智能路由与数据总览/账号管理同级，都是根路径下的 hash 视图；
+        // 不能拼 window.location.pathname（在 /settings 页点会生成 /settings#/routing，
+        // 与系统设置嵌套而非同级）。统一推到根路径 + #/routing。
+        wbPushUrl("/#/routing");
       });
     }
   }
@@ -5163,10 +5170,17 @@ COLLAPSE_SCRIPT = r"""
       function _wbRtRawCaller(t) {
         // 优先 caller_name（客户端显式带的智能体名，如 OpenClaw / DeepSeek / ZCode）；
         // 但网关在客户端不传 x-autobuddy-client 时会兜底成字面量 "gateway-local"，
-        // 那是“网关自己”而不是真实来源 —— 此时应回退到 client_tag（通常是 user-agent，
-        // 如 "OpenAI/JS 7.28.0"），再回退到 api_key 的名字，最后才是 local。
+        // 那是“网关自己”而不是真实来源 —— 必须跳过，否则所有请求都归到网关名下。
         if (t.caller_name && t.caller_name !== "gateway-local") return String(t.caller_name);
-        if (t.client_tag) return String(t.client_tag);
+        // client_tag 通常是 user-agent。形如 OpenAI/JS 7.28.0 / curl/8.x / python-requests
+        // 这类“通用 SDK 探测器”对区分来源毫无意义（所有请求都一样），不能作为智能体身份；
+        // 只有像 openclaw / wechat-bot / 具体 App 名这类“有区分度的客户端”才用 client_tag。
+        var ct = (t.client_tag || "").trim();
+        var ctNorm = ct.toLowerCase().replace(/[\/\s].*$/, "");
+        var GENERIC_UA = /^(openai|curl|python-requests|python|go-http|okhttp|axios|fetch|http\.client|java|node|libwww|postman|insomnia|restsharp|guzzle|ktor|httpx)/;
+        if (ct && ctNorm && !GENERIC_UA.test(ctNorm) && ctNorm !== "gateway-local") return ct;
+        // 兜底到 API Key 身份：生产环境所有请求经统一网关转发，user-agent 千篇一律，
+        // 真正能区分“谁在调”的是 API Key（每个 Key 有独立可读名）。
         if (t.api_key || t.caller_key) return wbRtKeyName(t.api_key || t.caller_key);
         return null;
       }
