@@ -39,6 +39,50 @@ from db import get_db_connection
 VALID_MATCH_FIELDS = ("api_key", "model", "client_tag", "variant")
 VALID_MATCH_OPS = ("eq", "contains")
 VALID_TARGET_TYPES = ("group", "account", "model")
+
+# 模型上下文窗口（token 数）权威表——用于实时路由轨迹详情里显示“模型的窗口大小”。
+# 仅覆盖已知模型；未知模型回退为 None（前端显示“未知”）。
+_MODEL_CONTEXT_WINDOW = {
+    # 国内版 codebuddy 系
+    "hy4": 200000, "hy3": 200000, "hy3.1": 200000, "hy3.1-pro": 200000,
+    # DeepSeek 系
+    "deepseek-chat": 128000, "deepseek-reasoner": 64000, "deepseek-v3": 128000,
+    "deepseek-v3.1": 128000, "deepseek-v3.2": 128000, "deepseek-r1": 64000,
+    # OpenAI
+    "gpt-4o": 128000, "gpt-4o-mini": 128000, "gpt-4.1": 1000000,
+    "gpt-4.1-mini": 1000000, "gpt-4.1-nano": 1000000, "o1": 200000,
+    "o3": 200000, "o3-mini": 200000, "o4-mini": 200000,
+    # Anthropic
+    "claude-3-5-sonnet": 200000, "claude-3-5-haiku": 200000,
+    "claude-3-opus": 200000, "claude-sonnet-4": 1000000, "claude-opus-4": 1000000,
+    # Kimi / Moonshot
+    "kimi-k2": 256000, "moonshot-v1-8k": 8000, "moonshot-v1-32k": 32000,
+    "moonshot-v1-128k": 128000,
+    # 智谱 GLM
+    "glm-4.5": 128000, "glm-4.6": 128000, "glm-4-plus": 128000, "glm-4-flash": 128000,
+    # 通义千问 / Qwen
+    "qwen-max": 32768, "qwen-plus": 131072, "qwen-turbo": 131072, "qwen3-max": 256000,
+    # 文心 / ERNIE
+    "ernie-4.5": 128000, "ernie-4.0-8k": 8000, "ernie-3.5-8k": 8000,
+    # 豆包 / Doubao
+    "doubao-seed-1.6": 256000, "doubao-pro-32k": 32000, "doubao-lite-32k": 32000,
+    # MiniMax / 百川 / 阶跃
+    "abab6.5": 200000, "baichuan4": 256000, "step-2": 32000,
+}
+
+
+def model_context_window(model: Optional[str]) -> Optional[int]:
+    """返回模型的上下文窗口（token），未知返回 None。"""
+    if not model:
+        return None
+    m = str(model).strip().lower()
+    if m in _MODEL_CONTEXT_WINDOW:
+        return _MODEL_CONTEXT_WINDOW[m]
+    # 兼容带后缀（如 deepseek-chat@0210）→ 取前缀匹配
+    for k, v in _MODEL_CONTEXT_WINDOW.items():
+        if m.startswith(k):
+            return v
+    return None
 # 路由组分发模式 —— 对齐 Magpie 的 ROUTE_OPTS / GROUP_ROUTE_OPTS：
 #   smart        智能：按健康/负载/剩余额度，故障自动转移（AutoBuddy 默认）
 #   order        顺序：列表顺序，第一个不行再下一个（In order）
@@ -996,6 +1040,7 @@ def trace_begin(req_id: str, ctx: Dict[str, Any],
         "ms": None,
         "bytes": None,
         "content_at": None,
+        "context_window": model_context_window(ctx.get("model") or ""),
         "done": 0,
         "status": None,
         "error": None,
@@ -1161,7 +1206,7 @@ def list_traces(after: int = 0, limit: int = 60) -> Dict[str, Any]:
                     "tries": d["tries"], "swapped": d["swapped"],
                     "routed": d["routed"], "tokens": d["tokens"],
                     "ms": d["ms"], "done": d["done"], "status": d["status"],
-                    "error": d["error"],
+                    "error": d["error"], "context_window": d.get("context_window"),
                 })
             out = out[-limit:]
             seq = max([r["id"] for r in out], default=0)

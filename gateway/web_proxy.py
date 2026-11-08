@@ -5197,12 +5197,12 @@ COLLAPSE_SCRIPT = r"""
         var acctUsed = {}; // acctId -> { apiLabel: [models] }
         Object.keys(_wbRtAll).map(function (id) { return _wbRtAll[id]; }).sort(function (a, b) { return Number(a.ts || 0) - Number(b.ts || 0); }).forEach(function (t) {
           // 右侧 API 名：统一按 API Key 的真实可读身份显示。
-          // 优先 api_key，其次 caller_key（生产网关转发时携带的是 caller_key）；
-          // 二者都能经 wbRtKeyName 解析成 key_name / id→名 映射。
-          // 不再回退“未知API”——只要带了密钥就一定能解析出可读名。
-          var api = (t.api_key || t.caller_key)
-                  ? wbRtKeyName(t.api_key || t.caller_key)
-                  : ((t.key_name && t.key_name !== "gateway-local") ? t.key_name : ((t.caller_name && t.caller_name !== "gateway-local") ? t.caller_name : "未知API"));
+          // 仅当轨迹确实携带可解析的密钥（api_key 或 caller_key）才参与“被哪个 API 用过”的聚合；
+          // 网关内部合成轨迹（无密钥、caller_name=gateway-local）不计入，避免出现“未知API”占位焦点框。
+          var keyId = t.api_key || t.caller_key;
+          if (!keyId && !(t.key_name && t.key_name !== "gateway-local") && !(t.caller_name && t.caller_name !== "gateway-local")) return; // 无真实外部调用方 → 跳过
+          var api = keyId ? wbRtKeyName(keyId)
+                  : ((t.key_name && t.key_name !== "gateway-local") ? t.key_name : t.caller_name);
           var ml = t.model;
           function feed(aid) { var k = String(aid); (acctUsed[k] = acctUsed[k] || {}); (acctUsed[k][api] = acctUsed[k][api] || []); if (ml && acctUsed[k][api].indexOf(ml) < 0) acctUsed[k][api].push(ml); }
           (t.order || []).forEach(function (o) { feed(o && o.id != null ? o.id : o); });
