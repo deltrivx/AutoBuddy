@@ -5001,7 +5001,7 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ---
 
-> 对比基准：[v2.3.6](https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...HEAD)
+> 对比基准：[v2.3.8](https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...HEAD)
 
 ## [v2.2.4] - 2026-10-28
 
@@ -6383,8 +6383,9 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.8...HEAD
 [v2.3.7]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...v2.3.7
+[v2.3.8]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...v2.3.8
 [v2.3.6]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6
 [v2.3.5]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...v2.3.5
 [v2.3.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...v2.3.4
