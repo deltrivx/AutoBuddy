@@ -1774,10 +1774,10 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .wb-rt-wrap {
     max-width: 1180px;
     margin: 0 auto;
-    padding: 24px 16px 36px;
+    padding: 36px 24px 40px;
   }
   #wb-routing-view .am-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-  #wb-routing-view .am-head .am-t { margin: 0 0 3px; font-size: 19px; font-weight: 650; color: var(--fg); }
+  #wb-routing-view .am-head .am-t { margin: 0 0 3px; font-size: 28px; font-weight: 600; color: var(--fg); line-height: 1.2; }
   #wb-routing-view .am-head .am-d { margin: 0; font-size: 12.5px; color: var(--muted); max-width: 56ch; line-height: 1.4; }
   /* 智能路由 / 数据总览 / 每日任务 等注入视图激活时，强制收起官方页面内容。
      用 !important 扛住 React 重渲染把官方子节点 display 复位成 '' 的竞态——
@@ -1844,9 +1844,9 @@ COLLAPSE_SCRIPT = r"""
   /* 卡片容器（对齐 Magpie 的 .pop.am-pop / .card） */
   .wb-rt-card {
     border: 1px solid var(--line, #e3e3e8);
-    border-radius: 10px;
+    border-radius: 16px;
     background: var(--card, #fff);
-    padding: 10px 12px;
+    padding: 20px;
     overflow: hidden;
     min-width: 0;
   }
@@ -2563,7 +2563,7 @@ COLLAPSE_SCRIPT = r"""
     width: 26px; height: 26px; display: inline-block; border-radius: 50%; }
 
   /* ---- 舞台（Magpie .rt）---- */
-  #wb-routing-view .rt { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 10px; margin: 0 0 16px; }
+  #wb-routing-view .rt { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px 20px 18px; margin: 0 0 16px; }
   #wb-routing-view .rt-top { display: flex; flex-direction: column; gap: 3px; }
   #wb-routing-view .rt-what { font-size: 13px; color: var(--muted); }
   #wb-routing-view .rt-what b { color: var(--fg); font-weight: 600; }
@@ -2593,7 +2593,7 @@ COLLAPSE_SCRIPT = r"""
     #wb-routing-view .rt-reqs li .rt-req-act { grid-column: 2 / 4; justify-self: start; margin-top: 2px; }
     #wb-routing-view .rt-detail { padding: 12px; }
     /* 窄屏：卡片与行头堆叠，按钮不挤成留白 */
-    #wb-routing-view .wb-rt-card { padding: 12px; }
+    #wb-routing-view .wb-rt-card { padding: 16px; }
     #wb-routing-view .wb-rt-row-head { flex-wrap: wrap; gap: 6px; }
     #wb-routing-view .wb-rt-row-head .wb-rt-filter { flex: 1 1 100%; width: 100%; }
     #wb-routing-view .wb-rt-cols { grid-template-columns: 1fr; gap: 12px; }
