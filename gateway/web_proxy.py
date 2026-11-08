@@ -2598,16 +2598,16 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-hub b { color: var(--fg); }
   /* 账号行（Magpie .rt-accts li）---- */
   #wb-routing-view .rt-accts { position: relative; z-index: 1; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; min-width: 0; }
-  #wb-routing-view .rt-accts li { position: relative; display: grid; grid-template-columns: 10px minmax(0, max-content) minmax(min(14em, 40%), 1fr); align-items: center; column-gap: 10px; row-gap: 5px; padding: 7px 11px; background: var(--card); border: 1px dashed var(--line); border-radius: 8px; font-size: 13px; transition: opacity .3s, border-color .3s, transform .5s cubic-bezier(.2, .8, .2, 1); }
+  #wb-routing-view .rt-accts li { position: relative; display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 4px; padding: 7px 11px; background: var(--card); border: 1px dashed var(--line); border-radius: 8px; font-size: 13px; transition: opacity .3s, border-color .3s, transform .5s cubic-bezier(.2, .8, .2, 1); }
   #wb-routing-view .rt-accts li { margin-left: calc(var(--depth, 0) * 18px); }
-  #wb-routing-view .rt-accts b { font-weight: 560; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #wb-routing-view .rt-accts b > span:not(.ic) { font-weight: 450; color: var(--muted); }
-  #wb-routing-view .rt-accts b > span.who { color: var(--fg); font-weight: 560; }
+  #wb-routing-view .rt-accts .rt-acct-main { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 3px; min-width: 0; flex: 1 1 auto; }
+  #wb-routing-view .rt-accts b.rt-acct-who { font-weight: 560; color: var(--fg); display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
+  #wb-routing-view .rt-accts b.rt-acct-who > span:not(.ic) { font-weight: 450; color: var(--muted); }
+  #wb-routing-view .rt-accts b.rt-acct-who > span.who { color: var(--fg); font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #wb-routing-view .rt-accts b .rt-api-tag { display: inline-block; margin-left: 7px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 560; line-height: 18px; color: var(--primary, #4f46e5); background: color-mix(in srgb, var(--primary, #4f46e5) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--primary, #4f46e5) 28%, var(--card)); vertical-align: 1px; white-space: nowrap; }
   #wb-routing-view .rt-accts b code.mdl { font: 500 11px/1.5 var(--code-font); color: var(--fg-2); background: var(--card-2); border-radius: 5px; padding: 0 5px; margin-left: 7px; font-weight: 450; }
-  #wb-routing-view .rt-accts em { font-style: normal; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  #wb-routing-view .rt-accts em .ses { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-  #wb-routing-view .rt-accts .bar { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: var(--card-2); overflow: hidden; }
+  #wb-routing-view .rt-accts em { font-style: normal; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  #wb-routing-view .rt-accts .dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; border: 1.5px solid var(--muted); }
   #wb-routing-view .rt-accts .bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--muted); transition: width .4s; }
   #wb-routing-view .rt-accts li.on { border-color: var(--fg); }
   #wb-routing-view .rt-accts li.on em { color: var(--fg); }
@@ -5127,10 +5127,10 @@ COLLAPSE_SCRIPT = r"""
           if (i === 0) cls += " new";
           var dot = '<span class="dot"></span>';
           var apiTag = acctKey[id] ? ('<span class="rt-api-tag">' + wbRtEsc(wbRtKeyName(acctKey[id])) + '</span>') : '';
-          var who = '<b><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span>' + apiTag + '</b>';
+          var who = '<b class="rt-acct-who"><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span>' + apiTag + '</b>';
           var mdl = (o.model ? '<code class="mdl">' + wbRtEsc(o.model) + '</code>' : '');
           var st = tr ? (' <em>' + (tr.status ? wbRtEsc(String(tr.status)) : (tr.error ? wbRtEsc(tr.error) : (isFinal ? '应答' : '试过'))) + (tr.ms ? ' · ' + Math.round(tr.ms) + 'ms' : '') + '</em>') : (isFinal ? '<em>应答</em>' : (i > 0 ? '<em>候选</em>' : '<em>首选</em>'));
-          return '<li class="' + cls + '" data-tid="' + id + '">' + dot + who + mdl + apiTag + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
+          return '<li class="' + cls + '" data-tid="' + id + '">' + dot + '<div class="rt-acct-main">' + who + mdl + '</div>' + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
         }).join("");
       }
     }
@@ -5156,6 +5156,12 @@ COLLAPSE_SCRIPT = r"""
     var dot = document.getElementById("wb-rt-livedot");
     if (dot) dot.classList.add("on");
     _wbRtSeen = {};
+  }
+  // 密钥 id → 名字 映射（全局；wbRenderTrace 与 wbLoadRoutingData 共用）
+  function wbRtKeyName(id) {
+    if (!id) return null;
+    var s = String(id);
+    return (window.__wbRtKeyNames && window.__wbRtKeyNames[s]) || s.slice(0, 8);
   }
   function wbLoadRoutingData() {
     var rBox = document.getElementById("wb-rt-rules");
@@ -5185,11 +5191,6 @@ COLLAPSE_SCRIPT = r"""
       });
       window.__wbRtKeyNames = _keyNames;
     }).catch(function () {});
-    function wbRtKeyName(id) {
-      if (!id) return null;
-      var s = String(id);
-      return (window.__wbRtKeyNames && window.__wbRtKeyNames[s]) || s.slice(0, 8);
-    }
 
     // 实时轨迹轮询序列号
     var _traceSeq = 0;
