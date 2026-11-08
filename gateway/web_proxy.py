@@ -2604,10 +2604,10 @@ COLLAPSE_SCRIPT = r"""
     #wb-routing-view .am-head { flex-direction: column; align-items: center; text-align: center; gap: 12px; margin-bottom: 16px; }
     #wb-routing-view .am-head .am-d { max-width: 92%; margin: 0 auto; }
     #wb-routing-view .am-tools { width: 100%; display: flex; justify-content: center; }
-    #wb-routing-view .am-tools .am-reset { width: 100%; max-width: 320px; }
-    /* 实时轨迹顶部：统计与工具内联、居中，消除右侧留白 */
-    #wb-routing-view .rt-top { align-items: center; text-align: center; gap: 4px; }
-    #wb-routing-view .rt-stats { width: 100%; display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: center; }
+    #wb-routing-view .am-tools .am-reset { width: auto; max-width: none; }
+    /* 实时轨迹顶部：统计与工具左对齐、与页面其他板块样式统一（不再窄屏居中） */
+    #wb-routing-view .rt-top { align-items: flex-start; text-align: left; gap: 4px; }
+    #wb-routing-view .rt-stats { width: 100%; display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: flex-start; }
     /* 舞台三栏（来源→网关→账号）在窄屏改为纵向居中堆叠，不再左右错位 */
     #wb-routing-view .rt-stage { justify-items: center; padding-left: 0; }
     #wb-routing-view .rt-srcs, #wb-routing-view .rt-hub, #wb-routing-view .rt-node { margin-left: auto; margin-right: auto; }
@@ -2615,8 +2615,9 @@ COLLAPSE_SCRIPT = r"""
     #wb-routing-view .wb-rt-prov-card .wb-rt-card-title { text-align: center; }
     #wb-routing-view .wb-rt-prov-card .am-d { text-align: center; }
     #wb-routing-view .am-g { margin-bottom: 10px; }
-    #wb-routing-view .am-gh { flex-wrap: wrap; justify-content: center; gap: 6px; margin: 8px 0 0; }
-    #wb-routing-view .am-gh .am-fold { flex: 1 1 auto; min-width: 0; justify-content: center; }
+    #wb-routing-view .am-gh { flex-wrap: wrap; justify-content: flex-start; gap: 6px; margin: 8px 0 0; }
+    #wb-routing-view .am-gh .am-fold { flex: 1 1 auto; min-width: 0; justify-content: flex-start; }
+    #wb-routing-view .am-gh .am-all { flex: 0 0 auto; }
     #wb-routing-view .am-rows { padding: 0 2px; }
     /* 配置行：窄屏改为居中纵向堆叠（标签一行居中、分段控件整行居中），
        与同卡片内 .am-gh 分组头的居中风格一致，消除“标题居中但行内左对齐”的违和留白 */
@@ -4524,12 +4525,8 @@ COLLAPSE_SCRIPT = r"""
         /* 实时路由轨迹 —— 1:1 移植 Magpie 的 .rt 舞台（不是我自写的卡片列表） */
         '<section class="rt" id="rt">' +
           '<div class="rt-top">' +
-            '<div class="rt-what"><b>实时</b> · 网关正在做的决定 <span class="rt-livedot on" id="wb-rt-livedot"></span></div>' +
+            '<div class="rt-what"><b>实时路由</b> <span class="rt-livedot on" id="wb-rt-livedot"></span></div>' +
             '<div class="rt-stats" id="wb-rt-trace-stats"></div>' +
-            '<div class="rt-tools">' +
-              '<button class="text rt-gogroups" id="wb-rt-gogroups" type="button" title="跳到路由组"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v9.5M4 8.5l4 4 4-4"/></svg><span>路由组</span></button>' +
-              '<button class="text rt-mask" id="wb-rt-mask" type="button" aria-pressed="false" title="打码账号名，便于截图分享"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 4.2A10.4 10.4 0 0 1 12 4c6.5 0 10 8 10 8a17.6 17.6 0 0 1-2.2 3.2M6.6 6.6C3.9 8.4 2 12 2 12s3.5 8 10 8a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20"/></svg><span>账号打码</span></button>' +
-            '</div>' +
             '<p class="rt-mode" id="wb-rt-mode"></p>' +
           '</div>' +
           '<div class="rt-stage">' +
@@ -4576,21 +4573,12 @@ COLLAPSE_SCRIPT = r"""
         '</section>' +
         '<div class="wb-rt-cols">' +
           '<section class="wb-rt-card">' +
-            '<h2 class="wb-rt-card-title">路由组</h2>' +
-            '<div class="wb-rt-row-head">' +
-              '<input class="wb-rt-filter" id="wb-rt-gfilter" type="search" placeholder="筛选路由组和成员" />' +
-              '<button class="am-reset" data-act="new-group" type="button">＋ 新建组</button>' +
-              '<button class="am-reset" data-act="import-group" type="button">导入</button>' +
-            '</div>' +
-            '<div id="wb-rt-groups" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+            '<h2 class="wb-rt-card-title">路由策略</h2>' +
+            '<div id="wb-rt-config" class="wb-rt-config"><div class="wb-rt-loading">加载中…</div></div>' +
           '</section>' +
-          '<section class="wb-rt-card">' +
-            '<h2 class="wb-rt-card-title">路由规则</h2>' +
-            '<div class="wb-rt-row-head">' +
-              '<button class="am-reset" data-act="new-rule" type="button">＋ 新建规则</button>' +
-              '<button class="am-reset" data-act="import-rule" type="button">导入</button>' +
-            '</div>' +
-            '<div id="wb-rt-rules" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
+          '<section class="wb-rt-card wb-rt-pool-card">' +
+            '<h2 class="wb-rt-card-title">自动路由状态</h2>' +
+            '<div id="wb-rt-pool" class="wb-rt-list"><div class="wb-rt-loading">加载中…</div></div>' +
           '</section>' +
         '</div>' +
       '</div>';
@@ -4801,8 +4789,7 @@ COLLAPSE_SCRIPT = r"""
     }
     var html = provs.map(function (p) {
       return '<div class="am-g">' +
-        '<div class="am-gh"><button type="button" class="am-fold"><span class="gn">' + wbRtEsc(p.label) + '</span><span class="c">' + p.accounts.length + ' 个账号</span></button>' +
-          '<button type="button" class="am-all" data-act="prov-routing">路由</button></div>' +
+        '<div class="am-gh"><button type="button" class="am-fold"><span class="gn">' + wbRtEsc(p.label) + '</span><span class="c">' + p.accounts.length + ' 个账号</span></button></div>' +
         '<div class="am-rows" id="wb-rt-prov-' + wbRtEsc(p.variant) + '">' +
           '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">方式</span>' + segs("mode", mode, MODES, p.variant) + '</div>' +
           '<div class="wb-rt-cfg-row"><span class="wb-rt-cfg-label">会话保持</span>' + segs("affinity", aff, AFFS, p.variant) + '</div>' +
@@ -4949,7 +4936,7 @@ COLLAPSE_SCRIPT = r"""
     var orderById = {}; order.forEach(function (o) { if (o && o.id != null) orderById[String(o.id)] = o; });
     function nameOf(id) { return orderById[String(id)] ? (orderById[String(id)].name || id) : wbRtName(id); }
     // 路由原因
-    var why = cur.why || (cur.matched_rule ? ("命中规则：" + cur.matched_rule) : (cur.routed ? "默认全局池（智能路由）" : "默认全局池"));
+    var why = cur.why || (cur.routed ? "智能路由（默认全局池）" : "默认全局池");
     // 原话：最终应答账号的错误原文（有则红框，无则灰框“无”)
     var quote = "";
     for (var i = (cur.tries || []).length - 1; i >= 0; i--) { if ((cur.tries[i].error || "").trim()) { quote = cur.tries[i].error; break; } }
@@ -4962,7 +4949,7 @@ COLLAPSE_SCRIPT = r"""
       '<span>模型 <b>' + wbRtEsc(cur.model || "—") + '</b></span>' +
       '<span>客户端 <b>' + wbRtEsc(cur.client_tag || "—") + '</b></span>' +
       '<span>已用上下文 <b>' + (cur.tokens != null ? (cur.tokens + " token") : "—") + '</b></span>' +
-      '<span>模型的窗口大小 <b>未知</b></span></div>';
+      '<span>模型的窗口大小 <b>' + (cur.context_window != null ? (cur.context_window + ' token') : '未知') + '</b></span></div>';
     box.innerHTML =
       '<h3>最近一个请求是怎么路由的 <span class="rt-detail-sub">' + wbRtEsc(nameOf(finalId) || "—") + ' · ' + (cur.done ? (cur.error ? '失败' : '成功') : '进行中') + '</span>' + (cur.id != null ? '<span class="rt-detail-act" data-replay="' + cur.id + '">重放</span>' : '') + '</h3>' +
       '<div class="rt-d-block"><span class="rt-d-label">路由原因</span><div class="rt-d-why">' + wbRtEsc(why) + '</div></div>' +
@@ -5125,11 +5112,11 @@ COLLAPSE_SCRIPT = r"""
       statBox.innerHTML =
         '<span><b>' + (totals.requests||0) + '</b><span>请求</span></span>' +
         '<span><b>' + (totals.rerouted||0) + '</b><span>改道</span></span>' +
-        '<span class="rt-errs" title="点击查看最近一次失败请求"><b>' + (totals.errors||0) + '</b><span>Agent 收到的错误</span></span>';
+        '<span class="rt-errs" title="点击查看最近一次失败请求"><b>' + (totals.errors||0) + '</b><span>Agent 错误</span></span>';
     }
     var noneEl = document.getElementById("wb-rt-none");
     if (!traces.length) {
-      if (noneEl) { noneEl.hidden = false; noneEl.textContent = "还没有请求经过路由。发一条请求即可看到网关正在做的决定。"; }
+      if (noneEl) { noneEl.hidden = false; noneEl.textContent = "还没有请求经过路由。发一条请求即可看到实时路由情况。"; }
       _wbRtSeen = {}; wbRtRenderDetail(null); wbRtRenderHistory(); return;
     }
     if (noneEl) noneEl.hidden = true;
@@ -5140,9 +5127,7 @@ COLLAPSE_SCRIPT = r"""
     // —— 模式行（Magpie .rt-mode：这次请求走了哪种路由）——
     var modeEl = document.getElementById("wb-rt-mode");
     if (modeEl) {
-      var modetxt = cur.matched_rule
-        ? "命中规则：" + cur.matched_rule
-        : (cur.routed ? "默认全局池（智能路由）" : "默认全局池");
+      var modetxt = cur.routed ? "智能路由（默认全局池）" : "默认全局池";
       modeEl.textContent = modetxt;
     }
     // —— 说明文案（Magpie .rt-cap：这次请求网关做了什么）——
@@ -5168,20 +5153,10 @@ COLLAPSE_SCRIPT = r"""
       // 上游智能体识别：优先 caller_name，其次 client_tag；并做归一化去重——
       // 去掉「/版本」或「 版本」后缀（如 curl/7.88.1 → curl），避免同一客户端显示两条。
       function _wbRtRawCaller(t) {
-        // 优先 caller_name（客户端显式带的智能体名，如 OpenClaw / DeepSeek / ZCode）；
-        // 但网关在客户端不传 x-autobuddy-client 时会兜底成字面量 "gateway-local"，
-        // 那是“网关自己”而不是真实来源 —— 必须跳过，否则所有请求都归到网关名下。
-        if (t.caller_name && t.caller_name !== "gateway-local") return String(t.caller_name);
-        // client_tag 通常是 user-agent。形如 OpenAI/JS 7.28.0 / curl/8.x / python-requests
-        // 这类“通用 SDK 探测器”对区分来源毫无意义（所有请求都一样），不能作为智能体身份；
-        // 只有像 openclaw / wechat-bot / 具体 App 名这类“有区分度的客户端”才用 client_tag。
-        var ct = (t.client_tag || "").trim();
-        var ctNorm = ct.toLowerCase().replace(/[\/\s].*$/, "");
-        var GENERIC_UA = /^(openai|curl|python-requests|python|go-http|okhttp|axios|fetch|http\.client|java|node|libwww|postman|insomnia|restsharp|guzzle|ktor|httpx)/;
-        if (ct && ctNorm && !GENERIC_UA.test(ctNorm) && ctNorm !== "gateway-local") return ct;
-        // 兜底到 API Key 身份：生产环境所有请求经统一网关转发，user-agent 千篇一律，
-        // 真正能区分“谁在调”的是 API Key（每个 Key 有独立可读名）。
+        // 用户要求：取消内置智能体图标/识别，统一回退到 API Key 的真实可读身份。
+        // 每条请求经统一网关转发，真实能区分“谁在调”的是 API Key（每个 Key 有独立可读名）。
         if (t.api_key || t.caller_key) return wbRtKeyName(t.api_key || t.caller_key);
+        if (t.caller_name && t.caller_name !== "gateway-local") return t.caller_name;
         return null;
       }
       function _wbRtNorm(c) { return (c || "").replace(/[\/\s].*$/, ""); } // 取「/」或空格前的主体
@@ -5213,32 +5188,22 @@ COLLAPSE_SCRIPT = r"""
       var firstId = String(cur.first_account || "");
       var triedIds = {};
       (cur.tries || []).forEach(function (x) { if (x.account) triedIds[String(x.account)] = x; });
-      if (!listEl.firstChild || Object.keys(_wbRtSeen).length === 0 || listEl.getAttribute("data-tid") !== String(cur.id)) {
+      // 仅在“当前选中轨迹”发生变化（或首次/清空）时才整块重渲染账号列表。
+      // 否则每次 2.5s 轮询都会重渲染 → “首选”的进入动画反复播放造成闪烁。
+      if (!listEl.firstChild || listEl.getAttribute("data-tid") !== String(cur.id)) {
         listEl.setAttribute("data-tid", String(cur.id));
-        // 计算每个账号被哪些「上游智能体 + 模型」用过：扫描历史 trace，按 ts 取最新顺序去重。
-        // 同账号下按顺序列出每个 (caller, model) 焦点框——几个来源就并列几个框；
-        // 不同账号之间平级显示。
-        var acctUsed = {}; // acctId -> [{caller, api, model}]
+        // 计算「哪个 API Key 在这个账号上用过哪些模型」。按 API 聚合、模型去重保序，
+        // 右侧焦点框改为：API 名称：模型1 + 模型2 + ……（同 API 多模型合并为一框，不再并列多框）。
+        var acctUsed = {}; // acctId -> { apiLabel: [models] }
         Object.keys(_wbRtAll).map(function (id) { return _wbRtAll[id]; }).sort(function (a, b) { return Number(a.ts || 0) - Number(b.ts || 0); }).forEach(function (t) {
-          // 左侧真实智能体：优先 caller_name（OpenClaw/DeepSeek/ZCode 等），gateway-local 时回退 client_tag/user-agent
-          var c = (t.caller_name && t.caller_name !== "gateway-local") ? t.caller_name
-                 : (t.client_tag || (t.api_key ? wbRtKeyName(t.api_key) : null));
-          // 右侧 API 名：用密钥自带名字（key_name）或 id→名 映射；没有再回退到 caller
+          // 右侧 API 名：用密钥自带名字（key_name）或 id→名 映射；没有再回退到 caller/智能体
           var api = (t.key_name && t.key_name !== "gateway-local") ? t.key_name
-                  : (t.api_key ? wbRtKeyName(t.api_key) : (c || "未知API"));
+                  : (t.api_key ? wbRtKeyName(t.api_key) : ((t.caller_name && t.caller_name !== "gateway-local") ? t.caller_name : "未知API"));
           var ml = t.model;
-          (t.order || []).forEach(function (o) { var aid = String(o && o.id != null ? o.id : o); (acctUsed[aid] = acctUsed[aid] || []).push({ caller: c, api: api, model: ml }); });
-          if (t.final_account) { var fa = String(t.final_account); (acctUsed[fa] = acctUsed[fa] || []).push({ caller: c, api: api, model: ml }); }
-          if (t.first_account) { var ha = String(t.first_account); (acctUsed[ha] = acctUsed[ha] || []).push({ caller: c, api: api, model: ml }); }
-        });
-        // 每个账号去重（同 caller+model 只留一个，caller 按归一化主体去重），保持出现顺序
-        Object.keys(acctUsed).forEach(function (aid) {
-          var seen = {}; var uniq = [];
-          acctUsed[aid].forEach(function (u) {
-            var nk = ((u.caller || "").replace(/[\/\s].*$/, "")) + "\u0001" + (u.model || "");
-            if (!seen[nk]) { seen[nk] = 1; uniq.push(u); }
-          });
-          acctUsed[aid] = uniq;
+          function feed(aid) { var k = String(aid); (acctUsed[k] = acctUsed[k] || {}); (acctUsed[k][api] = acctUsed[k][api] || []); if (ml && acctUsed[k][api].indexOf(ml) < 0) acctUsed[k][api].push(ml); }
+          (t.order || []).forEach(function (o) { feed(o && o.id != null ? o.id : o); });
+          if (t.final_account) feed(t.final_account);
+          if (t.first_account) feed(t.first_account);
         });
         listEl.innerHTML = order.map(function (o, i) {
           var id = String(o.id != null ? o.id : o);
@@ -5253,12 +5218,12 @@ COLLAPSE_SCRIPT = r"""
           if (isFirst && !cur.done) cls += " now";
           if (i === 0) cls += " new";
           var dot = '<span class="dot"></span>';
-          // 焦点框列表：API 名：模型
-          var used = acctUsed[id] || [];
-          var usedHtml = used.length ? ('<div class="rt-used">' + used.map(function (u) {
-            // 右侧焦点框：具体 API 名：模型（对齐用户要求：右侧显示“哪个API：模型”）
-            var apiLabel = u.api ? u.api : (u.caller || '未知API');
-            var mdl = u.model ? (': ' + wbRtEsc(u.model)) : '';
+          // 焦点框：按 API 聚合，同一 API 多个模型合并为一框（API：模型1 + 模型2 + …）
+          var usedMap = acctUsed[id] || {};
+          var usedKeys = Object.keys(usedMap);
+          var usedHtml = usedKeys.length ? ('<div class="rt-used">' + usedKeys.map(function (apiLabel) {
+            var models = usedMap[apiLabel];
+            var mdl = models.length ? (': ' + wbRtEsc(models.join(' + '))) : '';
             return '<span class="rt-used-chip">' + wbRtEsc(apiLabel) + mdl + '</span>';
           }).join('') + '</div>') : '';
           var who = '<b class="rt-acct-who"><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span></b>';
@@ -5291,31 +5256,9 @@ COLLAPSE_SCRIPT = r"""
     if (dot) dot.classList.add("on");
     _wbRtSeen = {};
   }
-  // 上游智能体图标 + 显示名：归一化（小写、去「/版本」或「 版本」后缀）后查前端映射表，
-  // 无匹配回退 generic-app。映射表与 backend gateway/icons/manifest.json 保持一致。
+  // 上游智能体图标：用户要求取消内置智能体图标，统一回退到通用应用图标 generic-app。
   function wbRtCallerIcon(c) {
-    var _map = {
-      "openclaw": "openclaw.svg", "deltrivx": "deltrivx.png", "deltrivx-app": "deltrivx.png",
-      "deltrix": "deltrivx.png", "wechat": "wechat.png", "wechat-bot": "wechat.png",
-      "telegram": "telegram.png", "telegram-bot": "telegram.png", "chatgpt": "chatgpt.png",
-      "openai": "chatgpt.png", "claude": "claude.svg", "claude-code": "claude-code.svg",
-      "anthropic": "anthropic.svg", "gemini": "gemini.png", "google": "gemini.png",
-      "deepseek": "deepseek.png", "qwen": "qwen.svg", "doubao": "doubao.png", "kimi": "kimi.svg",
-      "grok": "grok.svg", "feishu": "feishu.png", "lark": "feishu.png", "discord": "discord.png",
-      "slack": "slack.png", "zhipu": "zhipu.png", "glm": "glm.svg", "qingyan": "zhipu.png",
-      "hunyuan": "hunyuan.svg", "minimax": "minimax.svg", "baidu": "baidu.png", "ernie": "ernie.svg",
-      "baichuan": "baichuan.svg", "ollama": "ollama.png", "llama": "ollama.png",
-      "perplexity": "perplexity.svg", "poe": "poe.svg", "mistral": "mistral.svg", "spark": "spark.svg",
-      "ios": "generic-app.svg", "ios-app": "generic-app.svg",
-      "android": "generic-app.svg", "curl": "terminal.png", "wget": "terminal.png",
-      "terminal": "terminal.png", "web": "web.png", "web-client": "web.png",
-      "open-webui": "web.png", "browser": "web.png", "app": "generic-app.svg"
-    };
-    var n = String(c || "").toLowerCase().replace(/[\\/\s].*$/, "");
-    var f;
-    if (n.indexOf("deepseek") === 0) f = "deepseek.png";
-    else f = _map[n] || "generic-app.svg";
-    return "/icons/" + f;
+    return "/icons/generic-app.svg";
   }
   // deepseek 系（deepseek-harness / deepseek-api / deepseek 等）统一显示名 "DeepSeek"
   function wbRtCallerLabel(c) {
@@ -5419,19 +5362,10 @@ COLLAPSE_SCRIPT = r"""
         else if (cBox) cBox.innerHTML = '<div class="wb-rt-error">加载失败</div>';
       }).catch(function () { if (cBox) cBox.innerHTML = '<div class="wb-rt-error">加载失败</div>'; });
     }
-    refreshPool(); refreshGroups(); refreshRules(); refreshConfig(); refreshTrace(0);
+    refreshPool(); refreshConfig(); refreshTrace(0);
 
-    /* 默认行为（对齐 Magpie 自动路由）：账号池可用但还没有任何组/规则时，
-       自动跑一次 auto-generate，让页面打开就有可用编排。仅在首次进入触发一次。 */
-    if (!window.__wbRtAutoRan) {
-      window.__wbRtAutoRan = true;
-      wbJson("/api/routing/rules", 15000).then(function (res) {
-        var has = res && ((res.rules && res.rules.length) || (res.groups && res.groups.length));
-        if (has) return;
-        return fetch("/api/routing/auto-generate", { method: "POST" })
-          .then(function () { refreshGroups(); }).catch(function () {});
-      }).catch(function () {});
-    }
+    /* 默认行为（对齐 Magpie 自动路由）：账号池可用时即自动路由，无需用户手工建组/规则。
+        UI 已移除路由组/规则（维护成本大于收益），这里不再触发 auto-generate。 */
 
     // 开启轨迹轮询（离开路由页由 wbApplyMainView 关闭）
     window.__wbRtPolling = true;
@@ -5450,8 +5384,8 @@ COLLAPSE_SCRIPT = r"""
           if (act === "auto-gen") {
             actBtn.disabled = true; actBtn.textContent = "生成中…";
             fetch("/api/routing/auto-generate", { method: "POST" }).then(function (r) { return r.json(); })
-              .then(function (d) { wbToast(d && d.ok ? "已重新生成默认路由编排" : ((d&&d.detail)||"生成失败"), d&&d.ok?"ok":"err"); refreshGroups(); refreshRules(); refreshPool(); })
-              .catch(function () { wbToast("自动生成失败，请重试", "err"); })
+              .then(function (d) { wbToast(d && d.ok ? "已刷新路由编排" : ((d&&d.detail)||"操作失败"), d&&d.ok?"ok":"err"); refreshPool(); refreshConfig(); })
+              .catch(function () { wbToast("操作失败，请重试", "err"); })
               .then(function () { actBtn.disabled = false; actBtn.textContent = "⚡ 重新生成默认编排"; });
             return;
           }
