@@ -1851,7 +1851,7 @@ COLLAPSE_SCRIPT = r"""
     min-width: 0;
   }
   .wb-rt-card-title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     letter-spacing: -.01em;
     color: var(--fg-2, #4b4b53);
@@ -1919,7 +1919,7 @@ COLLAPSE_SCRIPT = r"""
   .routes { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; }
   .route-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
   .route {
-    border: 1px solid var(--line-2, #ececf0); border-radius: 10px; padding: 9px 11px;
+    border: 1px solid var(--line-2, #ececf0); border-radius: 12px; padding: 9px 11px;
     background: var(--card, #fff); border-left: 3px solid var(--faint, #b9b9c2);
   }
   .route.ok { border-left-color: #4ade80; }
@@ -1952,7 +1952,7 @@ COLLAPSE_SCRIPT = r"""
 
   /* 统计条（对齐 Magpie 的 请求/改道/错误） */
   .route-stats { display: flex; gap: 10px; margin-bottom: 10px; }
-  .route-stat { flex: 1; background: var(--pill, #f1f1f4); border: 1px solid var(--line-2, #ececf0); border-radius: 10px; padding: 8px 12px; text-align: center; }
+  .route-stat { flex: 1; background: var(--pill, #f1f1f4); border: 1px solid var(--line-2, #ececf0); border-radius: 12px; padding: 8px 12px; text-align: center; }
   .route-stat b { display: block; font-size: 20px; font-weight: 700; color: var(--fg, #1c1c21); }
   .route-stat span { font-size: 11.5px; color: var(--muted, #85858d); }
   .route-stat-err b { color: #f87171; }
@@ -1992,7 +1992,7 @@ COLLAPSE_SCRIPT = r"""
   .wb-rt-cfg-hint { font-size: 12px; color: var(--muted, #85858d); flex: 1 1 200px; }
 
   .wb-rt-list { display: flex; flex-direction: column; gap: 10px; }
-  .wb-rt-item { border: 1px solid var(--line-2, #ececf0); border-radius: 10px; padding: 12px 14px; background: var(--card, #fff); }
+  .wb-rt-item { border: 1px solid var(--line-2, #ececf0); border-radius: 12px; padding: 12px 14px; background: var(--card, #fff); }
   .wb-rt-item-off { opacity: .55; }
   .wb-rt-item-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
   .wb-rt-item-name { font-weight: 600; font-size: 15px; color: var(--fg, #1c1c21); }
@@ -2009,7 +2009,7 @@ COLLAPSE_SCRIPT = r"""
   .wb-rt-btn-sm { padding: 3px 9px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line-2, #ececf0); background: none; color: var(--fg-2, #4b4b53); cursor: pointer; }
   .wb-rt-btn-sm:hover { background: var(--pill, #f1f1f4); }
   .wb-rt-btn-danger { color: #f87171; border-color: rgba(248,113,113,.4); }
-  .wb-rt-editor-wrap { border: 1px solid var(--accent, #4f46e5); border-radius: 10px; padding: 12px; margin: 8px 0; background: var(--accent-soft, #eeedfd); }
+  .wb-rt-editor-wrap { border: 1px solid var(--accent, #4f46e5); border-radius: 12px; padding: 12px; margin: 8px 0; background: var(--accent-soft, #eeedfd); }
   .wb-rt-editor-wrap h3 { margin: 0 0 10px; font-size: 15px; color: var(--fg, #1c1c21); }
   .wb-rt-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .wb-rt-efield { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
@@ -2523,37 +2523,40 @@ COLLAPSE_SCRIPT = r"""
     color: #1c1c21;
     background: #f4f4f6;
   }
-  /* —— 深色主题（对齐全局 html.dark 切换，避免路由页一半深一半浅） —— */
+  /* —— 深色主题（对齐全局 html.dark 切换，避免路由页一半深一半浅）
+     令牌对齐官方 shadcn 暗色：卡片用半透明浮层 (oklab .3) + 白 10% 描边，
+     与设置/账号/总览等页视觉统一；文字用近白，强调色用官方绿。
+     保留 Magpie 的连线/布局/动画结构，仅换皮肤。 —— */
   html.dark #wb-routing-view {
-    --background: #0f1115;
-    --foreground: #e7e7ea;
-    --card: #181b21;
-    --card-2: #20242c;
-    --border: #2a2f39;
-    --line: #2a2f39;
-    --line-2: #2a2f39;
-    --muted-foreground: #9aa0ac;
-    --muted: #9aa0ac;
-    --primary: #8b8bf5;
-    --primary-foreground: #ffffff;
-    --accent: #8b8bf5;
-    --accent-fg: #ffffff;
-    --accent-soft: #232348;
+    --background: oklch(20.8% .042 265.755);
+    --foreground: oklch(92.9% .013 255.508);
+    --card: oklab(0.279 -0.00709772 -0.040381 / 0.3);
+    --card-2: color-mix(in oklab, oklch(27.9% .041 260.031) 60%, transparent);
+    --border: oklch(100% 0 0 / 0.1);
+    --line: oklch(100% 0 0 / 0.1);
+    --line-2: oklch(100% 0 0 / 0.1);
+    --muted-foreground: oklch(70.4% .04 256.788);
+    --muted: oklch(70.4% .04 256.788);
+    --primary: oklch(69.6% .17 162.48);
+    --primary-foreground: oklch(20.8% .042 265.755);
+    --accent: oklch(69.6% .17 162.48);
+    --accent-fg: oklch(20.8% .042 265.755);
+    --accent-soft: color-mix(in oklab, oklch(69.6% .17 162.48) 15%, transparent);
     --red: #f07373;
     --red-soft: #3a2226;
     --green: #4ad08a;
     --green-soft: #1c3329;
     --amber: #e0a85a;
     --amber-soft: #3a2e1a;
-    --fg: #e7e7ea;
-    --fg-2: #b8bdc7;
-    --faint: rgba(231, 231, 234, 0.6);
-    --pill: rgba(154, 160, 172, 0.12);
-    --pill-hover: rgba(154, 160, 172, 0.2);
+    --fg: oklch(92.9% .013 255.508);
+    --fg-2: oklch(92.9% .013 255.508);
+    --faint: oklch(70.4% .04 256.788);
+    --pill: color-mix(in oklab, oklch(27.9% .041 260.031) 55%, transparent);
+    --pill-hover: color-mix(in oklab, oklch(27.9% .041 260.031) 75%, transparent);
     --shadow: 0 16px 44px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .3), 0 0 0 .5px rgba(255, 255, 255, .06);
     color-scheme: dark;
-    color: #e7e7ea;
-    background: #0f1115;
+    color: oklch(92.9% .013 255.508);
+    background: oklch(20.8% .042 265.755);
   }
   /* magpie 图标（#bird）—— Magpie 真实用 <use href="#bird">，这里给一个简版 path */
   #wb-routing-view .rt-bird { width: 26px; height: 26px; }
