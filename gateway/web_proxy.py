@@ -2519,6 +2519,38 @@ COLLAPSE_SCRIPT = r"""
     color: #1c1c21;
     background: #f4f4f6;
   }
+  /* —— 深色主题（对齐全局 html.dark 切换，避免路由页一半深一半浅） —— */
+  html.dark #wb-routing-view {
+    --background: #0f1115;
+    --foreground: #e7e7ea;
+    --card: #181b21;
+    --card-2: #20242c;
+    --border: #2a2f39;
+    --line: #2a2f39;
+    --line-2: #2a2f39;
+    --muted-foreground: #9aa0ac;
+    --muted: #9aa0ac;
+    --primary: #8b8bf5;
+    --primary-foreground: #ffffff;
+    --accent: #8b8bf5;
+    --accent-fg: #ffffff;
+    --accent-soft: #232348;
+    --red: #f07373;
+    --red-soft: #3a2226;
+    --green: #4ad08a;
+    --green-soft: #1c3329;
+    --amber: #e0a85a;
+    --amber-soft: #3a2e1a;
+    --fg: #e7e7ea;
+    --fg-2: #b8bdc7;
+    --faint: rgba(231, 231, 234, 0.6);
+    --pill: rgba(154, 160, 172, 0.12);
+    --pill-hover: rgba(154, 160, 172, 0.2);
+    --shadow: 0 16px 44px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .3), 0 0 0 .5px rgba(255, 255, 255, .06);
+    color-scheme: dark;
+    color: #e7e7ea;
+    background: #0f1115;
+  }
   /* magpie 图标（#bird）—— Magpie 真实用 <use href="#bird">，这里给一个简版 path */
   #wb-routing-view .rt-bird { width: 26px; height: 26px; }
   #wb-routing-view .rt-bird use { display: none; }
@@ -2552,6 +2584,11 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; will-change: transform; }
   #wb-routing-view .rt-sky { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
   #wb-routing-view .rt-srcs { position: relative; z-index: 1; min-width: 0; display: grid; gap: 8px; }
+  /* Magpie 对齐：多个来源(API)时横向排列换行，避免纵向无限拉长 */
+  #wb-routing-view .rt-srcs.many { grid-auto-flow: column; grid-auto-columns: max-content; justify-content: center; flex-wrap: wrap; gap: 8px; }
+  #wb-routing-view .rt-srcs.many .rt-src { min-width: 92px; }
+  #wb-routing-view .rt-srcs.many { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  #wb-routing-view .rt-srcs.many .rt-src { flex: 0 1 auto; min-width: 0; }
   #wb-routing-view .rt-node { position: relative; z-index: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; text-align: center; }
   #wb-routing-view .rt-node .rt-ic .ic, #wb-routing-view .rt-node .rt-bird { width: 26px; height: 26px; margin-bottom: 3px; }
   #wb-routing-view .rt-node b { font-size: 13px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2566,6 +2603,7 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-accts b { font-weight: 560; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #wb-routing-view .rt-accts b > span:not(.ic) { font-weight: 450; color: var(--muted); }
   #wb-routing-view .rt-accts b > span.who { color: var(--fg); font-weight: 560; }
+  #wb-routing-view .rt-accts b .rt-api-tag { display: inline-block; margin-left: 7px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 560; line-height: 18px; color: var(--primary, #4f46e5); background: color-mix(in srgb, var(--primary, #4f46e5) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--primary, #4f46e5) 28%, var(--card)); vertical-align: 1px; white-space: nowrap; }
   #wb-routing-view .rt-accts b code.mdl { font: 500 11px/1.5 var(--code-font); color: var(--fg-2); background: var(--card-2); border-radius: 5px; padding: 0 5px; margin-left: 7px; font-weight: 450; }
   #wb-routing-view .rt-accts em { font-style: normal; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
   #wb-routing-view .rt-accts em .ses { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
@@ -2618,9 +2656,11 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 0; }
   #wb-routing-view .rt-wires path { fill: none; stroke: #94a3b8; stroke-width: 4; opacity: .35; stroke-linecap: round; }
   #wb-routing-view .rt-wires path.hl { stroke: #334155; stroke-width: 2.4; opacity: .95; }
-  #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke: var(--accent, #4f46e5); stroke-width: 3; opacity: 1; }
+  /* Magpie 动态流动连线：默认就跑流动的虚线（持续动画），不是只在重放时出现 */
+  #wb-routing-view .rt-wires path.hl { stroke-dasharray: 7 9; animation: rtflow 1.4s linear infinite; }
+  #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke: var(--accent, #4f46e5); stroke-width: 3; opacity: 1; stroke-dasharray: 7 9; animation: rtflow 1.1s linear infinite; }
   #wb-routing-view .rt-wires path.rest { stroke: #94a3b8; stroke-dasharray: 3 6; opacity: .5; }
-  @keyframes rtflow { to { stroke-dashoffset: -22; } }
+  @keyframes rtflow { to { stroke-dashoffset: -32; } }
   /* 打码模式：隐藏账号名，便于截图分享（对标 Magpie 的 账号打码）---- */
   #wb-routing-view.masked .rt-accts .who, #wb-routing-view.masked .rt-reqs .rt-req-acct { filter: blur(5px); }
   #wb-routing-view .rt-reqs li .rt-req-act { font-size: 11px; color: var(--accent, #4f8cff); cursor: pointer; white-space: nowrap; }
@@ -4447,7 +4487,7 @@ COLLAPSE_SCRIPT = r"""
               '<button class="rt-tab on" data-tab="all" type="button">全部</button>' +
               '<button class="rt-tab" data-tab="model" type="button">按模型</button>' +
               '<button class="rt-tab" data-tab="session" type="button">按会话</button>' +
-              '<button class="rt-tab" data-tab="key" type="button">按密钥</button>' +
+              '<button class="rt-tab" data-tab="key" type="button">按 API</button>' +
             '</div>' +
             '<ul class="rt-reqs" id="wb-rt-reqs"></ul>' +
           '</div>' +
@@ -4924,7 +4964,6 @@ COLLAPSE_SCRIPT = r"""
     var stage = svg.parentNode;
     if (!stage) return;
     var srect = stage.getBoundingClientRect();
-    var src = stage.querySelector('.rt-srcs .rt-node, .rt-src');
     var hub = stage.querySelector('.rt-hub');
     var accts = Array.prototype.slice.call(stage.querySelectorAll('.rt-accts li'));
     // 连线锚点：来源/网关用中心；账号用“左边缘中点”，让线停在卡片左侧的空白沟槽里，
@@ -4937,9 +4976,14 @@ COLLAPSE_SCRIPT = r"""
       paths += '<path class="" d="' + d + '"></path>';
       paths += '<path class="hl' + (live ? ' live' : '') + '" d="' + d + '"></path>';
     }
-    if (src && hub) {
-      var a = pt(src), b = pt(hub);
-      addWire(a, b, false);
+    var srcsAll = Array.prototype.slice.call(stage.querySelectorAll('.rt-srcs .rt-node, .rt-src'));
+    if (hub) {
+      // 每个来源（API）都连到 hub；当前在用的那条高亮
+      srcsAll.forEach(function (src) {
+        if (!src) return;
+        var a = pt(src), b = pt(hub);
+        addWire(a, b, src.classList.contains('on'));
+      });
     }
     if (hub) {
       var hb = pt(hub);
@@ -5029,11 +5073,26 @@ COLLAPSE_SCRIPT = r"""
       var txt = parts.join("") + (cur.done ? (cur.error ? "（失败）" : "") : "（进行中…）");
       if (cap.textContent !== txt) { cap.textContent = txt; cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); }
     }
-    // —— 来源节点（Magpie .rt-srcs：这一次请求的 caller / agent）——
+    // —— 来源节点（左侧：按 api_key 聚合「当前在发请求的 API」，显示密钥名字）——
     var srcs = document.getElementById("wb-rt-srcs");
     if (srcs) {
-      var src = cur.caller_name || cur.caller_key || "你的 Agent";
-      srcs.innerHTML = '<div class="rt-node rt-src"><b>' + wbRtEsc(src) + '</b><small>请求来源</small></div>';
+      // 跨最近请求聚合出现过的 api_key（去重），有几个在发就显示几个
+      var apiSeen = {};
+      var apiList = [];
+      Object.keys(_wbRtAll).forEach(function (id) {
+        var t = _wbRtAll[id];
+        var k = t.api_key || t.caller_key;
+        if (!k) return;
+        if (!apiSeen[k]) { apiSeen[k] = 1; apiList.push(k); }
+      });
+      if (!apiList.length) apiList = [cur && (cur.api_key || cur.caller_key) ? (cur.api_key || cur.caller_key) : "你的 Agent"];
+      // Magpie 对齐：多来源时加 .many 调整布局（来源节点并列/换行）
+      srcs.classList.toggle("many", apiList.length > 1);
+      srcs.innerHTML = apiList.map(function (k) {
+        var label = (k === "你的 Agent") ? k : (wbRtKeyName(k));
+        var isCur = cur && (cur.api_key || cur.caller_key) && (cur.api_key || cur.caller_key) === k;
+        return '<div class="rt-node rt-src' + (isCur ? ' on' : '') + '"><b>' + wbRtEsc(label) + '</b><small>请求来源</small></div>';
+      }).join("");
     }
     // —— 账号行（Magpie .rt-accts li：候选账号 + 试过/最终状态；可点选查看详情）——
     var listEl = document.getElementById("wb-rt-accts");
@@ -5045,6 +5104,15 @@ COLLAPSE_SCRIPT = r"""
       (cur.tries || []).forEach(function (x) { if (x.account) triedIds[String(x.account)] = x; });
       if (!listEl.firstChild || Object.keys(_wbRtSeen).length === 0 || listEl.getAttribute("data-tid") !== String(cur.id)) {
         listEl.setAttribute("data-tid", String(cur.id));
+        // 计算每个账号最近被哪个密钥（API）用过：扫描历史 trace，按 ts 取最新
+        var acctKey = {};
+        Object.keys(_wbRtAll).map(function (id) { return _wbRtAll[id]; }).sort(function (a, b) { return Number(a.ts || 0) - Number(b.ts || 0); }).forEach(function (t) {
+          var k = t.api_key || t.caller_key;
+          if (!k) return;
+          (t.order || []).forEach(function (o) { if (o && o.id != null) acctKey[String(o.id)] = k; else if (o) acctKey[String(o)] = k; });
+          if (t.final_account) acctKey[String(t.final_account)] = k;
+          if (t.first_account) acctKey[String(t.first_account)] = k;
+        });
         listEl.innerHTML = order.map(function (o, i) {
           var id = String(o.id != null ? o.id : o);
           var nm = o.name || o.id || o;
@@ -5058,10 +5126,11 @@ COLLAPSE_SCRIPT = r"""
           if (isFirst && !cur.done) cls += " now";
           if (i === 0) cls += " new";
           var dot = '<span class="dot"></span>';
-          var who = '<b><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span></b>';
+          var apiTag = acctKey[id] ? ('<span class="rt-api-tag">' + wbRtEsc(wbRtKeyName(acctKey[id])) + '</span>') : '';
+          var who = '<b><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span>' + apiTag + '</b>';
           var mdl = (o.model ? '<code class="mdl">' + wbRtEsc(o.model) + '</code>' : '');
           var st = tr ? (' <em>' + (tr.status ? wbRtEsc(String(tr.status)) : (tr.error ? wbRtEsc(tr.error) : (isFinal ? '应答' : '试过'))) + (tr.ms ? ' · ' + Math.round(tr.ms) + 'ms' : '') + '</em>') : (isFinal ? '<em>应答</em>' : (i > 0 ? '<em>候选</em>' : '<em>首选</em>'));
-          return '<li class="' + cls + '" data-tid="' + id + '">' + dot + who + mdl + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
+          return '<li class="' + cls + '" data-tid="' + id + '">' + dot + who + mdl + apiTag + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
         }).join("");
       }
     }
@@ -5105,6 +5174,22 @@ COLLAPSE_SCRIPT = r"""
     wbJson("/api/accounts", 15000).then(function (res) {
       _accounts = (res && res.accounts) || [];
     }).catch(function () {});
+
+    // 密钥 id → 名字 映射（按 C 方案：每个 API = 一个带名字的密钥）
+    var _keyNames = {};
+    wbJson("/api/api-keys", 15000).then(function (res) {
+      var arr = (res && (res.keys || res.api_keys || res)) || [];
+      if (!Array.isArray(arr) && res && Array.isArray(res.data)) arr = res.data;
+      arr.forEach(function (k) {
+        if (k && k.id) _keyNames[String(k.id)] = k.name || k.id;
+      });
+      window.__wbRtKeyNames = _keyNames;
+    }).catch(function () {});
+    function wbRtKeyName(id) {
+      if (!id) return null;
+      var s = String(id);
+      return (window.__wbRtKeyNames && window.__wbRtKeyNames[s]) || s.slice(0, 8);
+    }
 
     // 实时轨迹轮询序列号
     var _traceSeq = 0;
