@@ -20,6 +20,17 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.13] - 2026-11-08
+
+> 对比基准：[v2.3.12](https://github.com/deltrivx/AutoBuddy/compare/v2.3.12...v2.3.13)
+
+<!-- summary: 路由页暗色主题对齐（方案A）——把 Magpie 移植块硬编码的浅色令牌改写为官方 shadcn 暗色令牌：卡片从实色近黑面板改为半透明浮层(oklab .3)+白10%描边、文字近白、强调色用官方绿，与设置/账号/总览等页视觉统一；卡片标题13→14px、小卡片圆角10→12px -->
+
+### 变更
+
+- **路由页与官方页视觉彻底统一**：路由页是从 Magpie 1:1 移植的独立视觉体系，其主题块硬编码了浅色令牌（`--card:#fff` / 暗色覆盖 `--card:#181b21`），套在暗色 app 上表现为**实色近黑面板**，与官方页的**半透明浮层**观感完全不同。本次将 `html.dark #wb-routing-view` 的全部令牌改写为官方 shadcn 暗色值（`--card: oklab(0.279 -0.00709772 -0.040381 / 0.3)`、`--line: oklch(100% 0 0 / 0.1)`、`--fg: oklch(92.9% ...)`、`--accent: oklch(69.6% .17 162.48)`），卡片/舞台/节点/账号行全部变为与官方账号页一致的半透明浮层 + 白 10% 描边。
+- **细节对齐**：卡片标题 `.wb-rt-card-title` 13px → 14px（与官方 `h2` 一致）；路由轨迹/列表/统计小卡片圆角 10px → 12px，过渡更柔。
+
 ## [v2.3.12] - 2026-11-08
 
 > 对比基准：[v2.3.11](https://github.com/deltrivx/AutoBuddy/compare/v2.3.11...v2.3.12)
@@ -5071,7 +5082,7 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 ---
 
-> 对比基准：[v2.3.8](https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...HEAD)
+> 对比基准：[v2.3.13](https://github.com/deltrivx/AutoBuddy/compare/v2.3.13...HEAD)
 
 ## [v2.2.4] - 2026-10-28
 
@@ -6453,9 +6464,13 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.9...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.13...HEAD
 [v2.3.7]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...v2.3.7
 [v2.3.8]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...v2.3.8
+[v2.3.13]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.12...v2.3.13
+[v2.3.12]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.11...v2.3.12
+[v2.3.11]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.10...v2.3.11
+[v2.3.10]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.9...v2.3.10
 [v2.3.9]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.8...v2.3.9
 [v2.3.6]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6
 [v2.3.5]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...v2.3.5
