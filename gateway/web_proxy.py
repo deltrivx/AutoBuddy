@@ -65,6 +65,10 @@ def _internal_client(timeout: float = 10.0) -> httpx.AsyncClient:
 
 BACKEND_URL = "http://127.0.0.1:57890"
 ICON_PATH = Path("/app/icon.png")
+# 上游智能体图标目录：构建时由 Dockerfile 的 `COPY gateway/ /app/gateway/` 带进镜像。
+# manifest.json 把「归一化后的 caller 名（小写、去版本后缀）」映射到图标文件；
+# 无匹配时回退到 generic-app.svg。前端 /routing 页据此显示「图标 + 名字」而非纯文字。
+ICONS_DIR = Path(__file__).resolve().parent / "icons"
 
 COLLAPSE_SCRIPT = r"""
 <style>
@@ -2568,12 +2572,19 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 124px; }
   /* 移动端：舞台改为竖排（source→hub→accounts 自上而下），与 Magpie 窄屏一致，避免横向溢出 */
   @media (max-width: 760px) {
-    #wb-routing-view .rt-stage { grid-template-columns: 1fr; row-gap: 14px; column-gap: 0; padding: 14px 2px; }
-    #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 0; width: 100%; max-width: 280px; margin: 0 auto; }
-    #wb-routing-view .rt-srcs { display: flex; justify-content: center; }
-    #wb-routing-view .rt-accts { width: 100%; max-width: 480px; margin: 0 auto; }
-    #wb-routing-view .rt-node { max-width: 280px; margin: 0 auto; }
-    #wb-routing-view .rt-wires, #wb-routing-view .rt-flows, #wb-routing-view .rt-sky { display: none; }
+    #wb-routing-view .rt-stage { grid-template-columns: 1fr; row-gap: 6px; column-gap: 0; padding: 8px 2px 8px 18px; }
+    #wb-routing-view .rt-stage > :is(.rt-srcs, .rt-hub) { min-width: 0; width: 100%; max-width: 300px; margin: 0 auto; }
+    #wb-routing-view .rt-srcs { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    #wb-routing-view .rt-accts { width: 100%; max-width: 500px; margin: 0 auto; gap: 5px; }
+    #wb-routing-view .rt-accts li { padding: 5px 10px; }
+    #wb-routing-view .rt-accts .rt-used { gap: 4px; margin-top: 3px; }
+    #wb-routing-view .rt-accts .rt-used-chip { font-size: 11px; padding: 1px 7px; }
+    #wb-routing-view .rt-node { max-width: 300px; margin: 0 auto; }
+    /* 移动端保留动态连线（竖排时几何坐标自动变成上下走向）；隐藏纯装饰的 sky 层 */
+    #wb-routing-view .rt-sky { display: none; }
+    /* 移动端连线用实线，避免长竖线上流动虚线间隙被误读为碎片；高亮的那条保留流动 */
+    #wb-routing-view .rt-wires path.hl { stroke-dasharray: none; }
+    #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke-dasharray: 4 5; }
     #wb-routing-view .rt-reqs li { grid-template-columns: 52px 1fr auto; }
     #wb-routing-view .rt-reqs li .rt-req-time { display: none; }
     #wb-routing-view .rt-reqs li .rt-req-act { grid-column: 2 / 4; justify-self: start; margin-top: 2px; }
@@ -2593,6 +2604,10 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-node .rt-ic .ic, #wb-routing-view .rt-node .rt-bird { width: 26px; height: 26px; margin-bottom: 3px; }
   #wb-routing-view .rt-node b { font-size: 13px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #wb-routing-view .rt-node small { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 上游智能体节点：图标 + 名字 并列（横向），去掉原「上游智能体」小标签 */
+  #wb-routing-view .rt-node.rt-src { flex-direction: row; align-items: center; gap: 8px; padding: 9px 14px; text-align: left; }
+  #wb-routing-view .rt-node.rt-src .rt-src-icon { width: 22px; height: 22px; flex: 0 0 22px; object-fit: contain; border-radius: 5px; background: var(--card-2); }
+  #wb-routing-view .rt-node.rt-src b { font-size: 13px; font-weight: 600; }
   #wb-routing-view .rt-hub { border-color: var(--fg); box-shadow: 0 0 0 4px var(--card-2); }
   #wb-routing-view .rt-hub i { font-style: normal; font-size: 10.5px; font-weight: 560; margin-top: 5px; padding: 1px 8px; border-radius: 999px; background: var(--fg); color: var(--card); }
   #wb-routing-view .rt-hub b { color: var(--fg); }
@@ -2627,6 +2642,10 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view .rt-accts li.rest em { color: var(--red); opacity: .85; }
   #wb-routing-view .rt-accts .tag { position: absolute; right: 10px; top: -10px; padding: 1px 7px; border-radius: 6px; background: var(--red); color: #fff; font: 600 10.5px/1.5 var(--code-font); opacity: 0; transform: translateY(4px) scale(.9); transition: opacity .25s, transform .25s; pointer-events: none; }
   #wb-routing-view .rt-accts li.tagged .tag { opacity: 1; transform: none; }
+  /* 账号行内「上游智能体：模型」焦点框列表（同账号按使用顺序并列；不同账号平级）---- */
+  #wb-routing-view .rt-accts .rt-used { display: flex; flex-wrap: wrap; gap: 5px; width: 100%; margin-top: 5px; }
+  #wb-routing-view .rt-accts .rt-used-chip { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; line-height: 1.6; color: var(--accent, #4f8cff); background: color-mix(in srgb, var(--accent, #4f8cff) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent, #4f8cff) 30%, var(--card)); white-space: nowrap; }
+  #wb-routing-view .rt-accts .rt-used-chip code { font: 500 11px/1.4 var(--code-font); color: var(--fg-2); margin-left: 4px; }
   /* 页脚（Magpie .rt-foot：实时脉冲 + 统计）---- */
   #wb-routing-view .rt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px 20px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
   #wb-routing-view .rt-cap { flex: 1 1 20em; margin: 0; min-height: 3em; display: flex; align-items: center; font-size: 13px; line-height: 1.45; color: var(--fg); }
@@ -2654,13 +2673,22 @@ COLLAPSE_SCRIPT = r"""
   #wb-routing-view button.rt-gogroups svg, #wb-routing-view button.rt-mask svg { width: 15px; height: 15px; }
   /* 连线（对标 Magpie .rt-wires：source→hub→accounts 的曲线）---- */
   #wb-routing-view .rt-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 0; }
-  #wb-routing-view .rt-wires path { fill: none; stroke: #94a3b8; stroke-width: 4; opacity: .35; stroke-linecap: round; }
+  #wb-routing-view .rt-wires path { fill: none; stroke: #94a3b8; stroke-width: 3; opacity: .55; stroke-linecap: round; }
   #wb-routing-view .rt-wires path.hl { stroke: #334155; stroke-width: 2.4; opacity: .95; }
+  /* 深色主题：连线调亮，保证来源→网关→账号流向在暗底上清晰可辨 */
+  html.dark #wb-routing-view .rt-wires path { stroke: #64748b; opacity: .7; }
+  html.dark #wb-routing-view .rt-wires path.hl { stroke: #94a3b8; opacity: 1; }
   /* Magpie 动态流动连线：默认就跑流动的虚线（持续动画），不是只在重放时出现 */
-  #wb-routing-view .rt-wires path.hl { stroke-dasharray: 7 9; animation: rtflow 1.4s linear infinite; }
-  #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke: var(--accent, #4f46e5); stroke-width: 3; opacity: 1; stroke-dasharray: 7 9; animation: rtflow 1.1s linear infinite; }
+  #wb-routing-view .rt-wires path.hl { stroke-dasharray: 4 5; animation: rtflow 1.4s linear infinite; }
+  #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke: var(--accent, #4f46e5); stroke-width: 3; opacity: 1; stroke-dasharray: 4 5; animation: rtflow 1.1s linear infinite; }
   #wb-routing-view .rt-wires path.rest { stroke: #94a3b8; stroke-dasharray: 3 6; opacity: .5; }
-  @keyframes rtflow { to { stroke-dashoffset: -32; } }
+  /* 移动端：连线更密更细，长竖线下流动虚线不至于被看成碎片 */
+  @media (max-width: 760px) {
+    #wb-routing-view .rt-wires path { stroke-width: 2.4; stroke-dasharray: none !important; animation: none !important; }
+    #wb-routing-view .rt-wires path.hl { stroke-dasharray: none !important; animation: none !important; }
+    #wb-routing-view .rt-wires path.live, #wb-routing-view .rt-wires path.lit { stroke: var(--accent, #4f46e5); stroke-width: 2.6; stroke-dasharray: none !important; animation: none !important; }
+  }
+  @keyframes rtflow { to { stroke-dashoffset: -18; } }
   /* 打码模式：隐藏账号名，便于截图分享（对标 Magpie 的 账号打码）---- */
   #wb-routing-view.masked .rt-accts .who, #wb-routing-view.masked .rt-reqs .rt-req-acct { filter: blur(5px); }
   #wb-routing-view .rt-reqs li .rt-req-act { font-size: 11px; color: var(--accent, #4f8cff); cursor: pointer; white-space: nowrap; }
@@ -4968,7 +4996,12 @@ COLLAPSE_SCRIPT = r"""
     var accts = Array.prototype.slice.call(stage.querySelectorAll('.rt-accts li'));
     // 连线锚点：来源/网关用中心；账号用“左边缘中点”，让线停在卡片左侧的空白沟槽里，
     // 不再横穿卡片（避免线穿过圆角/间隙被误判为断裂）。
-    function pt(el, leftEdge) { var r = el.getBoundingClientRect(); return { x: (leftEdge ? r.left - srect.left : r.left - srect.left + r.width/2), y: r.top - srect.top + r.height/2 }; }
+    function pt(el, leftEdge) {
+      var r = el.getBoundingClientRect();
+      var useLeft = !!leftEdge; // PC 与移动端都用左边缘沟槽锚点，连线走卡片左侧不穿过卡片
+      var x = useLeft ? (r.left - srect.left - (window.innerWidth <= 760 ? 6 : 0)) : (r.left - srect.left + r.width/2);
+      return { x: x, y: r.top - srect.top + r.height/2 };
+    }
     var paths = '';
     function addWire(a, b, live) {
       var d = wbRtWire(a, b);
@@ -4977,20 +5010,34 @@ COLLAPSE_SCRIPT = r"""
       paths += '<path class="hl' + (live ? ' live' : '') + '" d="' + d + '"></path>';
     }
     var srcsAll = Array.prototype.slice.call(stage.querySelectorAll('.rt-srcs .rt-node, .rt-src'));
+    var isNarrow = window.innerWidth <= 760;
+    // 移动端竖排：来源区单列后，用「来源容器整体中心」作为统一起点，避免多节点锚点错乱导致碎片
+    var srcBox = stage.querySelector('.rt-srcs');
     if (hub) {
       // 每个来源（API）都连到 hub；当前在用的那条高亮
-      srcsAll.forEach(function (src) {
-        if (!src) return;
-        var a = pt(src), b = pt(hub);
-        addWire(a, b, src.classList.contains('on'));
-      });
+      if (isNarrow && srcBox) {
+        // 移动端竖排：来源容器 → 网关 画一段，走左边缘沟槽，不穿过卡片
+        addWire(pt(srcBox, true), pt(hub, true), srcBox.querySelector('.rt-src.on') != null);
+      } else {
+        srcsAll.forEach(function (src) {
+          if (!src) return;
+          var a = pt(src), b = pt(hub);
+          addWire(a, b, src.classList.contains('on'));
+        });
+      }
     }
     if (hub) {
-      var hb = pt(hub);
-      accts.forEach(function (li) {
-        var c = pt(li, true);
-        addWire(hb, c, li.classList.contains('on') || li.classList.contains('tried'));
-      });
+      if (isNarrow) {
+        // 移动端竖排：网关 → 账号列表容器 画一段（走左边缘沟槽，不穿过卡片），账号列表内部不画星型线
+        var acctBox = stage.querySelector('.rt-accts');
+        if (acctBox) addWire(pt(hub, true), pt(acctBox, true), accts.some(function (l) { return l.classList.contains('on') || l.classList.contains('tried'); }));
+      } else {
+        var hb = pt(hub, true);
+        accts.forEach(function (li) {
+          var c = pt(li, true); // PC 横排走左边缘沟槽，连线不穿过卡片
+          addWire(hb, c, li.classList.contains('on') || li.classList.contains('tried'));
+        });
+      }
     }
     svg.setAttribute('viewBox', '0 0 ' + Math.max(1, Math.round(srect.width)) + ' ' + Math.max(1, Math.round(srect.height)));
     svg.innerHTML = paths;
@@ -5073,25 +5120,35 @@ COLLAPSE_SCRIPT = r"""
       var txt = parts.join("") + (cur.done ? (cur.error ? "（失败）" : "") : "（进行中…）");
       if (cap.textContent !== txt) { cap.textContent = txt; cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); }
     }
-    // —— 来源节点（左侧：按 api_key 聚合「当前在发请求的 API」，显示密钥名字）——
+    // —— 来源节点（左侧：按上游智能体聚合，自动识别 OpenClaw / curl 等 caller）——
     var srcs = document.getElementById("wb-rt-srcs");
     if (srcs) {
-      // 跨最近请求聚合出现过的 api_key（去重），有几个在发就显示几个
-      var apiSeen = {};
-      var apiList = [];
+      // 上游智能体识别：优先 caller_name，其次 client_tag；并做归一化去重——
+      // 去掉「/版本」或「 版本」后缀（如 curl/7.88.1 → curl），避免同一客户端显示两条。
+      function _wbRtRawCaller(t) {
+        if (t.caller_name) return String(t.caller_name);
+        if (t.client_tag) return String(t.client_tag);
+        if (t.api_key || t.caller_key) return wbRtKeyName(t.api_key || t.caller_key);
+        return null;
+      }
+      function _wbRtNorm(c) { return (c || "").replace(/[\/\s].*$/, ""); } // 取「/」或空格前的主体
+      var callerSeen = {};
+      var callerList = [];
       Object.keys(_wbRtAll).forEach(function (id) {
-        var t = _wbRtAll[id];
-        var k = t.api_key || t.caller_key;
-        if (!k) return;
-        if (!apiSeen[k]) { apiSeen[k] = 1; apiList.push(k); }
+        var c = _wbRtRawCaller(_wbRtAll[id]);
+        if (!c) return;
+        var n = _wbRtNorm(c);
+        if (!callerSeen[n]) { callerSeen[n] = 1; callerList.push(c); } // 显示原始值，按归一化去重
       });
-      if (!apiList.length) apiList = [cur && (cur.api_key || cur.caller_key) ? (cur.api_key || cur.caller_key) : "你的 Agent"];
-      // Magpie 对齐：多来源时加 .many 调整布局（来源节点并列/换行）
-      srcs.classList.toggle("many", apiList.length > 1);
-      srcs.innerHTML = apiList.map(function (k) {
-        var label = (k === "你的 Agent") ? k : (wbRtKeyName(k));
-        var isCur = cur && (cur.api_key || cur.caller_key) && (cur.api_key || cur.caller_key) === k;
-        return '<div class="rt-node rt-src' + (isCur ? ' on' : '') + '"><b>' + wbRtEsc(label) + '</b><small>请求来源</small></div>';
+      if (!callerList.length) callerList = [cur && _wbRtRawCaller(cur) ? _wbRtRawCaller(cur) : "未知来源"];
+      // 多来源时加 .many 并列布局
+      srcs.classList.toggle("many", callerList.length > 1);
+      srcs.innerHTML = callerList.map(function (c) {
+        var isCur = cur && _wbRtRawCaller(cur) && _wbRtRawCaller(cur) === c;
+        var icon = wbRtCallerIcon(c);
+        return '<div class="rt-node rt-src' + (isCur ? ' on' : '') + '">' +
+          '<img class="rt-src-icon" src="' + icon + '" alt="" />' +
+          '<b>' + wbRtEsc(c) + '</b></div>';
       }).join("");
     }
     // —— 账号行（Magpie .rt-accts li：候选账号 + 试过/最终状态；可点选查看详情）——
@@ -5104,14 +5161,25 @@ COLLAPSE_SCRIPT = r"""
       (cur.tries || []).forEach(function (x) { if (x.account) triedIds[String(x.account)] = x; });
       if (!listEl.firstChild || Object.keys(_wbRtSeen).length === 0 || listEl.getAttribute("data-tid") !== String(cur.id)) {
         listEl.setAttribute("data-tid", String(cur.id));
-        // 计算每个账号最近被哪个密钥（API）用过：扫描历史 trace，按 ts 取最新
-        var acctKey = {};
+        // 计算每个账号被哪些「上游智能体 + 模型」用过：扫描历史 trace，按 ts 取最新顺序去重。
+        // 同账号下按顺序列出每个 (caller, model) 焦点框——几个来源就并列几个框；
+        // 不同账号之间平级显示。
+        var acctUsed = {}; // acctId -> [{caller, model}]
         Object.keys(_wbRtAll).map(function (id) { return _wbRtAll[id]; }).sort(function (a, b) { return Number(a.ts || 0) - Number(b.ts || 0); }).forEach(function (t) {
-          var k = t.api_key || t.caller_key;
-          if (!k) return;
-          (t.order || []).forEach(function (o) { if (o && o.id != null) acctKey[String(o.id)] = k; else if (o) acctKey[String(o)] = k; });
-          if (t.final_account) acctKey[String(t.final_account)] = k;
-          if (t.first_account) acctKey[String(t.first_account)] = k;
+          var c = t.caller_name || t.client_tag || (t.api_key || t.caller_key ? wbRtKeyName(t.api_key || t.caller_key) : null);
+          var ml = t.model;
+          (t.order || []).forEach(function (o) { var aid = String(o && o.id != null ? o.id : o); (acctUsed[aid] = acctUsed[aid] || []).push({ caller: c, model: ml }); });
+          if (t.final_account) { var fa = String(t.final_account); (acctUsed[fa] = acctUsed[fa] || []).push({ caller: c, model: ml }); }
+          if (t.first_account) { var ha = String(t.first_account); (acctUsed[ha] = acctUsed[ha] || []).push({ caller: c, model: ml }); }
+        });
+        // 每个账号去重（同 caller+model 只留一个，caller 按归一化主体去重），保持出现顺序
+        Object.keys(acctUsed).forEach(function (aid) {
+          var seen = {}; var uniq = [];
+          acctUsed[aid].forEach(function (u) {
+            var nk = ((u.caller || "").replace(/[\/\s].*$/, "")) + "\u0001" + (u.model || "");
+            if (!seen[nk]) { seen[nk] = 1; uniq.push(u); }
+          });
+          acctUsed[aid] = uniq;
         });
         listEl.innerHTML = order.map(function (o, i) {
           var id = String(o.id != null ? o.id : o);
@@ -5126,11 +5194,17 @@ COLLAPSE_SCRIPT = r"""
           if (isFirst && !cur.done) cls += " now";
           if (i === 0) cls += " new";
           var dot = '<span class="dot"></span>';
-          var apiTag = acctKey[id] ? ('<span class="rt-api-tag">' + wbRtEsc(wbRtKeyName(acctKey[id])) + '</span>') : '';
-          var who = '<b class="rt-acct-who"><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span>' + apiTag + '</b>';
+          // 焦点框列表：API 名：模型
+          var used = acctUsed[id] || [];
+          var usedHtml = used.length ? ('<div class="rt-used">' + used.map(function (u) {
+            var label = u.caller ? u.caller : '未知来源';
+            var mdl = u.model ? (': ' + wbRtEsc(u.model)) : '';
+            return '<span class="rt-used-chip">' + wbRtEsc(label) + mdl + '</span>';
+          }).join('') + '</div>') : '';
+          var who = '<b class="rt-acct-who"><span class="who">' + wbRtEsc(wbRtName(nm)) + '</span></b>';
           var mdl = (o.model ? '<code class="mdl">' + wbRtEsc(o.model) + '</code>' : '');
           var st = tr ? (' <em>' + (tr.status ? wbRtEsc(String(tr.status)) : (tr.error ? wbRtEsc(tr.error) : (isFinal ? '应答' : '试过'))) + (tr.ms ? ' · ' + Math.round(tr.ms) + 'ms' : '') + '</em>') : (isFinal ? '<em>应答</em>' : (i > 0 ? '<em>候选</em>' : '<em>首选</em>'));
-          return '<li class="' + cls + '" data-tid="' + id + '">' + dot + '<div class="rt-acct-main">' + who + mdl + '</div>' + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
+          return '<li class="' + cls + '" data-tid="' + id + '">' + dot + '<div class="rt-acct-main">' + who + mdl + usedHtml + '</div>' + st + (tr && tr.error ? '<span class="tag">失败</span>' : '') + '</li>';
         }).join("");
       }
     }
@@ -5158,6 +5232,26 @@ COLLAPSE_SCRIPT = r"""
     _wbRtSeen = {};
   }
   // 密钥 id → 名字 映射（全局；wbRenderTrace 与 wbLoadRoutingData 共用）
+  function wbRtCallerIcon(c) {
+    // 上游智能体图标：归一化（小写、去「/版本」或「 版本」后缀）后查前端映射表，
+    // 无匹配回退 generic-app。映射表与 backend gateway/icons/manifest.json 保持一致。
+    var _map = {
+      "openclaw": "openclaw.svg", "deltrivx": "deltrivx.png", "deltrivx-app": "deltrivx.png",
+      "deltrix": "deltrivx.png", "wechat": "wechat.png", "wechat-bot": "wechat.png",
+      "telegram": "telegram.png", "telegram-bot": "telegram.png", "chatgpt": "chatgpt.png",
+      "openai": "chatgpt.png", "claude": "claude.svg", "claude-code": "claude-code.svg",
+      "anthropic": "anthropic.svg", "gemini": "gemini.png", "google": "gemini.png",
+      "deepseek": "deepseek.png", "qwen": "qwen.svg", "doubao": "doubao.png", "kimi": "kimi.svg",
+      "grok": "grok.svg", "feishu": "feishu.png", "lark": "feishu.png", "discord": "discord.png",
+      "slack": "slack.png", "ios": "generic-app.svg", "ios-app": "generic-app.svg",
+      "android": "generic-app.svg", "curl": "terminal.png", "wget": "terminal.png",
+      "terminal": "terminal.png", "web": "web.png", "web-client": "web.png",
+      "open-webui": "web.png", "browser": "web.png", "app": "generic-app.svg"
+    };
+    var n = String(c || "").toLowerCase().replace(/[\\/\s].*$/, "");
+    var f = _map[n] || "generic-app.svg";
+    return "/icons/" + f;
+  }
   function wbRtKeyName(id) {
     if (!id) return null;
     var s = String(id);
@@ -12433,6 +12527,26 @@ async def get_icon():
     async with _internal_client() as client:
         r = await client.get(f"{BACKEND_URL}/icon.png")
         return Response(content=r.content, media_type="image/png")
+
+
+_ICON_MEDIA = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp"}
+
+
+@app.get("/icons/{name}")
+async def get_caller_icon(name: str):
+    """上游智能体图标。name 为 manifest 中的 key（如 openclaw / wechat / deltrivx）。
+    非法路径（../ 穿越）一律拒绝；缺失回退 generic-app.svg。"""
+    name = (name or "").strip()
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        name = "generic-app.svg"
+    safe = ICONS_DIR / name
+    if not str(safe.resolve()).startswith(str(ICONS_DIR.resolve())) or not safe.exists():
+        safe = ICONS_DIR / "generic-app.svg"
+    ext = safe.suffix.lower()
+    media = _ICON_MEDIA.get(ext, "application/octet-stream")
+    with open(safe, "rb") as f:
+        content = f.read()
+    return Response(content=content, media_type=media)
 
 
 def _gateway_models_by_account() -> dict:

@@ -20,6 +20,18 @@
 每个版本标题下方**必须**写一行摘要注释，供 `scripts/gen_releases.py` 生成版本索引：
 
 ```markdown
+## [v2.3.7] - 2026-11-08
+
+> 对比基准：[v2.3.6](https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...v2.3.7)
+
+<!-- summary: 智能路由页「上游智能体」来源节点从纯文字（名字+「上游智能体」小标签）改为「官方 logo 图标 + 名字」并列展示；新增 gateway/icons/ 图标目录（HD-Icons 仓库高清 logo 内置镜像，无匹配回退通用 App 图标），后端新增 /icons/{name} 端点按需返回 -->
+
+### 新增
+
+- **上游智能体图标化展示**：路由页左侧「来源」区每个上游调用方（OpenClaw / DeltrivX-App / wechat-bot / curl 等）现在以「官方 logo 图标 + 名字」横向并列展示，移除原先冗余的「上游智能体」小标签文字。
+- **内置图标资源**：新增 `gateway/icons/`（21 个官方/通用 logo，含 SVG/PNG）与 `manifest.json` 映射表；图标取自 [xushier/HD-Icons](https://github.com/xushier/HD-Icons) 高清仓库（OpenClaw/微信/Telegram/ChatGPT/Claude/Gemini/DeepSeek/通义/豆包/Kimi/Grok/Feishu/Discord/Slack 等），未收录的非主流智能体（如 iOS-App、未知客户端）回退到统一通用 App 图标。
+- **后端图标端点**：`web_proxy.py` 新增 `GET /icons/{name}`，从 `gateway/icons/` 安全返回图标（拒绝 `../` 路径穿越与隐藏文件），缺失时回退 `generic-app.svg`。DeltrivX-App 复用产品 `icon.png` 作为品牌标识。
+
 ## [v2.3.6] - 2026-11-08
 
 > 对比基准：[v2.3.5](https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6)
@@ -6354,7 +6366,8 @@ v0.9.12 已对齐容器与标题，本版继续细化到**页面内每个控件*
 
 <!-- 链接区 -->
 
-[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...HEAD
+[未发布]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.7...HEAD
+[v2.3.7]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.6...v2.3.7
 [v2.3.6]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.5...v2.3.6
 [v2.3.5]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.4...v2.3.5
 [v2.3.4]: https://github.com/deltrivx/AutoBuddy/compare/v2.3.3...v2.3.4
